@@ -9,7 +9,7 @@ description = "OpenBB Workspace live_grid backend streaming EODHD websocket pric
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.110",
-    "uvicorn>=0.29",
+    "uvicorn[standard]>=0.29",
     # Official EODHD SDK, pinned to a GitHub commit: the PyPI release (1.0.32)
     # can sys.exit() on API errors, has no request timeouts, and predates the
     # SDK's typed error handling.
