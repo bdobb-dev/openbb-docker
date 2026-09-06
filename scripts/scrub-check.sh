@@ -29,10 +29,15 @@ PATTERNS=(
 #
 # This script and the private-pattern file are skipped because they contain
 # the patterns themselves and would match on their own text.
+# THIRD_PARTY_NOTICES.md is skipped because it is other people's licence text
+# reproduced verbatim from public wheels (scripts/third-party-notices.py):
+# nothing in it is ours to edit, and a long GitHub blob URL in numpy's
+# licence trips the base64-run gate below.
 scan() {
   # scan <grep-args...> -- runs grep over the git-visible file set.
   git ls-files -z --cached --others --exclude-standard \
     | grep -zv -e '^scripts/scrub-check\.sh$' -e '^scripts/scrub-private-patterns\.txt$' \
+                -e '^THIRD_PARTY_NOTICES\.md$' \
     | xargs -0 grep "$@" -- 2>/dev/null || true
 }
 
