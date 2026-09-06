@@ -145,6 +145,11 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
+      # mcp_stores depends on openbb-deltalake, a sibling in this repo that is
+      # NOT on PyPI -- `pip install -e .[dev]` alone fails to resolve it. Same
+      # shape as live-grid installing kdb-store first.
+      - name: Install openbb-deltalake (sibling dependency, not on PyPI)
+        run: pip install -e ./openbb-deltalake
       # Pulls deltalake and pykx, both of which ship aarch64 and x86_64
       # wheels -- the amd64-only constraint left with ArcticDB. The tests need
       # neither a real store nor a q licence; pykx runs unlicensed and the
@@ -165,8 +170,10 @@ jobs:
       # stores-explorer depends on mcp-stores, which is a sibling in this repo
       # and is NOT published to PyPI -- `pip install -e .[dev]` alone fails to
       # resolve it. Same shape as live-grid installing kdb-store first.
-      - name: Install mcp_stores (sibling dependency, not on PyPI)
-        run: pip install -e ./mcp_stores
+      - name: Install openbb-deltalake, then mcp_stores (siblings, not on PyPI)
+        run: |
+          pip install -e ./openbb-deltalake
+          pip install -e ./mcp_stores
       - name: Test stores-explorer (all mocked, no store or network needed)
         working-directory: stores-explorer
         run: |
