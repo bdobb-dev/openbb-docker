@@ -493,35 +493,25 @@ services:
       # writable mount, so without this a restart would silently empty the list.
       - ./live-grid-data:/data
 
-  # rss-ticker (Ep. 8): the news wire — polls RSS feeds, streams new articles
-  # over a websocket, serves a Bloomberg-style news window widget. Source lives
-  # in its own repo; compose builds it from GitHub. Loopback :8088; Serve
-  # publishes it on :8088 — tailnet-only, NEVER funneled (under tailscale_auth
-  # it trusts the identity header Serve injects, and a funneled request
-  # carries none, so it would fail closed — but don't rely on that).
+  # rss-ticker (Ep. 8, reworked for BDOBB v8.0.0): a user-agnostic shared feed
+  # pool. Clients (BDOBB's News widget) subscribe feed URLs over the websocket;
+  # the pool polls the union, streams every new article tagged by feed_id,
+  # and pages history. It has NO authentication: reachability is the whole
+  # access control. It binds 0.0.0.0 on the openbb-internal bridge (nothing
+  # published to the host); Serve publishes it on :8088 — tailnet-only, NEVER
+  # funneled, because anyone who can reach the port can make it poll any URL
+  # and read every article.
   #
   # Before first start:
   #   cp rss-ticker-config/config.yaml.example rss-ticker-config/config.yaml
-  #   cp rss-ticker.env.example rss-ticker.env       # TICKER_ADMIN_KEY
   rss-ticker:
-    build: https://github.com/artcashin/rss-ticker.git
-    image: rss-ticker:8.0.0
+    image: ghcr.io/artcashin/rss-feedhandler:8.0.0
     container_name: openbb-rss-ticker
     restart: unless-stopped
-    # Bridge migration (Layer 1): was
-    # `network_mode: service:tailscale`. Its tailscale_auth guard needed a
-    # source change first (rss-ticker's own repo, feat/ticker-server) --
-    # bind_host: 0.0.0.0 (rss-ticker-config/config.yaml.example) refused to
-    # start before that landed.
     networks:
       - openbb-internal
     depends_on:
       - tailscale
-    env_file:
-      # TICKER_ADMIN_KEY (writes on /api/feeds). Under tailscale_auth no
-      # manifest key or user tokens are needed — identity replaces them.
-      - path: ./rss-ticker.env
-        required: true
     volumes:
       - ./rss-ticker-config:/config:ro
       - rss-ticker-data:/data
@@ -640,13 +630,11 @@ volumes:
 # them even though they now bind 0.0.0.0 -- but D1's accepted cost applies:
 # any container LATER attached to openbb-internal gets unauthenticated access
 # to live-grid, stores-explorer, both MCP services, and kdb (none of which
-# authenticate); rss-ticker is the exception -- it still authenticates via
-# tailscale_auth, extended to trust 0.0.0.0 under this same isolation
-# guarantee (see rss-ticker's own feat/ticker-server, not this repo). Only
-# the seven services docs/superpowers/specs/2026-08-27-bridge-network-
-# design.md names were in the original design; rss-ticker's inclusion (and
-# its tailscale_auth fix) was a scope decision made while implementing it,
-# not in that doc.
+# authenticate), and the reworked rss-ticker 8.0.0 authenticates nothing either --
+# it relies on this same isolation. Only the seven services
+# docs/superpowers/specs/2026-08-27-bridge-network-design.md names were in
+# the original design; rss-ticker's inclusion was a scope decision made
+# while implementing it, not in that doc.
 networks:
   openbb-internal:
     driver: bridge

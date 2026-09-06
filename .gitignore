@@ -3,7 +3,6 @@ credentials.env
 api-auth.env
 ts.env
 minio.env
-rss-ticker.env
 deps.env
 .env
 .env.*
@@ -39,3 +38,4 @@ __pycache__/
 # widget smoke-test output: a live snapshot, regenerate rather than commit
 scripts/widget_smoke/output/
 eod.env
+.worktrees/

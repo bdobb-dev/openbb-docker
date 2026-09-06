@@ -177,16 +177,16 @@ coalesced flushes/second. Serve publishes it on :6903, tailnet-only. See
 [openbb-eodhd/README.md](openbb-eodhd/README.md).
 
 **New in v8.0.0 (Ep. 8):** the wire. The
-**[rss-ticker](https://github.com/artcashin/rss-ticker)** news service joins
-the sidecar: it polls your RSS feeds (conditional GETs, jitter, backoff),
-dedupes into SQLite, streams new articles over a websocket, and serves a
-Bloomberg-style **news window / news rail** widget. Running behind this
-stack's Serve it uses **`tailscale_auth`** — the caller's verified Tailscale
-identity replaces every per-user token, so no credential appears in any URL.
-Serve publishes it on :8088, tailnet-only, never funneled. Compose builds it
-straight from its repo; configure `rss-ticker-config/config.yaml` (from the
-example) and `rss-ticker.env` (admin key), then add the backend in Workspace
-or BDOBB with a **blank API key** — your Serve identity is the credential.
+**[rss-ticker](https://github.com/artcashin/rss-feedhandler)** feed pool
+joins the stack: BDOBB's built-in **News** widget tells it which feeds to
+watch over a websocket, it polls the union (conditional GETs, jitter,
+backoff), dedupes into SQLite, and streams every new article tagged by feed.
+With the reworked rss-ticker 8.0.0 there are no users, keys or configured feeds: the
+pool has **no authentication**, and reachability is the whole access control
+— Serve publishes it on :8088, tailnet-only, never funneled. Compose pulls
+the published image; the only setup is `rss-ticker-config/config.yaml` (from
+the example, four operational settings). In BDOBB, add a News card and set
+its Ticker URL to the Serve address.
 
 **New in v6.0.0 (Ep. 6, pairs with BDOBB v6.0.0):** the **OpenBB MCP
 server** — the analyst's hands. Same image, wrapping the same Platform
@@ -227,7 +227,7 @@ cp ts.env.example ts.env            # paste a tagged, reusable auth key; chmod 6
 cp api-auth.env.example api-auth.env         # REQUIRED — set a strong password; chmod 600
 cp credentials.env.example credentials.env   # optional — keyless providers work with none
 cp minio.env.example minio.env     # REQUIRED for the store; chmod 600
-cp rss-ticker.env.example rss-ticker.env     # REQUIRED — admin key; chmod 600
+cp rss-ticker-config/config.yaml.example rss-ticker-config/config.yaml   # four settings, no secrets
 
 # 2. Build and start
 docker compose up -d --build

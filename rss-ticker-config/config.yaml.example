@@ -1,48 +1,22 @@
-# rss-ticker config for the openbb-docker stack (Adventures in OpenBB, Ep. 8).
+# rss-ticker config for the openbb-docker stack (Adventures in OpenBB, Ep. 8,
+# reworked for BDOBB v8.0.0).
 #
-# It runs in tailscale_auth mode: Serve injects the caller's verified
-# identity on every request (including the websocket upgrade), and no
-# per-user token appears in any URL. That requires the bind below to be
-# 0.0.0.0 on the openbb-internal Docker bridge (UNVERIFIED, bridge-network
-# migration -- isolation now comes from bridge membership, not the bind
-# address; the app refuses to start on any bind it doesn't trust) and
-# TS_USERSPACE=false on the sidecar (already set in this stack's compose;
-# see Ep. 1 and this repo's README).
+# With the reworked rss-ticker 8.0.0 this is a user-agnostic shared feed pool: BDOBB's
+# News widget subscribes feed URLs over the websocket, and nothing here names
+# a feed, a user or a key. The server refuses to start on any other key.
 #
-#   cp config.yaml.example config.yaml   # then edit the tailnet name & feeds
+#   cp config.yaml.example config.yaml
 
-public_base_url: https://openbb.<your-tailnet>.ts.net:8088
-
-# Writes on /api/feeds and per-feed health detail. Comes from rss-ticker.env.
-admin_key: ${TICKER_ADMIN_KEY}
-
-tailscale_auth: true
-bind_host: 0.0.0.0
-
+# Articles a feed no longer lists are kept this long after they were last seen.
 retention_days: 7
-default_poll_interval_s: 300
+
+# Every feed polls at this interval. Be judicious: publishers monitor, and an
+# over-eager poller gets throttled or disconnected. 90 suits a pool of wires;
+# 300 suits blogs and newsletters.
+default_poll_interval_s: 90
+
 max_concurrent_polls: 8
 
-# Be judicious with poll intervals: publishers monitor, and an over-eager
-# poller gets throttled or disconnected -- sometimes mistaken for an attack.
-# Conditional GETs make polite polling cheap; they don't make rude polling safe.
-users:
-  - id: art
-    name: Art
-    # Your Tailscale login (a GitHub OIDC login here, not an email).
-    # Under tailscale_auth this replaces the per-user token entirely.
-    tailscale_login: you@github
-    feeds:
-      - {url: "https://feeds.bloomberg.com/markets/news.rss", name: Bloomberg Markets, group: Markets, poll_interval_s: 90}
-      - {url: "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain", name: WSJ Markets, group: Markets, poll_interval_s: 90}
-      # NYT sends no cache validators, so every poll re-downloads; its CDN
-      # caches 5 minutes anyway — a faster interval buys no freshness.
-      - {url: "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml", name: NYT Business, group: Markets, poll_interval_s: 300}
-      - {url: "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114", name: CNBC, group: CNBC, poll_interval_s: 30}
-      # Substack works like any RSS feed; title_format adds the byline.
-      - url: "https://bobpisani.substack.com/feed"
-        name: Bob Pisani
-        group: Substack
-        title_format: "{title} - {author}"
-    filters:
-      - {pattern: nvidia, action: highlight}
+# 0.0.0.0 on the openbb-internal bridge: nothing is published to the host, and
+# the bridge is what decides who can reach the port. There is no authentication.
+bind_host: 0.0.0.0
