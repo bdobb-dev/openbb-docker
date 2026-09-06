@@ -87,6 +87,22 @@ assert.ok(Math.abs(av.data.at(-1).avwap - 6897 / 68) < 1e-9, `bad final avwap ${
 assert.ok(Math.abs(av.pv - 6897) < 1e-9 && Math.abs(av.vol - 68) < 1e-9, `bad pv/vol ${av.pv}/${av.vol}`);
 console.log('ok: anchored VWAP series + running pv/vol', { points: av.data.length, last: av.data.at(-1).avwap, pv: av.pv, vol: av.vol });
 
+// 8b. The client writes anchors with Date.toISOString(), which ends in Z.
+// "P"$ on that form was NULL, and a null anchor selects every row -- so the
+// reply was the whole table, anchored at nothing. Same anchor, both forms,
+// same answer.
+ws.send(JSON.stringify({ type: 'avwap', sym: 'AAPL', anchor: '2000-01-01T00:00:00.000Z' }));
+const avz = await nextMessage();
+assert.equal(avz.data.length, av.data.length, 'Z-suffixed anchor must match the bare form');
+assert.ok(Math.abs(avz.data.at(-1).avwap - av.data.at(-1).avwap) < 1e-9, 'Z-suffixed anchor gave a different avwap');
+// 8c. An anchor that cannot be parsed fails CLOSED: no series, no totals.
+ws.send(JSON.stringify({ type: 'avwap', sym: 'AAPL', anchor: 'not-a-time' }));
+const avn = await nextMessage();
+assert.equal(avn.table, 'avwap');
+assert.equal(avn.data.length, 0, 'unparseable anchor must return an empty series, never the whole table');
+assert.equal(avn.pv, 0); assert.equal(avn.vol, 0);
+console.log('ok: Z-suffixed anchor parses; unparseable anchor fails closed');
+
 // 9. stats: q's own memory ledger plus last-per-sym from a by-clause.
 ws.send(JSON.stringify({ type: 'stats' }));
 const stats = await nextMessage();
