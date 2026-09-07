@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Convention pinning. These guard the exact bug class the spike found twice:
 a library silently returning a different variant under a familiar name."""
 

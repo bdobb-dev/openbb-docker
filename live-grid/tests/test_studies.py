@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Tests for app.studies: the live grid's RSI(14) and anchored-VWAP columns.
 
 Both ride one compute() call over one frame, so the grid's numbers cannot

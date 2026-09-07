@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Metadata answered from the Delta transaction log, never from rows.
 
 ArcticDB gave the doors `list_libraries`, `get_description` and `tail`; Delta

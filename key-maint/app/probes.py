@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Concurrent provider probes. Detail strings are built ONLY from status codes
 and exception class names — never from URLs, bodies, or key material."""
 from __future__ import annotations

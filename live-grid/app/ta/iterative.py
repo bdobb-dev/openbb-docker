@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Indicators that are recurrences, not expressions.
 
 Parabolic SAR's value at bar t depends on the extreme point and acceleration

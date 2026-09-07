@@ -1,3 +1,6 @@
+<!-- Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Funnel: publishing the API to the public internet — carefully
 
 Companion doc for *Adventures in OpenBB, Ep. 2*. This is optional: the stack

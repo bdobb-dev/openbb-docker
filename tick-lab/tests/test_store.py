@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Date-range bounds, and the Delta Lake round-trip.
 
 Unit tests build `TickStore` against a local filesystem path (the `base`

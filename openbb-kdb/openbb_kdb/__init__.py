@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """kdb+ read-through cache provider for the OpenBB Platform."""
 
 from openbb_core.provider.abstract.provider import Provider

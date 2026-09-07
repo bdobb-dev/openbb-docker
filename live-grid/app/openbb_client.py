@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Client for the OpenBB API on loopback.
 
 Going through the real API (rather than importing the provider) means the demo

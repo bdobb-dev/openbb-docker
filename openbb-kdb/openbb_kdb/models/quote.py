@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Equity quotes served from the live tick store.
 
 `last_price` comes from the newest tick live-grid recorded; `prev_close` from

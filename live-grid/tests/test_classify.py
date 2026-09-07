@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Tests for app.classify."""
 
 from app.classify import FEEDS, classify, snapshot_ticker, split_by_feed

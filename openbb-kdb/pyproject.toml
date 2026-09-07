@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
@@ -8,7 +11,7 @@ version = "10.0.0"
 description = "kdb+ read-through cache provider for the OpenBB Platform"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "AGPL-3.0-only" }
+license = { text = "Apache-2.0" }
 dependencies = [
     # Upper bound is deliberate. This extension reaches past the documented
     # ODP surface (Provider/Fetcher/Data/QueryParams/Extension/OBBject plus
