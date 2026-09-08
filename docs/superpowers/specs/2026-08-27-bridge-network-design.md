@@ -1,3 +1,6 @@
+<!-- Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 > **SUPERSEDED** by `2026-08-27-internal-network-from-ep1-design.md`, which
 > builds the internal network from Ep. 1 instead of migrating to it at Ep. 11.
 > This document remains the reference for migrating the **running NAS**, which

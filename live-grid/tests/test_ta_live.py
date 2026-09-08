@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Live deltas: only revised bars travel, and repainting indicators do not."""
 
 from app.ta.figure import delta, trace_index

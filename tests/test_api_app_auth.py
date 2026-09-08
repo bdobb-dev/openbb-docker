@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """The blanket Basic auth guard on api_app.py's factory.
 
 Upstream wires `authenticate_user` only into the /api/v1 command router, so

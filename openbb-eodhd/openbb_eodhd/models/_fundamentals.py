@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Shared EODHD /fundamentals fetch with a single-flight TTL cache.
 
 OpenBB invokes each widget's fetcher independently, so a dashboard of N

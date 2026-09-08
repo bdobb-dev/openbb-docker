@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """The subscription API: grouping, and a cap that counts the vendor's view."""
 
 from tests.test_main import make_client

@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """EODHD congressional trades (/congressional-trades).
 
 The SDK has no wrapper for this endpoint yet, so the request rides
