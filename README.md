@@ -21,6 +21,7 @@ from later chapters is.
 | v11.0.0 | Ep. 11 — The Shared Store | MinIO as its own tailnet node + Delta Lake (`provider="deltalake"`) + `tick-lab` + the `live_chart` widget |
 | v11.1.0 | Ep. 11 — The Shared Store | `tick-lab`'s EODHD-through-the-API reference adapter — the per-minute 2023 comparison yfinance cannot serve |
 | v11.1.1 | Ep. 11 — The Shared Store | `tick-lab`'s in-process OpenBB reference adapter (`--reference eodhd-local`) — the same call made locally, and what it costs versus `eodhd-api` |
+| v11.4.0 | Ep. 11 — The Shared Store | `sip-backfill`: the consolidated-tape tick history (EODHD Tick Data API, T+1) walked into the store one week at a time — one Delta table per symbol partitioned by day, a daily trailing-7-day refresh, Delta versions as the corrections audit |
 
 Ep. 11's three tags point at the same commit. The chapter was built and
 verified as one body of work — the rows above describe what each release
