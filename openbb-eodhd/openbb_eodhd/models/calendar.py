@@ -39,6 +39,7 @@ from openbb_core.provider.standard_models.economic_calendar import (
 from openbb_core.provider.utils.errors import EmptyDataError, UnauthorizedError
 from pydantic import Field
 
+from openbb_eodhd.economic_taxonomy import classify
 from openbb_eodhd.models._client import get_client, raise_sdk_error
 
 
@@ -387,10 +388,14 @@ class EODHDEconomicCalendarFetcher(
     def transform_data(query, data: list[dict], **kwargs) -> list[EODHDEconomicCalendarData]:  # pylint: disable=unused-argument
         rows = []
         for it in data:
+            event = it.get("type")
+            source, category = classify(event)
             rows.append(EODHDEconomicCalendarData.model_validate({
                 "date": _datetime(it.get("date")),
                 "country": it.get("country"),
-                "event": it.get("type"),
+                "event": event,
+                "source": source,
+                "category": category,
                 "consensus": it.get("estimate"),
                 "previous": it.get("previous"),
                 "actual": it.get("actual"),

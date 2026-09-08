@@ -195,6 +195,24 @@ Low value and approximate; excluded from the default scope per design review:
 | CalendarEvents | no corporate-events calendar (earnings/div/ipo/splits are separate) | FMP |
 | RiskPremium | FMP = equity risk premium by country; EODHD only sovereign (different) | FMP |
 
+## Extension version semantics
+
+The `openbb-eodhd` package version states **what the extension covers**, not
+which chapter it shipped in:
+
+| Extension version | Meaning | Fetchers |
+|---|---|---|
+| **9.0.0** | Base integration — fundamentals and OHLCV mapped onto the OpenBB model | 16 |
+| **9.1.0 – 9.4.0** | Intermediate parity phases (ownership/insider/estimates, company core, calendars/discovery) | — |
+| **9.5.0** | **Full FMP parity** — every standard model FMP registers that EODHD can back | 52 |
+| **9.6.0** | Economic-calendar rows carry `source` and `category` from the three-level statistics index (Source → Release → Statistic) | 52 |
+
+9.6.0 adds no fetchers — it enriches the existing economic-calendar rows, so
+the fetcher count holds at 52. A tree carrying all 52 fetchers is 9.5.0 or
+later by definition. Keep `pyproject.toml`
+and this document moving together: if the fetcher set changes, the version and
+this table change in the same commit.
+
 ## Phasing
 
 Each phase: model files + tests + register in `__init__.py` + container rebuild +
