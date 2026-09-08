@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 # OpenBB Platform API, containerized. Companion image for
 # "Adventures in OpenBB, Ep. 1: Your Own Bloomberg in a Closet" (v1.0.0).
 #
