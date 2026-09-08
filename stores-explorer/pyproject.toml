@@ -10,6 +10,7 @@ name = "stores-explorer"
 version = "11.2.0"
 description = "Read-only widget backend for browsing the shared Delta Lake/kdb+ store"
 requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
 dependencies = [
     "fastapi>=0.110",
     "uvicorn>=0.29",
