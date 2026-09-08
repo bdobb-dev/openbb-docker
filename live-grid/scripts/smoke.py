@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Connect to the real EODHD crypto websocket for ~12s and verify ticks arrive.
 
 Crypto trades 24/7, so this is runnable at any hour. Usage:

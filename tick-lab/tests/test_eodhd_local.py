@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """In-process OpenBB: the same call, locally -- including the 403 path."""
 
 import pandas as pd

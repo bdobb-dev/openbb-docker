@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Ownership of the q process, its IPC connection, and the thread that may touch it.
 
 q is a child of THIS container, bound to `KdbConfig.bind_host` ("127.0.0.1"

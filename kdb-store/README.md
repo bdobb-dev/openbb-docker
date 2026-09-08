@@ -1,3 +1,6 @@
+<!-- Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # kdb-store
 
 The shared kdb+ plumbing: the `q` child process, its IPC connection, and the

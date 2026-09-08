@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Fetching a cache miss from whichever provider the user configured.
 
 Providers are resolved BY NAME through OpenBB's registry rather than imported,

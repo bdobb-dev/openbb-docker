@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Two interchangeable engines behind one shape.
 
 Both emit the same column names, so panes and figure never learn which ran.

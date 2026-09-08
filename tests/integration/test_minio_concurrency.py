@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Spec gate: delta-rs commit atomicity on MinIO via conditional puts.
 
 Eight writers appending concurrently must ALL land (no lost update) or fail

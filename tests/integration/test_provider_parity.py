@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """provider="deltalake" must return the same 1-minute bars tick-lab computes.
 
 Runs INSIDE the Platform image (it needs openbb + the deltalake extension) and

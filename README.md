@@ -1,3 +1,6 @@
+<!-- Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # openbb-docker
 
 Self-hosted **OpenBB Platform** in Docker, behind a Tailscale sidecar — the
@@ -289,5 +292,7 @@ OPENBB_URL=https://openbb.<your-tailnet>.ts.net scripts/smoke.sh
 
 ## License
 
-AGPL-3.0-only — this repo builds and serves OpenBB Platform itself, which is
-AGPL-3.0-only upstream.
+Apache-2.0 — see [`LICENSE`](LICENSE). That covers the files in this
+repository. The images it builds bundle OpenBB Platform and MinIO, which stay
+under their own AGPL-3.0 licences; see
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

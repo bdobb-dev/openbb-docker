@@ -1,3 +1,6 @@
+<!-- Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Ep. 11 — Delta Lake replaces ArcticDB as the shared store
 
 Design spec for Adventures in OpenBB, Chapter 11. Supersedes the storage

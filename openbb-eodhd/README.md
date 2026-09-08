@@ -1,3 +1,6 @@
+<!-- Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # openbb-eodhd
 
 An [EODHD](https://eodhd.com) (EOD Historical Data) provider extension for the
@@ -74,4 +77,4 @@ python -c "import openbb; openbb.build()"   # regenerate the static package
 
 ## License
 
-AGPL-3.0-only.
+Apache-2.0 — see `LICENSE`.

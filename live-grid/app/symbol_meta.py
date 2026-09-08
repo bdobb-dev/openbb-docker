@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Per-symbol display metadata: logo, name, 52-week levels.
 
 One filtered /fundamentals call per symbol — the multi-path filter returns
