@@ -20,6 +20,11 @@ restart resumes mid-week and a NAS reboot loses nothing.
 
   sip_backfill.py --week 2026-08-31            one week, then exit
   sip_backfill.py --loop [--until 2008-01-01]  each cycle, in priority order:
+                                               0. the daily pass, once a day after
+                                                  02:05 New York: the trailing 7
+                                                  days for every member, so
+                                                  yesterday lands and the six days
+                                                  before it pick up late prints
                                                1. the newest complete week not yet
                                                   loaded (T+1: complete from
                                                   Saturday 08:00 UTC)
@@ -28,6 +33,7 @@ restart resumes mid-week and a NAS reboot loses nothing.
                                                   symbols not retried in 24 h
                                                4. the next week backwards
                                                sleeps when nothing is due
+  sip_backfill.py --daily [2026-09-08]         one daily pass now
   sip_backfill.py --settle 2026-08-31          settle one week now (re-fetch all)
   sip_backfill.py --retry 2026-08-31           retry that week's failures now
 
@@ -42,7 +48,9 @@ and given up after SIP_RETRY_MAX attempts (BRK-B, BF-B never resolve).
 
 Env: EODHD_API_KEY, DELTA_S3_* (tick-lab's S3Config), SIP_WORKERS (6),
 SIP_WORK (/tmp/sip), SIP_LIBRARY (ticks_sip), SIP_SETTLE_LAG_DAYS (7),
-SIP_RETRY_MAX (3).
+SIP_RETRY_MAX (3), SIP_VACUUM_DAYS (30: on Sundays the daily pass drops table
+versions older than this, since every daily rewrite of a partition keeps
+the previous file; 0 disables).
 """
 from __future__ import annotations
 
@@ -115,9 +123,12 @@ class Universe:
                 self.caps.setdefault(row["code"], row.get("market_capitalization") or 0)
 
     def for_week(self, monday: date) -> list[str]:
-        friday = monday + timedelta(days=4)
+        return self.for_range(monday, monday + timedelta(days=4))
+
+    def for_range(self, first: date, last: date) -> list[str]:
+        """Members whose tenure overlaps [first, last] at all."""
         codes = {code for code, start, end in self.members
-                 if start <= friday and (end is None or end >= monday)}
+                 if start <= last and (end is None or end >= first)}
         # Ranked members first (cap desc), the rest alphabetical.
         return sorted(codes, key=lambda c: (c not in self.caps, -self.caps.get(c, 0), c))
 
@@ -183,14 +194,14 @@ class Progress:
 
 
 # -- per-symbol pipeline --------------------------------------------------------
-def load_symbol(sym: str, key: str, store: TickStore, library: str, monday: date, work: Path, diff: bool = False) -> dict:
+def load_symbol(sym: str, key: str, store: TickStore, library: str, start: date, work: Path, diff: bool = False, ndays: int = 5) -> dict:
     """Fetch, save, write, verify, clean. With diff=True (settle pass) the
     rows already stored for the week are read first and the result carries
     `added` / `removed` against them plus the Delta version they live in."""
     out: dict = {}
     t0 = time.time()
-    frm = int(datetime(monday.year, monday.month, monday.day, tzinfo=timezone.utc).timestamp())
-    to = frm + 5 * 86400  # Mon 00:00 .. Sat 00:00 UTC
+    frm = int(datetime(start.year, start.month, start.day, tzinfo=timezone.utc).timestamp())
+    to = frm + ndays * 86400  # e.g. Mon 00:00 .. Sat 00:00 UTC (the API allows 7 days)
     q = urllib.parse.urlencode({"s": sym, "from": frm, "to": to, "api_token": key})
     try:
         frames = [pd.DataFrame(_get_json(f"{TICKS}?{q}"))]
@@ -199,7 +210,7 @@ def load_symbol(sym: str, key: str, store: TickStore, library: str, monday: date
         # server-side timeout. Fall back to one call per day.
         out["note"] = f"week call failed ({str(e)[:40]}); fetched per day"
         frames = []
-        for d in range(5):
+        for d in range(ndays):
             qd = urllib.parse.urlencode({"s": sym, "from": frm + d * 86400, "to": frm + (d + 1) * 86400, "api_token": key})
             raw = _get_json(f"{TICKS}?{qd}")
             if raw and "ts" in raw:
@@ -217,15 +228,15 @@ def load_symbol(sym: str, key: str, store: TickStore, library: str, monday: date
     df = df.set_index("date").sort_index()
     out["rows"] = int(len(df))
 
-    local = work / f"{sym}_{monday}.parquet"
+    local = work / f"{sym}_{start}.parquet"
     df.to_parquet(local)
     out["local_bytes"] = local.stat().st_size
 
     from deltalake import DeltaTable
     if diff and DeltaTable.is_deltatable(store._path(library, sym), storage_options=store._opts):  # noqa: SLF001
         prev = DeltaTable(store._path(library, sym), storage_options=store._opts)  # noqa: SLF001
-        week_days = [str(monday + timedelta(days=i)) for i in range(5)]
-        before = prev.to_pyarrow_dataset(partitions=[("day", "in", week_days)]).to_table(columns=["day", "seq"]).to_pandas()
+        span_days = [str(start + timedelta(days=i)) for i in range(ndays)]
+        before = prev.to_pyarrow_dataset(partitions=[("day", "in", span_days)]).to_table(columns=["day", "seq"]).to_pandas()
         old_keys = set(zip(before["day"], before["seq"]))
         new_keys = set(zip(df.index.strftime("%Y-%m-%d"), df["seq"]))
         out["version_before"] = prev.version()
@@ -236,7 +247,7 @@ def load_symbol(sym: str, key: str, store: TickStore, library: str, monday: date
     # `fetched` makes Delta history answer "what did the vendor serve when":
     # every re-fetch is a new table version, readable by time travel.
     days = store.replace_days(library, sym, df, metadata={
-        "source": "eodhd-unicornbay-tickdata", "week": str(monday),
+        "source": "eodhd-unicornbay-tickdata", "span": f"{start}/{ndays}d",
         "fetched": datetime.now(timezone.utc).isoformat(timespec="seconds")})
     out["write_s"] = round(time.time() - t1, 1)
 
@@ -284,7 +295,7 @@ def load_week(monday: date, uni: Universe, key: str, store: TickStore, library: 
     log.info("week %s [%s]: %d members, %d done, %d to fetch", monday, mode, len(symbols), len(prog.state["done"]), len(todo))
     t0 = time.time()
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futs = {pool.submit(load_symbol, s, key, store, library, monday, work, mode == "settle"): s for s in todo}
+        futs = {pool.submit(load_symbol, s, key, store, library, monday, work, mode == "settle"): s for s in todo}  # ndays=5
         for i, fut in enumerate(as_completed(futs), 1):
             s = futs[fut]
             try:
@@ -310,6 +321,135 @@ def load_week(monday: date, uni: Universe, key: str, store: TickStore, library: 
              f", {sum(st['settle_added'].values()):,} rows added by settle" if mode == "settle" else "",
              f"{sum(r.get('rows', 0) for r in st['done'].values()):,}", (time.time() - t0) / 60)
     return prog
+
+
+# -- daily rolling refresh -----------------------------------------------------------
+ET = "America/New_York"
+
+
+def _read_json(fsys, path: str) -> dict | None:
+    try:
+        with fsys.open_input_stream(path) as f:
+            return json.loads(f.read())
+    except (FileNotFoundError, OSError):
+        return None
+
+
+def _write_json(fsys, path: str, obj: dict) -> None:
+    with fsys.open_output_stream(path) as f:
+        f.write(json.dumps(obj, indent=1).encode())
+
+
+def daily_due(store: TickStore, library: str, now: datetime) -> date | None:
+    """The UTC date to run a daily pass for, or None. Due once per day after
+    02:05 New York time (the vendor finishes loading yesterday by ~02:00 ET)."""
+    from zoneinfo import ZoneInfo
+    local = now.astimezone(ZoneInfo(ET))
+    if (local.hour, local.minute) < (2, 5):
+        return None
+    today = now.date()
+    fsys, root = store._fs_and_root()  # noqa: SLF001
+    st = _read_json(fsys, f"{root}/{library}/_progress/daily/{today}.json")
+    return None if st and st.get("finished") else today
+
+
+def daily_pass(today: date, uni: Universe, key: str, store: TickStore, library: str, work: Path,
+               workers: int, vacuum_days: int) -> None:
+    """Fetch the trailing 7 days [today-7, today) for every member, replacing
+    those partitions: yesterday arrives, the six days before it pick up late
+    prints. Records to _progress/daily/<today>.json (resumable), then
+    finalises the weekly progress files those days belong to, and vacuums
+    versions older than vacuum_days on Sundays."""
+    fsys, root = store._fs_and_root()  # noqa: SLF001
+    path = f"{root}/{library}/_progress/daily/{today}.json"
+    first = today - timedelta(days=7)
+    st = _read_json(fsys, path) or {"date": str(today), "window": [str(first), str(today - timedelta(days=1))],
+                                   "started": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                   "finished": None, "done": {}, "failed": {}}
+    lock = threading.Lock()
+    symbols = uni.for_range(first, today - timedelta(days=1))
+    todo = [s for s in symbols if s not in st["done"]]
+    log.info("daily %s [%s..%s]: %d members, %d done, %d to fetch", today, first, today - timedelta(days=1), len(symbols), len(st["done"]), len(todo))
+    t0 = time.time()
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = {pool.submit(load_symbol, s, key, store, library, first, work, True, 7): s for s in todo}
+        for i, fut in enumerate(as_completed(futs), 1):
+            s = futs[fut]
+            try:
+                r = fut.result()
+                with lock:
+                    st["failed"].pop(s, None)
+                    st["done"][s] = {k: r[k] for k in ("rows", "days", "added", "removed", "version_before", "fetch_s", "note") if k in r}
+                    _write_json(fsys, path, st)
+                log.info("[daily %s %3d/%d] %-6s rows=%9s added=%7s fetch=%6.1fs elapsed=%5.1fm", today, i, len(todo), s,
+                         f"{r.get('rows', 0):,}", f"{r.get('added', 0):,}", r.get("fetch_s", 0), (time.time() - t0) / 60)
+            except Exception as e:  # noqa: BLE001 -- one bad symbol must not stop the pass
+                with lock:
+                    st["failed"][s] = str(e)[:300]
+                    _write_json(fsys, path, st)
+                log.warning("[daily %s %3d/%d] %-6s FAILED %s", today, i, len(todo), s, str(e)[:120])
+                (work / f"{s}_{first}.parquet").unlink(missing_ok=True)
+    st["finished"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    st["wall_minutes"] = round((time.time() - t0) / 60, 1)
+    _write_json(fsys, path, st)
+    log.info("daily %s complete: %d loaded, %d failed, %s ticks, %s rows added, %.1f min",
+             today, len(st["done"]), len(st["failed"]), f"{sum(r['rows'] for r in st['done'].values()):,}",
+             f"{sum(r.get('added', 0) for r in st['done'].values()):,}", (time.time() - t0) / 60)
+    finalize_weeks(today, uni, store, library)
+    if today.weekday() == 6 and vacuum_days > 0:
+        from deltalake import DeltaTable
+        for s in st["done"]:
+            try:
+                DeltaTable(store._path(library, s), storage_options=store._opts).vacuum(  # noqa: SLF001
+                    retention_hours=vacuum_days * 24, dry_run=False, enforce_retention_duration=vacuum_days >= 7)
+            except Exception as e:  # noqa: BLE001
+                log.warning("vacuum %s failed: %s", s, str(e)[:120])
+        log.info("vacuumed versions older than %d days for %d symbols", vacuum_days, len(st["done"]))
+
+
+def finalize_weeks(today: date, uni: Universe, store: TickStore, library: str) -> None:
+    """From the daily records, write/merge the weekly progress files of the
+    weeks the trailing window has touched, so the weekly loader never redoes
+    them. A week is `finished` once its Saturday has passed (every day
+    attempted) and `settled` once its Friday is 7 days old (every day
+    refreshed by the daily passes since). A symbol missing a trading day is
+    listed as failed, so the retry sweep refetches its whole week."""
+    fsys, root = store._fs_and_root()  # noqa: SLF001
+    # per (symbol, day) -> rows, from every daily file of the last 3 weeks (latest wins)
+    rows: dict[tuple[str, str], int] = {}
+    for d in range(21, -1, -1):
+        rec = _read_json(fsys, f"{root}/{library}/_progress/daily/{today - timedelta(days=d)}.json")
+        if not rec:
+            continue
+        for sym, r in rec["done"].items():
+            for day, n in r.get("days", {}).items():
+                rows[(sym, day)] = n
+    monday = today - timedelta(days=today.weekday())
+    for back in (0, 7, 14):
+        m = monday - timedelta(days=back)
+        if m + timedelta(days=5) > today:  # Saturday not reached: still being loaded
+            continue
+        week_days = [str(m + timedelta(days=i)) for i in range(5)]
+        trading = [d for d in week_days if any(rows.get((s, d), 0) > 0 for s in uni.for_week(m))]
+        if not trading:
+            continue
+        prog = Progress(store, library, m)
+        st = prog.state
+        for sym in uni.for_week(m):
+            have = {d: rows[(sym, d)] for d in trading if (sym, d) in rows}
+            if len(have) == len(trading):
+                st["done"].setdefault(sym, {"rows": sum(have.values()), "days": have, "source": "daily"})
+                st["failed"].pop(sym, None)
+            elif sym not in st["done"] and sym not in st["empty"]:
+                st["failed"].setdefault(sym, f"daily: missing {sorted(set(trading) - set(have))}")
+        st["universe"] = len(uni.for_week(m))
+        st.setdefault("started", None)
+        st["started"] = st["started"] or datetime.now(timezone.utc).isoformat(timespec="seconds")
+        st["finished"] = st["finished"] or datetime.now(timezone.utc).isoformat(timespec="seconds")
+        if m + timedelta(days=11) <= today:  # Friday + 7
+            st["settled"] = st["settled"] or datetime.now(timezone.utc).isoformat(timespec="seconds")
+        prog.save()
+        log.info("week %s finalised from daily passes: %d done, %d failed, settled=%s", m, len(st["done"]), len(st["failed"]), bool(st["settled"]))
 
 
 def latest_complete_monday(now: datetime | None = None) -> date:
@@ -345,6 +485,7 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
     ap = argparse.ArgumentParser()
     ap.add_argument("--week", help="Monday, YYYY-MM-DD: load this one week and exit")
+    ap.add_argument("--daily", nargs="?", const="today", help="run one daily pass (trailing 7 days) for a UTC date (default today) and exit")
     ap.add_argument("--settle", help="Monday: settle-pass this one week now and exit")
     ap.add_argument("--retry", help="Monday: retry this one week's failures now and exit")
     ap.add_argument("--loop", action="store_true", help="walk backwards from the newest complete week, forever")
@@ -353,8 +494,8 @@ def main() -> int:
     ap.add_argument("--only", help="comma-separated symbols: restrict the universe")
     ap.add_argument("--force", action="store_true", help="with --only: re-fetch even if already done")
     a = ap.parse_args()
-    if not (a.week or a.settle or a.retry or a.loop):
-        ap.error("--week, --settle, --retry or --loop")
+    if not (a.week or a.settle or a.retry or a.loop or a.daily):
+        ap.error("--week, --daily, --settle, --retry or --loop")
     key = os.environ["EODHD_API_KEY"]
     library = os.environ.get("SIP_LIBRARY", "ticks_sip")
     work = Path(os.environ.get("SIP_WORK", "/tmp/sip"))
@@ -364,7 +505,15 @@ def main() -> int:
     log.info("universe: %d historical members, %d ranked by cap", len(uni.members), len(uni.caps))
     settle_lag = int(os.environ.get("SIP_SETTLE_LAG_DAYS", "7"))
     retry_max = int(os.environ.get("SIP_RETRY_MAX", "3"))
+    vacuum_days = int(os.environ.get("SIP_VACUUM_DAYS", "30"))
     only = set(a.only.split(",")) if a.only else None
+
+    if a.daily:
+        d = datetime.now(timezone.utc).date() if a.daily == "today" else date.fromisoformat(a.daily)
+        if only:
+            uni.members = [m for m in uni.members if m[0] in only]
+        daily_pass(d, uni, key, store, library, work, a.workers, vacuum_days)
+        return 0
 
     if a.week:
         load_week(date.fromisoformat(a.week), uni, key, store, library, work, a.workers, only, a.force)
@@ -379,6 +528,11 @@ def main() -> int:
     floor = date.fromisoformat(a.until)
     while True:
         now = datetime.now(timezone.utc)
+        # 0. the daily rolling refresh: yesterday plus late prints for the six days before
+        d = daily_due(store, library, now)
+        if d:
+            daily_pass(d, uni, key, store, library, work, a.workers, vacuum_days)
+            continue
         newest = latest_complete_monday(now)
         # 1. the newest week, if it has never been loaded
         if not is_complete(store, library, newest):
@@ -402,8 +556,8 @@ def main() -> int:
                 break
             monday -= timedelta(days=7)
         if target is None:
-            log.info("caught up back to %s and nothing due; sleeping 1h", floor)
-            time.sleep(3600)
+            log.info("caught up back to %s and nothing due; sleeping 15 min", floor)
+            time.sleep(900)
             continue
         load_week(target, uni, key, store, library, work, a.workers)
 
