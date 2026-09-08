@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openbb-eodhd"
-version = "9.5.0"
+version = "9.6.0"
 description = "EODHD provider extension for OpenBB (equity/crypto/currency historical, fundamentals, corporate actions, ownership, insider trading, analyst estimates)"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -77,6 +77,9 @@ ECON_RESP = [
     {"type": "Foreign Bond Investment", "comparison": None, "period": "Aug/29",
      "country": "JP", "date": "2026-09-02 23:50:00", "actual": None,
      "previous": -1978.4, "estimate": None, "change": None, "change_percentage": None},
+    {"type": "Made Up Event", "comparison": None, "period": None,
+     "country": "XX", "date": "2026-09-02 23:55:00", "actual": None,
+     "previous": None, "estimate": None, "change": None, "change_percentage": None},
 ]
 
 CREDS = {"eodhd_api_key": "test_key_123"}
@@ -203,6 +206,18 @@ class TestEconomicCalendar:
         assert nz.comparison == "qoq"
         assert nz.date.year == 2026 and nz.date.hour == 22
 
+    def test_transform_sets_source_and_category(self):
+        query = EODHDEconomicCalendarQueryParams()
+        rows = EODHDEconomicCalendarFetcher.transform_data(query, ECON_RESP)
+        jp = rows[1]
+        assert jp.event == "Foreign Bond Investment"
+        assert jp.source == "Treasury"
+        assert jp.category == "TIC"
+        unknown = rows[2]
+        assert unknown.event == "Made Up Event"
+        assert unknown.source is None
+        assert unknown.category is None
+
     def test_extract_passes_filters(self):
         query = EODHDEconomicCalendarQueryParams(country="US", comparison="yoy")
         client = _client("get_economic_events_data", ECON_RESP)
@@ -210,7 +225,7 @@ class TestEconomicCalendar:
             rows = run_async(
                 EODHDEconomicCalendarFetcher.aextract_data, query, CREDS
             )
-        assert len(rows) == 2
+        assert len(rows) == 3
         client.get_economic_events_data.assert_called_once_with(
             date_from=None, date_to=None, country="US", comparison="yoy", limit=1000
         )
