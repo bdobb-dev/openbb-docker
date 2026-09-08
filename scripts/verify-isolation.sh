@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 # Run this from a SECOND tailnet device (not the NAS). It proves the walls:
 # the API must be reachable ONLY through Serve, never on its raw port.
 #   scripts/verify-isolation.sh openbb.<your-tailnet>.ts.net
