@@ -6,7 +6,7 @@ any week can be re-run. Columns: date (naive UTC, index), price, size, mkt,
 sub_mkt, seq, sl -- the Tick Data API's fields with `shares` renamed to `size`.
 
 Per symbol: one API call for the whole week (7-day max; the heaviest names time
-out and fall back to five day calls, deduplicated on `seq`), save to a local
+out and fall back to five day calls, deduplicated on (ts, seq)), save to a local
 parquet, write to Delta, read the days back and check row count and seq
 uniqueness, delete the parquet.
 
@@ -165,8 +165,10 @@ def load_symbol(sym: str, key: str, store: TickStore, library: str, monday: date
     if not frames:
         out["rows"] = 0
         return out
-    # Day calls share their boundary second (from*1000 <= ts <= to*1000): dedup on seq.
-    df = pd.concat(frames, ignore_index=True).drop_duplicates("seq").rename(columns={"shares": "size"})
+    # Day calls share their boundary second (from*1000 <= ts <= to*1000), so a
+    # print stamped exactly on the boundary arrives twice. seq is unique per
+    # DAY only (values recur across days), so dedup on (ts, seq), never seq alone.
+    df = pd.concat(frames, ignore_index=True).drop_duplicates(["ts", "seq"]).rename(columns={"shares": "size"})
     df["date"] = pd.to_datetime(df.pop("ts"), unit="ms", utc=True).dt.tz_localize(None)
     df = df.set_index("date").sort_index()
     out["rows"] = int(len(df))
@@ -176,7 +178,11 @@ def load_symbol(sym: str, key: str, store: TickStore, library: str, monday: date
     out["local_bytes"] = local.stat().st_size
 
     t1 = time.time()
-    days = store.replace_days(library, sym, df, metadata={"source": "eodhd-unicornbay-tickdata", "week": str(monday)})
+    # `fetched` makes Delta history answer "what did the vendor serve when":
+    # every re-fetch is a new table version, readable by time travel.
+    days = store.replace_days(library, sym, df, metadata={
+        "source": "eodhd-unicornbay-tickdata", "week": str(monday),
+        "fetched": datetime.now(timezone.utc).isoformat(timespec="seconds")})
     out["write_s"] = round(time.time() - t1, 1)
 
     t2 = time.time()
@@ -200,12 +206,12 @@ def load_symbol(sym: str, key: str, store: TickStore, library: str, monday: date
     return out
 
 
-def load_week(monday: date, uni: Universe, key: str, store: TickStore, library: str, work: Path, workers: int, only: set[str] | None = None) -> Progress:
+def load_week(monday: date, uni: Universe, key: str, store: TickStore, library: str, work: Path, workers: int, only: set[str] | None = None, force: bool = False) -> Progress:
     prog = Progress(store, library, monday)
     symbols = uni.for_week(monday)
     if only:
         symbols = [s for s in symbols if s in only]
-    todo = prog.pending(symbols)
+    todo = symbols if (only and force) else prog.pending(symbols)
     if prog.state["started"] is None:
         prog.state["started"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     prog.state["universe"] = len(symbols)
@@ -258,7 +264,8 @@ def main() -> int:
     ap.add_argument("--loop", action="store_true", help="walk backwards from the newest complete week, forever")
     ap.add_argument("--until", default=str(FLOOR), help="oldest Monday to load in --loop mode")
     ap.add_argument("--workers", type=int, default=int(os.environ.get("SIP_WORKERS", "6")))
-    ap.add_argument("--only", help="comma-separated symbols (testing): restrict the universe")
+    ap.add_argument("--only", help="comma-separated symbols: restrict the universe")
+    ap.add_argument("--force", action="store_true", help="with --only: re-fetch even if already done")
     a = ap.parse_args()
     if not a.week and not a.loop:
         ap.error("--week or --loop")
@@ -271,7 +278,7 @@ def main() -> int:
     log.info("universe: %d historical members, %d ranked by cap", len(uni.members), len(uni.caps))
 
     if a.week:
-        load_week(date.fromisoformat(a.week), uni, key, store, library, work, a.workers, set(a.only.split(",")) if a.only else None)
+        load_week(date.fromisoformat(a.week), uni, key, store, library, work, a.workers, set(a.only.split(",")) if a.only else None, a.force)
         return 0
 
     floor = date.fromisoformat(a.until)
