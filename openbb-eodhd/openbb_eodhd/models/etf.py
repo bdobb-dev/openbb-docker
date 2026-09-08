@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """EODHD ETF models — profile, holdings, sectors, regions from the shared
 /fundamentals bundle's ETF_Data section (one cached call per symbol).
 

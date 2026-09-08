@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """EODHD macro indicators (/macro-indicator/{ALPHA3}) — the Phase-4 macro
 cluster: EconomicIndicators, GdpReal, GdpNominal, ConsumerPriceIndex,
 Unemployment, CountryProfile.

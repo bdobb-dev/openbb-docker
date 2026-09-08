@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """The SDK must honour OpenBB's configured HTTP settings.
 
 Every other provider reaches the network through openbb_core's helpers, so a

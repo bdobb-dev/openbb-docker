@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 # Every locally-built image must carry THIS release's version as its tag.
 #
 # docker-compose declares `build:` AND `image:` for the images this repo builds.
