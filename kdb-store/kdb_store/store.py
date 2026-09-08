@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Every q statement the cache issues.
 
 Kept in one module so the q surface is auditable and mockable in one place.

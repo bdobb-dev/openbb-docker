@@ -1,3 +1,6 @@
+<!-- Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Technical Analysis Chart — a Polars indicator engine behind a Workspace widget
 
 Design spec for Adventures in OpenBB, chapter TBD. Companion release: TBD

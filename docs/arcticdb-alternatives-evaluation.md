@@ -1,3 +1,6 @@
+<!-- Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # ArcticDB Alternatives Evaluation (Ep. 11)
 
 *2026-09-01 — prompted by ArcticDB licensing concerns.*
