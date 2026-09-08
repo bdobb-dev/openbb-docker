@@ -1,3 +1,6 @@
+<!-- Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # kdb-x — KDB-X as a container, for any platform
 
 **This directory ships no KX software.** It is a recipe. The build downloads

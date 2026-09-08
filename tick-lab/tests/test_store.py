@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Date-range bounds, and the ArcticDB round-trip against a real MinIO.
 
 The round-trip test is skipped unless TICK_LAB_TEST_S3=1 and the ARCTICDB_S3_*

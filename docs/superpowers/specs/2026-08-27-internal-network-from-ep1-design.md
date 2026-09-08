@@ -1,3 +1,6 @@
+<!-- Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # The internal network, from Ep. 1 — design
 
 Build the stack on a dedicated Docker bridge from Episode 1. Every later

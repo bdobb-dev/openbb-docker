@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """S3 connection settings, read from the same ARCTICDB_S3_* names the container uses.
 
 Keeping one convention on both sides means `minio.env` is the single source of

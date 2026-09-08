@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Load N days of daily OHLCV into ArcticDB and verify the round-trip.
 
 Downloads daily bars from yfinance and writes them to an ArcticDB library via

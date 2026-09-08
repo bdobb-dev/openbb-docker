@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """ARCTICDB_S3_* assembly and its precedence against ARCTICDB_URI."""
 
 import pytest

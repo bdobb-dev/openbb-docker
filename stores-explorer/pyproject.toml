@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
@@ -7,6 +10,7 @@ name = "stores-explorer"
 version = "11.2.0"
 description = "Read-only widget backend for browsing the shared ArcticDB/kdb+ store"
 requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
 dependencies = [
     "fastapi>=0.110",
     "uvicorn>=0.29",

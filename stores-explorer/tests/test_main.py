@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Server-layer tests for the ArcticDB half. Every backend call is injected
 -- no real ArcticDB or kdb+ is ever touched."""
 import server

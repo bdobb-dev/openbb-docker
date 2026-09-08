@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """ArcticDB OBBject accessor (write path).
 
 Attaches an `.arcticdb` namespace to every OBBject result so any query can be

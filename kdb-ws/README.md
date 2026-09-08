@@ -1,3 +1,6 @@
+<!-- Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # kdb-ws — the tick cache speaks websocket
 
 `startup.q` turns the Ep. 10 kdb+ tick cache into a live publisher: any

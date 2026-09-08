@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 # stores-explorer: read-only widget backend browsing the shared ArcticDB/kdb+
 # store (Ep. 11) -- the widget's door into the vault, pairing with
 # stores-mcp (the analyst's door). Loopback-only; Tailscale Serve publishes

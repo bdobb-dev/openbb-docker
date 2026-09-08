@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
@@ -8,6 +11,7 @@ version = "11.0.0"
 description = "Read-only MCP server exposing ArcticDB and kdb+ discovery/query tools"
 readme = "README.md"
 requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
 dependencies = [
     "fastmcp>=3.4",
     "pandas",

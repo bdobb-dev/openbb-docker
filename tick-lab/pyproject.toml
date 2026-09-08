@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
@@ -8,7 +11,7 @@ version = "11.1.1"
 description = "Read ticks from the shared ArcticDB store, roll them into bars, and check them against another source"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "AGPL-3.0-only" }
+license = { text = "Apache-2.0" }
 dependencies = [
     "arcticdb>=6.21",
     "pandas>=2.0",

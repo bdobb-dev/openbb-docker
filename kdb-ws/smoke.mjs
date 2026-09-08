@@ -1,3 +1,6 @@
+// Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+// SPDX-License-Identifier: Apache-2.0
+
 // Smoke test: KDB-X websocket pub/sub tick cache (startup.q).
 // Requires the kdb-ws-test container running (see run-test.sh).
 import { execSync } from 'node:child_process';
