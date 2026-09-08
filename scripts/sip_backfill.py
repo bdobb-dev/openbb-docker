@@ -47,7 +47,8 @@ after the lag (the backfill) are already settled and are never re-fetched.
 
 Retry sweep: failed symbols of finished weeks are retried at most once a day,
 and given up after SIP_RETRY_MAX attempts. A symbol that fails in 3 different
-weeks is blacklisted (_progress/_blacklist.json) and never requested again.
+weeks at a ONE-DAY span is blacklisted (_progress/_blacklist.json) and never
+requested again; a 5xx on a longer span only halves the span.
 
 Budget: one request per symbol per window is the floor (10 API calls each;
 100k/day); the daily pass runs only on mornings after a session (Tue-Sat ET).
@@ -87,6 +88,11 @@ FLOOR = date(2008, 1, 1)  # ticks exist back to at least 2008-03 (probed 2026-09
 
 class TooBig(RuntimeError):
     """A 5xx that arrived after a long wait: the server gave up on the span."""
+
+
+class Unservable(RuntimeError):
+    """A 5xx even on a one-day span: the vendor does not serve this symbol
+    (BRK-B, BF-B) or this day. Only these count toward the blacklist."""
 
 
 def _get_json(url: str, timeout: int = 1800, tries: int = 3):
@@ -179,7 +185,9 @@ class Blacklist:
         return set(self.state["blocked"])
 
     def note_week(self, failed: dict) -> None:
-        for sym in failed:
+        for sym, err in failed.items():
+            if not str(err).startswith("unservable"):
+                continue  # a transient failure or a too-big span never blacklists
             self.state["weeks_failed"][sym] = self.state["weeks_failed"].get(sym, 0) + 1
             if self.state["weeks_failed"][sym] >= 3 and sym not in self.state["blocked"]:
                 self.state["blocked"].append(sym)
@@ -266,9 +274,13 @@ def fetch_span(sym: str, key: str, frm: int, ndays: int) -> list:
             try:
                 raw = _get_json(f"{TICKS}?{q}")
                 break
-            except TooBig:
+            except (TooBig, RuntimeError) as e:
+                # A 5xx on a multi-day span -- slow (server timeout) or quick
+                # (the server refuses the span outright, which is how NVDA
+                # and MU weeks fail) -- means: halve it. Only a 5xx on a
+                # single day is a verdict on the symbol.
                 if span == 1:
-                    raise
+                    raise Unservable(str(e)) from e
                 span = (span + 1) // 2
                 # Remember the shrink (a tail chunk shorter than start_span is
                 # not a shrink and must not be remembered as one).
@@ -385,7 +397,7 @@ def load_week(monday: date, uni: Universe, key: str, store: TickStore, library: 
                          r.get("write_s", 0), r.get("verify_s", 0),
                          f" added={r['added']:,}" if "added" in r else "", (time.time() - t0) / 60)
             except Exception as e:  # noqa: BLE001 -- one bad symbol must not stop the week
-                prog.record(s, None, str(e))
+                prog.record(s, None, ("unservable: " if isinstance(e, Unservable) else "") + str(e))
                 log.warning("[%s %3d/%d] %-6s FAILED %s", monday, i, len(todo), s, str(e)[:120])
                 (work / f"{s}_{monday}.parquet").unlink(missing_ok=True)
     if mode == "settle":
