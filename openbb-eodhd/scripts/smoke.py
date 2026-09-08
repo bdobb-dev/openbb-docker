@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Smoke-test every openbb-eodhd command against EODHD's PUBLIC demo token.
 
 The `demo` token is public and serves — with NO limits, all data types — exactly

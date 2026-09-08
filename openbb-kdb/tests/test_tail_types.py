@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """The type boundary between pandas and q, on a window that reaches the present.
 
 The fakes elsewhere in this suite hand back Python-native values and merge bar

@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 # rss-ticker config for the openbb-docker stack (Adventures in OpenBB, Ep. 8).
 #
 # The ticker sits on this stack's private openbb-internal bridge, so it uses
