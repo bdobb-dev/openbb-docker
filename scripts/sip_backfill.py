@@ -5,8 +5,10 @@ Layout: one Delta table per symbol, `ticks_sip/<SYM>`, partitioned by `day`
 any week can be re-run. Columns: date (naive UTC, index), price, size, mkt,
 sub_mkt, seq, sl -- the Tick Data API's fields with `shares` renamed to `size`.
 
-Per symbol: one API call for the whole week (7-day max; the heaviest names time
-out and fall back to five day calls, deduplicated on (ts, seq)), save to a local
+Per symbol: one API call for the whole week (7-day max). A span the server
+times out on is halved rather than retried, and the span that worked is
+remembered per symbol, so a mega-cap costs 2-3 requests, not 3 wasted
+retries plus 5 day calls. Chunks are deduplicated on (ts, seq). Save to a local
 parquet, write to Delta, read the days back and check row count and seq
 uniqueness, delete the parquet.
 
@@ -44,7 +46,11 @@ Delta version; the pass records rows added per symbol. Weeks first fetched
 after the lag (the backfill) are already settled and are never re-fetched.
 
 Retry sweep: failed symbols of finished weeks are retried at most once a day,
-and given up after SIP_RETRY_MAX attempts (BRK-B, BF-B never resolve).
+and given up after SIP_RETRY_MAX attempts. A symbol that fails in 3 different
+weeks is blacklisted (_progress/_blacklist.json) and never requested again.
+
+Budget: one request per symbol per window is the floor (10 API calls each;
+100k/day); the daily pass runs only on mornings after a session (Tue-Sat ET).
 
 Env: EODHD_API_KEY, DELTA_S3_* (tick-lab's S3Config), SIP_WORKERS (6),
 SIP_WORK (/tmp/sip), SIP_LIBRARY (ticks_sip), SIP_SETTLE_LAG_DAYS (7),
@@ -79,9 +85,17 @@ TICKS = "https://eodhd.com/api/mp/unicornbay/tickdata/ticks"
 FLOOR = date(2008, 1, 1)  # ticks exist back to at least 2008-03 (probed 2026-09-07)
 
 
+class TooBig(RuntimeError):
+    """A 5xx that arrived after a long wait: the server gave up on the span."""
+
+
 def _get_json(url: str, timeout: int = 1800, tries: int = 3):
-    """GET with retry on 5xx/429/timeouts. 429 (budget) waits 30 minutes."""
+    """GET with retry on quick 5xx/timeouts. 429 (budget) waits 30 minutes.
+    A 5xx that took over a minute is a server-side timeout on the span --
+    retrying the same call costs another request and another wait, so it
+    raises TooBig immediately for the caller to split the span."""
     for attempt in range(1, tries + 1):
+        t0 = time.time()
         try:
             with urllib.request.urlopen(url, timeout=timeout) as r:
                 return json.loads(r.read())
@@ -91,15 +105,31 @@ def _get_json(url: str, timeout: int = 1800, tries: int = 3):
                 log.warning("429 from EODHD; sleeping 30 min")
                 time.sleep(1800)
                 continue
-            if e.code in (500, 502, 503, 504) and attempt < tries:
-                time.sleep(5 * attempt)
-                continue
+            if e.code in (500, 502, 503, 504):
+                if time.time() - t0 > 60:
+                    raise TooBig(f"HTTP {e.code} after {time.time() - t0:.0f}s") from e
+                if attempt < tries:
+                    time.sleep(5 * attempt)
+                    continue
             raise RuntimeError(f"HTTP {e.code}: {body!r}") from e
         except (TimeoutError, OSError) as e:
             if attempt < tries:
                 time.sleep(5 * attempt)
                 continue
             raise RuntimeError(f"{type(e).__name__}: {e}") from e
+
+
+def _read_json(fsys, path: str) -> dict | None:
+    try:
+        with fsys.open_input_stream(path) as f:
+            return json.loads(f.read())
+    except (FileNotFoundError, OSError):
+        return None
+
+
+def _write_json(fsys, path: str, obj: dict) -> None:
+    with fsys.open_output_stream(path) as f:
+        f.write(json.dumps(obj, indent=1).encode())
 
 
 # -- universe -----------------------------------------------------------------
@@ -134,6 +164,29 @@ class Universe:
 
 
 # -- progress, kept in the bucket next to the data -------------------------------
+class Blacklist:
+    """Symbols the vendor never serves (BRK-B, BF-B, AGN...). A symbol that
+    ends up failed in 3 different weeks is skipped in every later week and
+    daily pass, saving its 3 retries per week and 1 per day. Persisted at
+    _progress/_blacklist.json so a restart does not relearn it."""
+
+    def __init__(self, store: TickStore, library: str):
+        self.fsys, root = store._fs_and_root()  # noqa: SLF001
+        self.path = f"{root}/{library}/_progress/_blacklist.json"
+        self.state = _read_json(self.fsys, self.path) or {"weeks_failed": {}, "blocked": []}
+
+    def blocked(self) -> set[str]:
+        return set(self.state["blocked"])
+
+    def note_week(self, failed: dict) -> None:
+        for sym in failed:
+            self.state["weeks_failed"][sym] = self.state["weeks_failed"].get(sym, 0) + 1
+            if self.state["weeks_failed"][sym] >= 3 and sym not in self.state["blocked"]:
+                self.state["blocked"].append(sym)
+                log.warning("%s failed in 3 weeks; skipping it from now on", sym)
+        _write_json(self.fsys, self.path, self.state)
+
+
 class Progress:
     def __init__(self, store: TickStore, library: str, monday: date):
         self.fsys, root = store._fs_and_root()  # noqa: SLF001
@@ -194,6 +247,41 @@ class Progress:
 
 
 # -- per-symbol pipeline --------------------------------------------------------
+_spans: dict[str, int] = {}  # symbol -> largest span (days) known to succeed
+_spans_lock = threading.Lock()
+
+
+def fetch_span(sym: str, key: str, frm: int, ndays: int) -> list:
+    """The API's frames for [frm, frm+ndays days), as few requests as the
+    server will serve. A span the server times out on is halved, not retried
+    and not dropped straight to single days; the span that worked is
+    remembered so the next window for that symbol starts there."""
+    with _spans_lock:
+        start_span = min(ndays, _spans.get(sym, ndays))
+    frames, pos = [], 0
+    while pos < ndays:
+        span = min(start_span, ndays - pos)
+        while True:
+            q = urllib.parse.urlencode({"s": sym, "from": frm + pos * 86400, "to": frm + (pos + span) * 86400, "api_token": key})
+            try:
+                raw = _get_json(f"{TICKS}?{q}")
+                break
+            except TooBig:
+                if span == 1:
+                    raise
+                span = (span + 1) // 2
+                # Remember the shrink (a tail chunk shorter than start_span is
+                # not a shrink and must not be remembered as one).
+                start_span = span
+                with _spans_lock:
+                    _spans[sym] = span
+                log.info("%s: span too big, trying %d-day chunks", sym, span)
+        if raw and "ts" in raw:
+            frames.append(pd.DataFrame(raw))
+        pos += span
+    return frames
+
+
 def load_symbol(sym: str, key: str, store: TickStore, library: str, start: date, work: Path, diff: bool = False, ndays: int = 5) -> dict:
     """Fetch, save, write, verify, clean. With diff=True (settle pass) the
     rows already stored for the week are read first and the result carries
@@ -201,21 +289,11 @@ def load_symbol(sym: str, key: str, store: TickStore, library: str, start: date,
     out: dict = {}
     t0 = time.time()
     frm = int(datetime(start.year, start.month, start.day, tzinfo=timezone.utc).timestamp())
-    to = frm + ndays * 86400  # e.g. Mon 00:00 .. Sat 00:00 UTC (the API allows 7 days)
-    q = urllib.parse.urlencode({"s": sym, "from": frm, "to": to, "api_token": key})
-    try:
-        frames = [pd.DataFrame(_get_json(f"{TICKS}?{q}"))]
-    except RuntimeError as e:
-        # Mega-caps (NVDA: 2.5M ticks/day) 500 on a whole-week call -- a
-        # server-side timeout. Fall back to one call per day.
-        out["note"] = f"week call failed ({str(e)[:40]}); fetched per day"
-        frames = []
-        for d in range(ndays):
-            qd = urllib.parse.urlencode({"s": sym, "from": frm + d * 86400, "to": frm + (d + 1) * 86400, "api_token": key})
-            raw = _get_json(f"{TICKS}?{qd}")
-            if raw and "ts" in raw:
-                frames.append(pd.DataFrame(raw))
+    frames = fetch_span(sym, key, frm, ndays)
     out["fetch_s"] = round(time.time() - t0, 1)
+    out["requests"] = len(frames) if frames else 1
+    if len(frames) > 1:
+        out["note"] = f"fetched in {len(frames)} chunks"
     frames = [f for f in frames if len(f) and "ts" in f.columns]
     if not frames:
         out["rows"] = 0
@@ -277,7 +355,8 @@ def load_week(monday: date, uni: Universe, key: str, store: TickStore, library: 
     retryable failures, diffing against the stored week; 'retry' = retryable
     failures only."""
     prog = Progress(store, library, monday)
-    symbols = uni.for_week(monday)
+    blacklist = Blacklist(store, library)
+    symbols = [s for s in uni.for_week(monday) if s not in blacklist.blocked()]
     if only:
         symbols = [s for s in symbols if s in only]
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -313,6 +392,7 @@ def load_week(monday: date, uni: Universe, key: str, store: TickStore, library: 
         prog.state["settled"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     elif mode == "load":
         prog.state["finished"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        blacklist.note_week(prog.state["failed"])
     prog.state["wall_minutes"] = round((prog.state.get("wall_minutes") or 0) + (time.time() - t0) / 60, 1)
     prog.save()
     st = prog.state
@@ -327,25 +407,14 @@ def load_week(monday: date, uni: Universe, key: str, store: TickStore, library: 
 ET = "America/New_York"
 
 
-def _read_json(fsys, path: str) -> dict | None:
-    try:
-        with fsys.open_input_stream(path) as f:
-            return json.loads(f.read())
-    except (FileNotFoundError, OSError):
-        return None
-
-
-def _write_json(fsys, path: str, obj: dict) -> None:
-    with fsys.open_output_stream(path) as f:
-        f.write(json.dumps(obj, indent=1).encode())
-
-
 def daily_due(store: TickStore, library: str, now: datetime) -> date | None:
     """The UTC date to run a daily pass for, or None. Due once per day after
     02:05 New York time (the vendor finishes loading yesterday by ~02:00 ET)."""
     from zoneinfo import ZoneInfo
     local = now.astimezone(ZoneInfo(ET))
     if (local.hour, local.minute) < (2, 5):
+        return None
+    if local.weekday() in (6, 0):  # Sunday, Monday: yesterday had no session; save the ~5k calls
         return None
     today = now.date()
     fsys, root = store._fs_and_root()  # noqa: SLF001
@@ -367,7 +436,8 @@ def daily_pass(today: date, uni: Universe, key: str, store: TickStore, library: 
                                    "started": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                                    "finished": None, "done": {}, "failed": {}}
     lock = threading.Lock()
-    symbols = uni.for_range(first, today - timedelta(days=1))
+    blocked = Blacklist(store, library).blocked()
+    symbols = [s for s in uni.for_range(first, today - timedelta(days=1)) if s not in blocked]
     todo = [s for s in symbols if s not in st["done"]]
     log.info("daily %s [%s..%s]: %d members, %d done, %d to fetch", today, first, today - timedelta(days=1), len(symbols), len(st["done"]), len(todo))
     t0 = time.time()
