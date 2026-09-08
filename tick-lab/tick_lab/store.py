@@ -117,7 +117,7 @@ class TickStore:
         """Overwrite `symbol`, so re-running a load is idempotent."""
         import json
 
-        from deltalake import CommitProperties, write_deltalake
+        from deltalake import CommitProperties, WriterProperties, write_deltalake
         from deltalake.exceptions import DeltaError
 
         out = frame.reset_index()
@@ -133,11 +133,63 @@ class TickStore:
                 self._path(library, symbol), out,
                 mode="overwrite", schema_mode="overwrite",
                 storage_options=self._opts, commit_properties=props,
+                # zstd-3: 8.3 B/tick against Snappy's 13.7 on consolidated
+                # ticks (measured 2026-09-07), same write time, read
+                # everywhere the vault is read. Only new writes; old tables
+                # keep their codec until rewritten.
+                writer_properties=WriterProperties(compression="ZSTD", compression_level=3),
             )
         except DeltaError as err:
             raise StoreWriteError(
                 f"Delta rejected the write for {symbol!r} to library {library!r}: {err}"
             ) from err
+
+    def replace_days(
+        self,
+        library: str,
+        symbol: str,
+        frame: pd.DataFrame,
+        metadata: dict | None = None,
+    ) -> list[str]:
+        """Write ticks into the ONE table for `symbol`, replacing only the days
+        present in `frame`.
+
+        Layout: s3://<bucket>/<library>/<symbol>, Delta-partitioned by `day`
+        (a YYYY-MM-DD string derived from the `date` index). A week load re-run
+        overwrites exactly its own partitions (replaceWhere), so loads are
+        idempotent and the table grows by appending weeks. Returns the days
+        written, as ISO strings.
+        """
+        import json
+
+        from deltalake import CommitProperties, DeltaTable, WriterProperties, write_deltalake
+        from deltalake.exceptions import DeltaError
+
+        out = frame.reset_index()
+        if "date" not in out.columns:
+            out = out.rename(columns={out.columns[0]: "date"})
+        # A string partition: Delta stores partition values as strings anyway,
+        # and a DATE column makes the replaceWhere predicate need casts.
+        out["day"] = out["date"].dt.strftime("%Y-%m-%d")
+        days = sorted(out["day"].unique())
+        path = self._path(library, symbol)
+        props = CommitProperties(custom_metadata={"openbb_meta": json.dumps(metadata, default=str)}) if metadata else None
+        kwargs = dict(
+            mode="overwrite", partition_by=["day"], storage_options=self._opts,
+            commit_properties=props,
+            writer_properties=WriterProperties(compression="ZSTD", compression_level=3),
+        )
+        # A predicate needs an existing table to evaluate against; the first
+        # write of a symbol is a plain create.
+        if DeltaTable.is_deltatable(path, storage_options=self._opts):
+            kwargs["predicate"] = "day IN (" + ", ".join(f"'{d}'" for d in days) + ")"
+        try:
+            write_deltalake(path, out, **kwargs)
+        except DeltaError as err:
+            raise StoreWriteError(
+                f"Delta rejected the write for {symbol!r} to library {library!r}: {err}"
+            ) from err
+        return days
 
     def read(
         self,
