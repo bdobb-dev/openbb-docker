@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
@@ -8,7 +11,7 @@ version = "9.0.0"
 description = "EODHD provider extension for OpenBB (equity/crypto/currency historical, fundamentals, corporate actions, ownership, insider trading, analyst estimates)"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "AGPL-3.0-only" }
+license = { text = "Apache-2.0" }
 dependencies = [
     "openbb-core>=1.5.8",
     # Official EODHD SDK, pinned to a GitHub commit (main, 2026-07-28): the

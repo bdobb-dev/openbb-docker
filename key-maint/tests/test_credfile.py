@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Parser must replicate docker compose v2.29 dotenv behavior as observed on the NAS
 (2026-08-04 incident): leading whitespace after '=' is trimmed; an inline
 ' # comment' after a NON-empty value is stripped; a line whose value is only
