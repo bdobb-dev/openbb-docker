@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Entry point: one process, two uvicorn servers. admin = unix socket
 (bind-mounted from a 0700 NAS-admin-owned host dir; reachable only via an SSH
 session as that user), 8447 = network (proxied by Tailscale Serve on :10000,
