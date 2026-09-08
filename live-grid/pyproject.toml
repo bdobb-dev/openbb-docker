@@ -10,6 +10,7 @@ name = "live-grid"
 version = "9.0.0"
 description = "OpenBB Workspace live_grid backend streaming EODHD websocket prices"
 requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
 dependencies = [
     "fastapi>=0.110",
     "uvicorn>=0.29",

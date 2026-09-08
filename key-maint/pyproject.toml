@@ -10,6 +10,7 @@ name = "key-maint"
 version = "3.0.0"
 description = "Transport-tiered OpenBB widget reporting provider API key state"
 requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
 dependencies = [
     "fastapi>=0.110",
     "uvicorn>=0.29",
