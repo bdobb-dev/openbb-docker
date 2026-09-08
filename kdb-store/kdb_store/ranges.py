@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Date-range arithmetic for the read-through cache.
 
 Pure functions, no I/O. This is what decides that a 1y->3y zoom fetches two

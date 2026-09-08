@@ -1,3 +1,6 @@
+<!-- Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Ep. 11 re-cut — Delta Lake under both doors
 
 Design spec for Adventures in OpenBB, Episode 11, re-cut. Supersedes the

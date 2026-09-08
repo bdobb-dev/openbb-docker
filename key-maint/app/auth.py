@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """HTTP Basic auth matching the main API's api-auth.env. Fail closed: no
 file / no configured creds = every request denied, so a missing mount can
 never expose even the status view."""

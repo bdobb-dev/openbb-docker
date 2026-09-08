@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Roll ticks into OHLCV bars, and roll those bars up further.
 
 The session filter is the single largest lever on any comparison against a

@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """End-of-day flush: the kdb RDB surrenders the day's ticks to the Delta HDB.
 
 The classic kdb+ day cycle (tickerplant -> RDB -> `.u.end` -> `.Q.hdpf` ->

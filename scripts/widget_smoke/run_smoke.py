@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Smoke-test every widget we can reach with the keys we have.
 
     OPENBB_URL=https://openbb.<your-tailnet>.ts.net python3 scripts/widget_smoke/run_smoke.py

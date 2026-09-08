@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Read-only MCP server exposing Delta Lake and kdb+ discovery/query tools.
 
 Runs beside openbb-api inside the NAS shared network namespace
