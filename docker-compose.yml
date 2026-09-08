@@ -223,7 +223,7 @@ services:
   # the NAS by docker save | ssh load, like eod-dump. Runs on the NAS in
   # production; here as the on-host alternative. See scripts/sip_backfill.py.
   sip-backfill:
-    image: openbb-sip-backfill:1.0.0
+    image: openbb-sip-backfill:1.2.0
     container_name: openbb-sip-backfill
     restart: unless-stopped
     networks:
