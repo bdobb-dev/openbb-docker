@@ -428,7 +428,11 @@ def daily_due(store: TickStore, library: str, now: datetime) -> date | None:
         return None
     if local.weekday() in (6, 0):  # Sunday, Monday: yesterday had no session; save the ~5k calls
         return None
-    today = now.date()
+    # The day is the NEW YORK date, not the UTC one: the UTC date rolls over at
+    # 20:00 ET, and keying on it ran the pass at 21:25 ET on 2026-09-08 --
+    # before the vendor had loaded that session -- and then blocked the real
+    # 02:05 run because "today's" file already existed.
+    today = local.date()
     fsys, root = store._fs_and_root()  # noqa: SLF001
     st = _read_json(fsys, f"{root}/{library}/_progress/daily/{today}.json")
     return None if st and st.get("finished") else today
@@ -467,7 +471,7 @@ def daily_pass(today: date, uni: Universe, key: str, store: TickStore, library: 
                          f"{r.get('rows', 0):,}", f"{r.get('added', 0):,}", r.get("fetch_s", 0), (time.time() - t0) / 60)
             except Exception as e:  # noqa: BLE001 -- one bad symbol must not stop the pass
                 with lock:
-                    st["failed"][s] = str(e)[:300]
+                    st["failed"][s] = (("unservable: " if isinstance(e, Unservable) else "") + str(e))[:300]
                     _write_json(fsys, path, st)
                 log.warning("[daily %s %3d/%d] %-6s FAILED %s", today, i, len(todo), s, str(e)[:120])
                 (work / f"{s}_{first}.parquet").unlink(missing_ok=True)
@@ -591,7 +595,8 @@ def main() -> int:
     only = set(a.only.split(",")) if a.only else None
 
     if a.daily:
-        d = datetime.now(timezone.utc).date() if a.daily == "today" else date.fromisoformat(a.daily)
+        from zoneinfo import ZoneInfo
+        d = datetime.now(ZoneInfo(ET)).date() if a.daily == "today" else date.fromisoformat(a.daily)
         if only:
             uni.members = [m for m in uni.members if m[0] in only]
         daily_pass(d, uni, key, store, library, work, a.workers, vacuum_days)
