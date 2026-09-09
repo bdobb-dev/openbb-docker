@@ -46,9 +46,11 @@ Delta version; the pass records rows added per symbol. Weeks first fetched
 after the lag (the backfill) are already settled and are never re-fetched.
 
 Retry sweep: failed symbols of finished weeks are retried at most once a day,
-and given up after SIP_RETRY_MAX attempts. A symbol that fails in 3 different
-weeks at a ONE-DAY span is blacklisted (_progress/_blacklist.json) and never
-requested again; a 5xx on a longer span only halves the span.
+and given up after SIP_RETRY_MAX attempts. A symbol unservable in 3 different
+weeks (a 5xx at a one-day span on a day the vendor serves) is skipped for weeks
+at or before its newest failure and, while that failure is recent, in the daily
+pass (_progress/_blacklist.json). Scoped in time because a ticker rename makes
+a symbol unservable before the change only. A 5xx on a longer span only halves it.
 
 Budget: one request per symbol per window is the floor (10 API calls each;
 100k/day); the daily pass runs only on mornings after a session (Tue-Sat ET).
@@ -171,27 +173,39 @@ class Universe:
 
 # -- progress, kept in the bucket next to the data -------------------------------
 class Blacklist:
-    """Symbols the vendor never serves (BRK-B, BF-B, AGN...). A symbol that
-    ends up failed in 3 different weeks is skipped in every later week and
-    daily pass, saving its 3 retries per week and 1 per day. Persisted at
-    _progress/_blacklist.json so a restart does not relearn it."""
+    """Symbols the vendor does not serve -- scoped in TIME, because a ticker
+    rename (BK -> BNY, mid-2026) makes a symbol unservable before the change
+    and fine after it. A symbol unservable in 3 different weeks is skipped
+    for every week at or before its newest failure, and in the daily pass
+    only while that newest failure is recent. Persisted at
+    _progress/_blacklist.json. (Fetching pre-rename weeks under the old
+    ticker is a separate, unbuilt step.)"""
 
     def __init__(self, store: TickStore, library: str):
         self.fsys, root = store._fs_and_root()  # noqa: SLF001
         self.path = f"{root}/{library}/_progress/_blacklist.json"
-        self.state = _read_json(self.fsys, self.path) or {"weeks_failed": {}, "blocked": []}
+        self.state = _read_json(self.fsys, self.path) or {}
+        self.state.setdefault("unservable", {})  # sym -> [mondays]
 
-    def blocked(self) -> set[str]:
-        return set(self.state["blocked"])
+    def _newest(self, sym: str) -> date | None:
+        weeks = self.state["unservable"].get(sym, [])
+        return max(date.fromisoformat(w) for w in weeks) if len(weeks) >= 3 else None
 
-    def note_week(self, failed: dict) -> None:
+    def blocked_for(self, monday: date) -> set[str]:
+        return {s for s in self.state["unservable"] if (n := self._newest(s)) and monday <= n}
+
+    def blocked_daily(self, today: date) -> set[str]:
+        return {s for s in self.state["unservable"] if (n := self._newest(s)) and n >= today - timedelta(days=21)}
+
+    def note_week(self, monday: date, failed: dict) -> None:
         for sym, err in failed.items():
             if not str(err).startswith("unservable"):
                 continue  # a transient failure or a too-big span never blacklists
-            self.state["weeks_failed"][sym] = self.state["weeks_failed"].get(sym, 0) + 1
-            if self.state["weeks_failed"][sym] >= 3 and sym not in self.state["blocked"]:
-                self.state["blocked"].append(sym)
-                log.warning("%s failed in 3 weeks; skipping it from now on", sym)
+            weeks = self.state["unservable"].setdefault(sym, [])
+            if str(monday) not in weeks:
+                weeks.append(str(monday))
+            if len(weeks) == 3:
+                log.warning("%s unservable in 3 weeks; skipping it for weeks up to %s", sym, max(weeks))
         _write_json(self.fsys, self.path, self.state)
 
 
@@ -385,7 +399,7 @@ def load_week(monday: date, uni: Universe, key: str, store: TickStore, library: 
     failures only."""
     prog = Progress(store, library, monday)
     blacklist = Blacklist(store, library)
-    symbols = [s for s in uni.for_week(monday) if s not in blacklist.blocked()]
+    symbols = [s for s in uni.for_week(monday) if s not in blacklist.blocked_for(monday)]
     if only:
         symbols = [s for s in symbols if s in only]
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -421,7 +435,7 @@ def load_week(monday: date, uni: Universe, key: str, store: TickStore, library: 
         prog.state["settled"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     elif mode == "load":
         prog.state["finished"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        blacklist.note_week(prog.state["failed"])
+        blacklist.note_week(monday, prog.state["failed"])
     prog.state["wall_minutes"] = round((prog.state.get("wall_minutes") or 0) + (time.time() - t0) / 60, 1)
     prog.save()
     st = prog.state
@@ -469,7 +483,7 @@ def daily_pass(today: date, uni: Universe, key: str, store: TickStore, library: 
                                    "started": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                                    "finished": None, "done": {}, "failed": {}}
     lock = threading.Lock()
-    blocked = Blacklist(store, library).blocked()
+    blocked = Blacklist(store, library).blocked_daily(today)
     symbols = [s for s in uni.for_range(first, today - timedelta(days=1)) if s not in blocked]
     todo = [s for s in symbols if s not in st["done"]]
     log.info("daily %s [%s..%s]: %d members, %d done, %d to fetch", today, first, today - timedelta(days=1), len(symbols), len(st["done"]), len(todo))
