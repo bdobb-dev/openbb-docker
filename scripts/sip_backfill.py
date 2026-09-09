@@ -259,6 +259,16 @@ _spans: dict[str, int] = {}  # symbol -> largest span (days) known to succeed
 _spans_lock = threading.Lock()
 
 
+def _day_served(key: str, frm: int) -> bool:
+    """Whether the vendor serves this UTC day at all (SPY, limit=1)."""
+    q = urllib.parse.urlencode({"s": "SPY", "from": frm, "to": frm + 86400, "limit": 1, "api_token": key})
+    try:
+        raw = _get_json(f"{TICKS}?{q}", tries=1)
+    except RuntimeError:
+        return False
+    return bool(raw) and "ts" in raw and len(raw["ts"]) > 0
+
+
 def fetch_span(sym: str, key: str, frm: int, ndays: int) -> list:
     """The API's frames for [frm, frm+ndays days), as few requests as the
     server will serve. A span the server times out on is halved, not retried
@@ -277,10 +287,17 @@ def fetch_span(sym: str, key: str, frm: int, ndays: int) -> list:
             except (TooBig, RuntimeError) as e:
                 # A 5xx on a multi-day span -- slow (server timeout) or quick
                 # (the server refuses the span outright, which is how NVDA
-                # and MU weeks fail) -- means: halve it. Only a 5xx on a
-                # single day is a verdict on the symbol.
+                # and MU weeks fail) -- means: halve it. A 5xx on a single
+                # day is a verdict on the symbol, UNLESS the vendor has that
+                # day for nobody: a holiday, or a session not loaded yet,
+                # also answers 500 (probed 2026-09-09). One cheap control
+                # request on SPY tells the two apart.
                 if span == 1:
-                    raise Unservable(str(e)) from e
+                    if _day_served(key, frm + pos * 86400):
+                        raise Unservable(str(e)) from e
+                    log.info("%s: %s not served by the vendor for anyone; skipping the day", sym, datetime.fromtimestamp(frm + pos * 86400, timezone.utc).date())
+                    raw = None
+                    break
                 span = (span + 1) // 2
                 # Remember the shrink (a tail chunk shorter than start_span is
                 # not a shrink and must not be remembered as one).
