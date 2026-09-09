@@ -65,7 +65,7 @@ services:
   # OpenBB Platform REST API. Binds 127.0.0.1 so only Serve can reach it.
   openbb-api:
     build: .
-    # 4.7.2 = the skill-built image (OpenBB 4.7.2, openbb-eodhd 9.5.0 with the
+    # 4.7.2 = the skill-built image (OpenBB 4.7.2, openbb-eodhd 9.6.1 with the
     # full FMP-parity fetcher set — 52 eodhd widgets).
     image: openbb-local:4.7.2
     # ArcticDB publishes no aarch64 Linux wheels, so the image is amd64.
@@ -225,7 +225,7 @@ services:
   # Endpoint path is /mcp (a request to /mcp/ 307-redirects there).
   openbb-mcp:
     build: .
-    # 4.7.2 = the skill-built image (OpenBB 4.7.2, openbb-eodhd 9.5.0), same
+    # 4.7.2 = the skill-built image (OpenBB 4.7.2, openbb-eodhd 9.6.1), same
     # as openbb-api — the MCP tool set tracks the same provider registry.
     image: openbb-local:4.7.2
     # ArcticDB publishes no aarch64 Linux wheels, so the image is amd64.

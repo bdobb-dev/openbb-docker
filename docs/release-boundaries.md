@@ -30,6 +30,13 @@ as ep 9 / ep 10 / ep 12 respectively.
   fetchers) and the derived `extension-constraints.txt`. live-grid remains
   *in the tree* (it shipped in v9.0.0; removing shipped code from a release
   line is churn) — the episode-9 article simply doesn't cover it.
+- **v9.6.1 — branch `release/v9.6`** (cut 2026-09-09): the `v9.5.0` tree
+  plus PR 38's two commits — economic-calendar rows carry `source` and
+  `category` from the three-level statistics index, and the date range is
+  windowed past EODHD's 1,000-row page cap (extension 9.6.1). The close of
+  episode 9, cut beside bdobb-v2's calendar card view at the same label.
+  Nothing else moves: the fundamentals L2 cache on Delta is episode 11 and
+  stays out.
 - **v10.1.0**: `v10.0.0` + the kdb-line follow-ons — tick-log durability
   (`d26effb`), the kdb-ws demo chart (`f3d14d9`), per-bar vwap. Cut after
   that work settles; it is in flight on `eodhd-fmp-parity` today and
