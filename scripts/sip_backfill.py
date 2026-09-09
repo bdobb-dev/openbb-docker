@@ -97,12 +97,20 @@ class Unservable(RuntimeError):
     (BRK-B, BF-B) or this day. Only these count toward the blacklist."""
 
 
+class Budget(Exception):
+    """429 for hours: the daily API budget is spent. Not a RuntimeError on
+    purpose -- nothing may treat it as a failure of the symbol or the span."""
+
+
 def _get_json(url: str, timeout: int = 1800, tries: int = 3):
     """GET with retry on quick 5xx/timeouts. 429 (budget) waits 30 minutes.
     A 5xx that took over a minute is a server-side timeout on the span --
     retrying the same call costs another request and another wait, so it
     raises TooBig immediately for the caller to split the span."""
-    for attempt in range(1, tries + 1):
+    waits = 0
+    attempt = 0
+    while attempt < tries:
+        attempt += 1
         t0 = time.time()
         try:
             with urllib.request.urlopen(url, timeout=timeout) as r:
@@ -110,8 +118,15 @@ def _get_json(url: str, timeout: int = 1800, tries: int = 3):
         except urllib.error.HTTPError as e:
             body = e.read()[:120]
             if e.code == 429:
-                log.warning("429 from EODHD; sleeping 30 min")
+                # The budget, not the request: wait it out without spending
+                # an attempt, and give up as Budget after ~6 h so the caller
+                # pauses instead of recording symbols as failed or empty.
+                waits += 1
+                if waits > 12:
+                    raise Budget("429 for 6 hours") from e
+                log.warning("429 from EODHD; sleeping 30 min (%d)", waits)
                 time.sleep(1800)
+                attempt -= 1
                 continue
             if e.code in (500, 502, 503, 504):
                 if time.time() - t0 > 60:
@@ -125,6 +140,7 @@ def _get_json(url: str, timeout: int = 1800, tries: int = 3):
                 time.sleep(5 * attempt)
                 continue
             raise RuntimeError(f"{type(e).__name__}: {e}") from e
+    raise RuntimeError("no attempts left")
 
 
 def _read_json(fsys, path: str) -> dict | None:
@@ -275,10 +291,10 @@ _spans_lock = threading.Lock()
 
 def _day_served(key: str, frm: int) -> bool:
     """Whether the vendor serves this UTC day at all (SPY, limit=1)."""
-    q = urllib.parse.urlencode({"s": "SPY", "from": frm, "to": frm + 86400, "limit": 1, "api_token": key})
+    q = urllib.parse.urlencode({"s": "SPY", "from": frm, "to": frm + 86400 - 1, "limit": 1, "api_token": key})
     try:
         raw = _get_json(f"{TICKS}?{q}", tries=1)
-    except RuntimeError:
+    except RuntimeError:  # Budget is not a RuntimeError and propagates
         return False
     return bool(raw) and "ts" in raw and len(raw["ts"]) > 0
 
@@ -294,7 +310,11 @@ def fetch_span(sym: str, key: str, frm: int, ndays: int) -> list:
     while pos < ndays:
         span = min(start_span, ndays - pos)
         while True:
-            q = urllib.parse.urlencode({"s": sym, "from": frm + pos * 86400, "to": frm + (pos + span) * 86400, "api_token": key})
+            # `to` is inclusive at the second (from*1000 <= ts <= to*1000), so
+            # end one second early: otherwise a print stamped exactly at
+            # midnight lands in the next day's partition (2-row Saturday
+            # partitions were seen for many symbols) and chunks overlap.
+            q = urllib.parse.urlencode({"s": sym, "from": frm + pos * 86400, "to": frm + (pos + span) * 86400 - 1, "api_token": key})
             try:
                 raw = _get_json(f"{TICKS}?{q}")
                 break
@@ -378,11 +398,12 @@ def load_symbol(sym: str, key: str, store: TickStore, library: str, start: date,
     problems = []
     if len(back) != len(df):
         problems.append(f"{len(back)} rows read back, {len(df)} written")
-    per_day = back.groupby("day")["seq"].nunique()
+    # No seq-uniqueness check: a UTC-day partition holds the tail of one US
+    # session (00:00-04:00 UTC) and most of the next, and the vendor's seq
+    # restarts per session, so a few collisions per busy day are legitimate
+    # (AVGO 2026-03-05: 5 in 973k rows). That check mislabelled 86
+    # symbol-weeks as failed and the retries of them spent a day's budget.
     sizes = back.groupby("day").size()
-    for d in days:
-        if per_day.get(d, 0) != sizes.get(d, 0):
-            problems.append(f"{d}: seq not unique")
     out["verify_s"] = round(time.time() - t2, 1)
     out["days"] = {d: int(sizes.get(d, 0)) for d in days}
     if problems:
@@ -416,6 +437,7 @@ def load_week(monday: date, uni: Universe, key: str, store: TickStore, library: 
     prog.save()
     log.info("week %s [%s]: %d members, %d done, %d to fetch", monday, mode, len(symbols), len(prog.state["done"]), len(todo))
     t0 = time.time()
+    budget_hit = False
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futs = {pool.submit(load_symbol, s, key, store, library, monday, work, mode == "settle"): s for s in todo}  # ndays=5
         for i, fut in enumerate(as_completed(futs), 1):
@@ -427,10 +449,18 @@ def load_week(monday: date, uni: Universe, key: str, store: TickStore, library: 
                          monday, i, len(todo), s, f"{r.get('rows', 0):,}", r.get("fetch_s", 0),
                          r.get("write_s", 0), r.get("verify_s", 0),
                          f" added={r['added']:,}" if "added" in r else "", (time.time() - t0) / 60)
+            except Budget:
+                log.warning("API budget spent; abandoning this pass of week %s (nothing recorded for %s)", monday, s)
+                pool.shutdown(wait=False, cancel_futures=True)
+                budget_hit = True
+                break
             except Exception as e:  # noqa: BLE001 -- one bad symbol must not stop the week
                 prog.record(s, None, ("unservable: " if isinstance(e, Unservable) else "") + str(e))
                 log.warning("[%s %3d/%d] %-6s FAILED %s", monday, i, len(todo), s, str(e)[:120])
                 (work / f"{s}_{monday}.parquet").unlink(missing_ok=True)
+    if budget_hit:
+        prog.save()
+        raise Budget(f"week {monday} [{mode}] interrupted")
     if mode == "settle":
         prog.state["settled"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     elif mode == "load":
@@ -500,6 +530,11 @@ def daily_pass(today: date, uni: Universe, key: str, store: TickStore, library: 
                     _write_json(fsys, path, st)
                 log.info("[daily %s %3d/%d] %-6s rows=%9s added=%7s fetch=%6.1fs elapsed=%5.1fm", today, i, len(todo), s,
                          f"{r.get('rows', 0):,}", f"{r.get('added', 0):,}", r.get("fetch_s", 0), (time.time() - t0) / 60)
+            except Budget:
+                log.warning("API budget spent; abandoning today's daily pass (resumes next cycle)")
+                pool.shutdown(wait=False, cancel_futures=True)
+                _write_json(fsys, path, st)
+                raise
             except Exception as e:  # noqa: BLE001 -- one bad symbol must not stop the pass
                 with lock:
                     st["failed"][s] = (("unservable: " if isinstance(e, Unservable) else "") + str(e))[:300]
@@ -645,27 +680,37 @@ def main() -> int:
 
     floor = date.fromisoformat(a.until)
     while True:
+        try:
+            _cycle(a, uni, key, store, library, work, floor, settle_lag, retry_max, vacuum_days)
+        except Budget as e:
+            log.warning("%s; sleeping 1 h before the next cycle", e)
+            time.sleep(3600)
+
+
+def _cycle(a, uni, key, store, library, work, floor, settle_lag, retry_max, vacuum_days) -> None:
+    """One scheduling decision and the work it picks (see the module doc)."""
+    if True:
         now = datetime.now(timezone.utc)
         # 0. the daily rolling refresh: yesterday plus late prints for the six days before
         d = daily_due(store, library, now)
         if d:
             daily_pass(d, uni, key, store, library, work, a.workers, vacuum_days)
-            continue
+            return
         newest = latest_complete_monday(now)
         # 1. the newest week, if it has never been loaded
         if not is_complete(store, library, newest):
             load_week(newest, uni, key, store, library, work, a.workers)
-            continue
+            return
         # 2/3. finished weeks due for a settle pass or a retry, newest first
         weeks = [Progress(store, library, m) for m in _known_weeks(store, library)]
         due = next((p for p in weeks if p.due_for_settle(settle_lag, now)), None)
         if due:
             load_week(date.fromisoformat(due.state["week"]), uni, key, store, library, work, a.workers, mode="settle", retry_max=retry_max)
-            continue
+            return
         due = next((p for p in weeks if p.due_for_retry(retry_max, now)), None)
         if due:
             load_week(date.fromisoformat(due.state["week"]), uni, key, store, library, work, a.workers, mode="retry", retry_max=retry_max)
-            continue
+            return
         # 4. backfill: the next week backwards that has never been loaded
         monday, target = newest, None
         while monday >= floor:
@@ -676,7 +721,7 @@ def main() -> int:
         if target is None:
             log.info("caught up back to %s and nothing due; sleeping 15 min", floor)
             time.sleep(900)
-            continue
+            return
         load_week(target, uni, key, store, library, work, a.workers)
 
 
