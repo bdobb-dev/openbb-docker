@@ -206,10 +206,11 @@ which chapter it shipped in:
 | **9.1.0 – 9.4.0** | Intermediate parity phases (ownership/insider/estimates, company core, calendars/discovery) | — |
 | **9.5.0** | **Full FMP parity** — every standard model FMP registers that EODHD can back | 52 |
 | **9.6.0** | Economic-calendar rows carry `source` and `category` from the three-level statistics index (Source → Release → Statistic) | 52 |
+| **9.6.1** | Economic calendar fetched in date windows past EODHD's 1,000-row page cap | 52 |
 
-9.6.0 adds no fetchers — it enriches the existing economic-calendar rows, so
-the fetcher count holds at 52. A tree carrying all 52 fetchers is 9.5.0 or
-later by definition. Keep `pyproject.toml`
+9.6.0 and 9.6.1 add no fetchers — they enrich and correct the existing
+economic-calendar rows, so the fetcher count holds at 52. A tree carrying all
+52 fetchers is 9.5.0 or later by definition. Keep `pyproject.toml`
 and this document moving together: if the fetcher set changes, the version and
 this table change in the same commit.
 
