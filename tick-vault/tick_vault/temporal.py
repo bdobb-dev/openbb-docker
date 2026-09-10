@@ -31,6 +31,18 @@ only test runnable in this sandbox
 text statically, without importing duckdb.
 
 No logic beyond DuckDB view/macro registration lives here by design.
+
+Fix-round note (controller ruling, task-6 fix round): DuckDB table macros
+cannot bind a relation-valued parameter as a bare FROM/JOIN target - passing
+a subquery/relation as a macro parameter and splicing it into a FROM/JOIN
+clause does not work the way the original implementation assumed. Fixed via
+a "convention table": `install_macros(con, venue_priorities=None)` now
+registers a real relation, a TEMP VIEW named `venue_priority` with columns
+`(venue_id VARCHAR, venue_priority INTEGER)`, built from a `VALUES` list
+when `venue_priorities` is a non-empty dict, or an always-empty
+`SELECT ... WHERE FALSE` view when it is `None`/empty. `tape_order()` now
+takes NO relation parameter at all - it unconditionally `LEFT JOIN`s the
+registered `venue_priority` view and `COALESCE`s missing priorities to 0.
 """
 from __future__ import annotations
 
@@ -65,36 +77,62 @@ def attach(con, root: str) -> None:
         )
 
 
-def install_macros(con) -> None:
-    """Create the `tape_order`, `latest_ticks`, `pit_ticks`, and
-    `pit_ticks_policy` macros against `silver_us_trade_tick_version`.
+def install_macros(con, venue_priorities: dict | None = None) -> None:
+    """Register the `venue_priority` convention view, then create the
+    `tape_order`, `latest_ticks`, `pit_ticks`, and `pit_ticks_policy` macros
+    against `silver_us_trade_tick_version`.
 
     Requires `attach()` to have already registered
-    `silver_us_trade_tick_version` (and, for `tape_order`'s optional venue
-    priority join, whatever venue-priority relation the caller passes in).
+    `silver_us_trade_tick_version`.
+
+    `venue_priorities`: optional `{venue_id: priority}` mapping used to
+    (re)build the `venue_priority` TEMP VIEW that `tape_order()` joins
+    against. DuckDB table macros cannot bind a relation-valued parameter as
+    a bare FROM/JOIN target, so `tape_order()` deliberately takes no
+    relation parameter - callers who need custom venue priorities must call
+    `install_macros(con, venue_priorities={...})` (or call this helper's
+    view-registration step again) before querying `tape_order()`.
     """
     import duckdb  # noqa: F401  (imported lazily; ensures duckdb is present)
+
+    # Convention table: a real relation named `venue_priority`, columns
+    # (venue_id VARCHAR, venue_priority INTEGER). `tape_order()` always
+    # LEFT JOINs this view and COALESCEs missing priorities to 0, so an
+    # empty view (the None/empty-dict case) makes every venue priority 0.
+    if venue_priorities:
+        values_sql = ", ".join(
+            f"({venue_id!r}, {int(priority)})"
+            for venue_id, priority in venue_priorities.items()
+        )
+        con.execute(
+            f"""
+            CREATE OR REPLACE TEMP VIEW venue_priority(venue_id, venue_priority) AS
+            SELECT * FROM (VALUES {values_sql});
+            """
+        )
+    else:
+        con.execute(
+            """
+            CREATE OR REPLACE TEMP VIEW venue_priority(venue_id, venue_priority) AS
+            SELECT NULL::VARCHAR AS venue_id, NULL::INTEGER AS venue_priority
+            WHERE FALSE;
+            """
+        )
 
     # Baseline Sec 12.3's synthetic tape ordering: ORDER BY (trade_ts_ms,
     # vendor_sequence_no nulls-last presence rule, vendor_sequence_no,
     # venue_priority, observed_at_ts, source_page_ordinal,
     # source_row_ordinal, tick_version_id). `venue_priority` is resolved via
-    # COALESCE against an optional joined relation (default: an empty
-    # derived table, so priority defaults to 0), kept simple per the
-    # controller ruling.
+    # COALESCE against the registered `venue_priority` view (LEFT JOIN, so a
+    # venue absent from the view defaults to priority 0).
     con.execute(
         """
-        CREATE OR REPLACE MACRO tape_order(
-            venue_priority_relation := (
-                SELECT NULL::VARCHAR AS venue_id, 0 AS venue_priority
-                WHERE FALSE
-            )
-        ) AS TABLE
+        CREATE OR REPLACE MACRO tape_order() AS TABLE
         SELECT
-            t.* EXCLUDE (venue_priority),
+            t.*,
             COALESCE(vp.venue_priority, 0) AS venue_priority
-        FROM (SELECT *, NULL AS venue_priority FROM silver_us_trade_tick_version) AS t
-        LEFT JOIN venue_priority_relation AS vp
+        FROM silver_us_trade_tick_version AS t
+        LEFT JOIN venue_priority AS vp
             ON vp.venue_id = t.venue_id
         ORDER BY
             t.trade_ts_ms,

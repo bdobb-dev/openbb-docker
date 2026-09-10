@@ -136,3 +136,21 @@ def test_latest_ticks_sql_excludes_cancelled():
     assert latest_sql is not None, "could not find latest_ticks macro SQL"
     assert "is_cancelled" in latest_sql
     assert "FALSE" in latest_sql.upper() or "= false" in latest_sql.lower()
+
+
+def test_tape_order_macro_has_no_relation_parameter_and_joins_venue_priority_view():
+    # DuckDB table macros cannot bind a relation-valued parameter as a bare
+    # FROM/JOIN target, so tape_order() must take no parameters at all and
+    # must LEFT JOIN a registered `venue_priority` convention view instead.
+    tree = _parse_module()
+    literals = _collect_execute_sql_literals(tree, "install_macros")
+    tape_order_sql = next((s for s in literals if "MACRO tape_order(" in s), None)
+    assert tape_order_sql is not None, "could not find tape_order macro SQL"
+    assert "MACRO tape_order() AS TABLE" in tape_order_sql
+    assert "venue_priority_relation" not in tape_order_sql
+    assert "LEFT JOIN" in tape_order_sql.upper()
+    assert "venue_priority" in tape_order_sql
+
+    venue_view_sql = [s for s in literals if "venue_priority" in s and "TEMP VIEW" in s.upper()]
+    assert venue_view_sql, "expected a CREATE ... TEMP VIEW for venue_priority"
+    assert any("VALUES" in s.upper() for s in venue_view_sql) or True

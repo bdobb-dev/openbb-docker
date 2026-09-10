@@ -208,3 +208,51 @@ def test_tape_order_deterministic(tmp_path):
     ordered_again = q(con, "SELECT tick_version_id FROM tape_order()")
     assert [r["tick_version_id"] for r in ordered_again] == ids_in_order
     con.close()
+
+
+def test_tape_order_custom_venue_priorities_reorders_same_ms_ticks(tmp_path):
+    """A custom `venue_priorities` dict passed to `install_macros` must
+    change `tape_order()`'s ordering for ticks tied on every other field
+    (trade_ts_ms, vendor_sequence_no, observed_at_ts, source_page_ordinal,
+    source_row_ordinal) but differing by `venue_id` - lower venue_priority
+    sorts first, per baseline Sec 12.3's ORDER BY list."""
+    root = str(tmp_path / "lake")
+    create_all(root)
+
+    common = dict(
+        logical_tick_id="E",
+        trade_ts_ms=_TRADE_TS_MS,
+        vendor_sequence_no=None,
+        observed_at_ts=_AVAILABLE_EARLY,
+        source_page_ordinal=1,
+        source_row_ordinal=1,
+        available_at_ts=_AVAILABLE_EARLY,
+    )
+    rows = [
+        _tick(
+            tick_version_id="tkv_zzz", price=1.0, venue_id="NASDAQ", **common
+        ),
+        _tick(
+            tick_version_id="tkv_yyy", price=2.0, venue_id="NYSE", **common
+        ),
+    ]
+    table = pa.Table.from_pylist(rows, schema=SCHEMAS["silver.us_trade_tick_version"])
+    write_deltalake(f"{root}/silver/us_trade_tick_version", table, mode="append")
+
+    con = duckdb.connect()
+    attach(con, root)
+    # Without a priority override, tkv_yyy (venue "NYSE") sorts before
+    # tkv_zzz (venue "NASDAQ") because both default to priority 0 and
+    # tick_version_id is the final tie-break ("tkv_y..." < "tkv_z...").
+    install_macros(con)
+    default_ordered = q(con, "SELECT tick_version_id FROM tape_order()")
+    default_ids = [r["tick_version_id"] for r in default_ordered]
+    assert default_ids.index("tkv_yyy") < default_ids.index("tkv_zzz")
+
+    # Give NASDAQ a lower (better) priority than NYSE - it must now sort
+    # first, overriding the tick_version_id tie-break.
+    install_macros(con, venue_priorities={"NASDAQ": 0, "NYSE": 1})
+    reordered = q(con, "SELECT tick_version_id FROM tape_order()")
+    reordered_ids = [r["tick_version_id"] for r in reordered]
+    assert reordered_ids.index("tkv_zzz") < reordered_ids.index("tkv_yyy")
+    con.close()
