@@ -92,6 +92,16 @@ def test_temporal_module_imports_without_duckdb():
     assert hasattr(module, "install_macros")
 
 
+def test_attach_pins_session_timezone_to_utc():
+    # I6 (final-review finding): DuckDB session TimeZone affects naive<->TZ
+    # casts throughout this codebase's SQL (simulated-availability floors,
+    # NY-session-date derivation) - attach() must pin it to UTC in one
+    # authoritative place so behavior doesn't depend on the host's local
+    # timezone (CI is UTC, but Mac hosts are not).
+    source = _read_source()
+    assert "SET TimeZone='UTC'" in source or 'SET TimeZone="UTC"' in source
+
+
 def test_sequence_policy_constant_value():
     tree = _parse_module()
     value_node = _find_name_assignment(tree, "SEQUENCE_POLICY")
@@ -126,7 +136,10 @@ def test_pit_ticks_policy_sql_has_both_policies_and_simulated_availability():
     assert "HISTORICAL_VENDOR_FINAL_V1" in policy_sql
     assert "trade_date" in policy_sql
     assert "INTERVAL" in policy_sql
-    assert "08:00" in policy_sql
+    # M9 (final-review finding): the simulated-availability floor's
+    # trade_date + 1 day @ 08:00 UTC is expressed as the simpler
+    # `INTERVAL 8 HOUR` form, not `INTERVAL '08:00:00' HOUR TO SECOND`.
+    assert "INTERVAL 8 HOUR" in policy_sql
 
 
 def test_latest_ticks_sql_excludes_cancelled():

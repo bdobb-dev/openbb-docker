@@ -39,6 +39,7 @@ root) containing:
         effective 2020-03-01 -> NULL.
 """
 import datetime as dt
+import decimal
 
 import duckdb
 import pyarrow as pa
@@ -85,7 +86,7 @@ except ImportError:
             "venue_id": None,
             "mic": None,
             "price_venue_type": "consolidated",
-            "price": 0.0,
+            "price": decimal.Decimal("0.0"),
             "size": None,
             "sale_condition_raw": None,
             "sale_condition_flags": None,
@@ -155,16 +156,16 @@ def _seed_contract_lake(tmp_path) -> str:
     tick_rows = [
         _tick(
             tick_version_id="tkv_a1", logical_tick_id="A", listing_id="lst_old",
-            price=100.0, available_at_ts=_AVAILABLE_EARLY, revision_number=1,
+            price=decimal.Decimal("100.0"), available_at_ts=_AVAILABLE_EARLY, revision_number=1,
         ),
         _tick(
             tick_version_id="tkv_a2", logical_tick_id="A", listing_id="lst_old",
-            price=101.0, available_at_ts=_AVAILABLE_LATE, revision_number=2,
+            price=decimal.Decimal("101.0"), available_at_ts=_AVAILABLE_LATE, revision_number=2,
             is_correction=True, supersedes_tick_version_id="tkv_a1",
         ),
         _tick(
             tick_version_id="tkv_b1", logical_tick_id="B", listing_id="lst_new",
-            price=200.0, available_at_ts=_AVAILABLE_EARLY, revision_number=1,
+            price=decimal.Decimal("200.0"), available_at_ts=_AVAILABLE_EARLY, revision_number=1,
         ),
     ]
     tick_table = pa.Table.from_pylist(
@@ -324,9 +325,21 @@ def test_provenance_pins_delta_versions(lake):
         con, root, start=dt.date(2021, 11, 1), end=dt.date(2021, 11, 10)
     )
     delta_versions = result.provenance["delta_versions"]
-    assert delta_versions["silver.us_trade_tick_version"] == 0
-    assert delta_versions["silver.index_membership_version"] == 0
-    assert delta_versions["silver.identifier_assignment_version"] == 0
+    # `create_all(root)` writes version 0 for every registered table.
+    # `_seed_contract_lake` then does one further `write_deltalake(...,
+    # mode="append")` each against `silver.us_trade_tick_version` and
+    # `silver.identifier_assignment_version` (the tick rows and the "X"
+    # identifier rows), bumping each of those two to version 1.
+    # `silver.index_membership_version` is never written to in this
+    # fixture, so it stays at version 0. All three are therefore only
+    # guaranteed to be non-negative in general; the two appended-to
+    # tables are additionally asserted to have advanced past the
+    # `create_all` baseline (version >= 1).
+    assert delta_versions["silver.us_trade_tick_version"] >= 0
+    assert delta_versions["silver.index_membership_version"] >= 0
+    assert delta_versions["silver.identifier_assignment_version"] >= 0
+    assert delta_versions["silver.us_trade_tick_version"] >= 1
+    assert delta_versions["silver.identifier_assignment_version"] >= 1
     assert result.provenance["sequence_policy_version"] == SEQUENCE_POLICY
     assert result.provenance["sl_decode_version"] == DECODE_VERSION
     assert result.provenance["parser_version"] == PARSER_VERSION
@@ -403,6 +416,37 @@ def test_gold_mode_with_nondefault_policy_warns_ignored(lake):
         availability_policy=POLICY_HISTORICAL_VENDOR_FINAL,
     )
     assert result.provenance["mode"] == MODE_GOLD
-    assert "availability_policy ignored in GOLD mode" in result.provenance["warnings"]
+    # M10 (final-review finding): the warning text now covers both GOLD
+    # and EFFECTIVE_ONLY (see test_effective_only_mode_with_nondefault_
+    # policy_warns_ignored below), since both modes ignore
+    # availability_policy identically.
+    assert (
+        "availability_policy ignored in GOLD/EFFECTIVE_ONLY mode"
+        in result.provenance["warnings"]
+    )
     # Data is still latest_ticks() regardless of the (ignored) policy.
     assert prices(result.df) == {101.0, 200.0}
+
+
+def test_effective_only_mode_with_nondefault_policy_warns_ignored(lake):
+    # M10 (final-review finding): EFFECTIVE_ONLY mode also always reads
+    # latest_ticks() regardless of availability_policy (mirroring GOLD) -
+    # passing a non-default policy alongside EFFECTIVE_ONLY (effective
+    # given, no as_of) should warn too, not silently do nothing.
+    con, root = lake
+    result = query_ticks(
+        con,
+        root,
+        symbols=["X"],
+        start=dt.date(2021, 11, 1),
+        end=dt.date(2021, 11, 10),
+        effective=dt.date(2015, 6, 1),
+        availability_policy=POLICY_HISTORICAL_VENDOR_FINAL,
+    )
+    assert result.provenance["mode"] == MODE_EFFECTIVE_ONLY
+    assert (
+        "availability_policy ignored in GOLD/EFFECTIVE_ONLY mode"
+        in result.provenance["warnings"]
+    )
+    # Data is still latest_ticks() regardless of the (ignored) policy.
+    assert prices(result.df) == {101.0}

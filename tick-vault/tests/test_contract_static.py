@@ -139,6 +139,27 @@ def test_validate_as_of_does_not_raise_for_past_or_none_as_of():
     validate_as_of(None, now)   # must not raise
 
 
+def test_validate_as_of_naive_as_of_raises_value_error_not_type_error():
+    # M11 (final-review finding): comparing a naive as_of against the
+    # (always tz-aware) now used to leak a bare TypeError from datetime
+    # comparison - validate_as_of must catch that and raise ValueError
+    # instead, so every caller of this function only ever sees ValueError.
+    from tick_vault.contract import validate_as_of
+
+    now = dt.datetime(2026, 9, 9, tzinfo=dt.timezone.utc)
+    naive_as_of = dt.datetime(2020, 1, 1)  # no tzinfo
+    try:
+        validate_as_of(naive_as_of, now)
+    except TypeError:
+        raise AssertionError(
+            "validate_as_of leaked a TypeError instead of ValueError for a naive as_of"
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("validate_as_of should have raised ValueError for a naive as_of")
+
+
 def _pre_capture_region_source() -> str:
     """The source text of the `query_ticks` function body - the region
     that must contain both the local-capture and simulated-availability
@@ -178,5 +199,9 @@ def test_query_ticks_warns_when_gold_mode_ignores_availability_policy():
     # Fix-round finding 3: GOLD mode always reads latest_ticks() regardless
     # of availability_policy - a non-default policy passed alongside GOLD
     # mode should be surfaced via a warning, not silently dropped.
+    # M10 (final-review finding): EFFECTIVE_ONLY mode has the identical
+    # "always reads latest_ticks(), ignores availability_policy" behavior,
+    # so the same warning now fires (and mentions both modes) for it too.
     source = _pre_capture_region_source()
-    assert "availability_policy ignored in GOLD mode" in source
+    assert "availability_policy ignored in GOLD/EFFECTIVE_ONLY mode" in source
+    assert "MODE_EFFECTIVE_ONLY" in source

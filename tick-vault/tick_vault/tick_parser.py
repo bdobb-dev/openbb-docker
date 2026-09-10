@@ -5,6 +5,15 @@ Parses raw EODHD tick-by-tick payloads into rows shaped like
 `pa.Table` facade is intentionally deferred (pyarrow not installable in this
 environment yet) — all normalization logic lives here so that facade can be a
 thin wrapper later.
+
+M8 (final-review finding): `COLUMNS`/`parse_tick_payload` do not populate
+every NOT NULL column of `silver.us_trade_tick_version` - `source_system`,
+`vendor_request_symbol`, and `price_venue_type` are absent from `COLUMNS`
+entirely, and `committed_at_ts` is explicitly set to `None` below. Plan 2's
+Delta writer (whatever turns this module's DataFrame into an actual
+`write_deltalake` call) MUST supply real values for all four before
+writing, or the write will fail against the schema (or worse, silently
+succeed against a permissive writer and leave nulls in NOT NULL columns).
 """
 from __future__ import annotations
 

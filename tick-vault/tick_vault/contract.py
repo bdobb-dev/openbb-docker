@@ -95,9 +95,13 @@ helpers) so this module - including the pure `resolve_mode`/`validate_as_of`
 helpers - stays importable without either installed, matching the
 `tick_vault.temporal` / `tick_vault.reference_queries` pattern (Tasks 6-7).
 `pandas` is not imported at module scope here - the `df` field is typed by
-docstring/comment only, matching this module's own lazy-import discipline;
-`tick_vault.tick_parser` (which does import pandas at module scope) is not
-imported by this module at all, only its `PARSER_VERSION` string constant.
+docstring/comment only, matching this module's own lazy-import discipline.
+`tick_vault.tick_parser` IS imported at module scope (see the `from
+tick_vault.tick_parser import PARSER_VERSION as _PARSER_VERSION` above) -
+that import is fine because it only pulls in a string constant; the point
+is that this module never imports `tick_vault.tick_parser`'s
+`parse_tick_payload`/pandas-dependent machinery, just that one version
+string.
 
 This module is written test-first against deferred tests
 (`tick-vault/tests/deferred/test_contract.py`, requiring duckdb/deltalake/
@@ -174,8 +178,22 @@ def validate_as_of(as_of, now) -> None:
     Pure and side-effect-free - both `as_of` and `now` are passed in (no
     hidden `datetime.now()` call) so this is directly unit-testable.
     `as_of=None` (no PIT requested) never raises.
+
+    M11 (final-review finding): a naive `as_of` compared against the
+    (always timezone-aware, per `query_ticks`'s own `dt.datetime.now(dt.
+    timezone.utc)` call) aware `now` raises `TypeError` from Python's
+    datetime comparison, not `ValueError` - callers of this function
+    should only ever see `ValueError` from it. Caught and re-raised as a
+    `ValueError` identifying the real problem (a naive `as_of`) rather
+    than leaking the comparison's `TypeError`.
     """
-    if as_of is not None and as_of > now:
+    if as_of is None:
+        return
+    try:
+        is_future = as_of > now
+    except TypeError as exc:
+        raise ValueError("as_of must be timezone-aware") from exc
+    if is_future:
         raise ValueError(
             f"as_of ({as_of!r}) is in the future relative to now ({now!r})"
         )
@@ -220,7 +238,7 @@ def _union_pit_sql(as_of, policy: str) -> tuple:
     else:
         visible_predicate = (
             "(CAST(trade_date AS TIMESTAMP WITH TIME ZONE)"
-            " + INTERVAL 1 DAY + INTERVAL '08:00:00' HOUR TO SECOND) <= ?"
+            " + INTERVAL 1 DAY + INTERVAL 8 HOUR) <= ?"
         )
     sql = f"""
         WITH visible AS (
@@ -347,12 +365,15 @@ def query_ticks(
     # active, else silver directly.
     source_table = "vault_trade_tick" if legacy_root is not None else "silver_us_trade_tick_version"
 
-    if mode == MODE_GOLD and availability_policy != POLICY_AS_INGESTED_LOCAL:
-        # GOLD mode always reads latest_ticks() - availability_policy only
-        # governs which PIT-availability macro a PIT/BITEMPORAL query uses,
-        # so a non-default policy passed alongside GOLD mode has no effect.
-        # Surface that rather than silently ignoring it.
-        warnings.append("availability_policy ignored in GOLD mode")
+    if mode in (MODE_GOLD, MODE_EFFECTIVE_ONLY) and availability_policy != POLICY_AS_INGESTED_LOCAL:
+        # GOLD and EFFECTIVE_ONLY modes both always read latest_ticks() -
+        # availability_policy only governs which PIT-availability macro a
+        # PIT/BITEMPORAL query uses, so a non-default policy passed
+        # alongside either mode has no effect (M10, final-review finding:
+        # this warning previously only fired for GOLD, but EFFECTIVE_ONLY
+        # ignores availability_policy for exactly the same reason). Surface
+        # that rather than silently ignoring it.
+        warnings.append("availability_policy ignored in GOLD/EFFECTIVE_ONLY mode")
 
     if symbols is not None and len(symbols) == 0:
         # Explicit empty symbol list: nothing was requested, so nothing can

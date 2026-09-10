@@ -22,6 +22,7 @@ which is `<= 2021-11-08`).
   - tick C: rev 1, price 99.0, available 2026-01-10.
 """
 import datetime as dt
+import decimal
 
 import duckdb
 import pyarrow as pa
@@ -63,7 +64,7 @@ def _tick(**overrides) -> dict:
         "venue_id": None,
         "mic": None,
         "price_venue_type": "consolidated",
-        "price": 0.0,
+        "price": decimal.Decimal("0.0"),
         "size": None,
         "sale_condition_raw": None,
         "sale_condition_flags": None,
@@ -95,25 +96,25 @@ def _seed_lake(tmp_path) -> str:
 
     rows = [
         _tick(
-            tick_version_id="tkv_a1", logical_tick_id="A", price=150.26,
+            tick_version_id="tkv_a1", logical_tick_id="A", price=decimal.Decimal("150.26"),
             available_at_ts=_AVAILABLE_EARLY, revision_number=1,
         ),
         _tick(
-            tick_version_id="tkv_a2", logical_tick_id="A", price=150.27,
+            tick_version_id="tkv_a2", logical_tick_id="A", price=decimal.Decimal("150.27"),
             available_at_ts=_AVAILABLE_LATE, revision_number=2,
             is_correction=True, supersedes_tick_version_id="tkv_a1",
         ),
         _tick(
-            tick_version_id="tkv_b1", logical_tick_id="B", price=10.0,
+            tick_version_id="tkv_b1", logical_tick_id="B", price=decimal.Decimal("10.0"),
             available_at_ts=_AVAILABLE_EARLY, revision_number=1,
         ),
         _tick(
-            tick_version_id="tkv_b2", logical_tick_id="B", price=10.0,
+            tick_version_id="tkv_b2", logical_tick_id="B", price=decimal.Decimal("10.0"),
             available_at_ts=_AVAILABLE_LATE, revision_number=2,
             is_cancelled=True, supersedes_tick_version_id="tkv_b1",
         ),
         _tick(
-            tick_version_id="tkv_c1", logical_tick_id="C", price=99.0,
+            tick_version_id="tkv_c1", logical_tick_id="C", price=decimal.Decimal("99.0"),
             available_at_ts=_AVAILABLE_EARLY, revision_number=1,
         ),
     ]
@@ -190,8 +191,8 @@ def test_tape_order_deterministic(tmp_path):
         available_at_ts=_AVAILABLE_EARLY,
     )
     rows = [
-        _tick(tick_version_id="tkv_bbb", price=1.0, **common),
-        _tick(tick_version_id="tkv_aaa", price=2.0, **common),
+        _tick(tick_version_id="tkv_bbb", price=decimal.Decimal("1.0"), **common),
+        _tick(tick_version_id="tkv_aaa", price=decimal.Decimal("2.0"), **common),
     ]
     table = pa.Table.from_pylist(rows, schema=SCHEMAS["silver.us_trade_tick_version"])
     write_deltalake(f"{root}/silver/us_trade_tick_version", table, mode="append")
@@ -230,10 +231,10 @@ def test_tape_order_custom_venue_priorities_reorders_same_ms_ticks(tmp_path):
     )
     rows = [
         _tick(
-            tick_version_id="tkv_zzz", price=1.0, venue_id="NASDAQ", **common
+            tick_version_id="tkv_zzz", price=decimal.Decimal("1.0"), venue_id="NASDAQ", **common
         ),
         _tick(
-            tick_version_id="tkv_yyy", price=2.0, venue_id="NYSE", **common
+            tick_version_id="tkv_yyy", price=decimal.Decimal("2.0"), venue_id="NYSE", **common
         ),
     ]
     table = pa.Table.from_pylist(rows, schema=SCHEMAS["silver.us_trade_tick_version"])

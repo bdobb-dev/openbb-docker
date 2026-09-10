@@ -16,10 +16,12 @@ extended per the task-7 brief to:
   - `current_sp500(market_date)`: the "effective-only" mode explicitly
     contemplated by the task-7 brief - the same effective-interval and
     `resolution_status = 'RESOLVED'` predicates as `pit_sp500_membership`,
-    but with NO knowledge-time predicate at all (no `available_at_ts`, no
-    `system_to_ts` check) - i.e. "what does the lake say right now about
-    membership effective on `market_date`", not "what was knowable as of
-    some `decision_ts`".
+    with NO `available_at_ts` knowledge-time predicate - i.e. "what does
+    the lake say right now about membership effective on `market_date`",
+    not "what was knowable as of some `decision_ts`". It DOES keep a
+    `system_to_ts IS NULL` predicate (I5, final-review finding): "right
+    now" still means the presently-open system version of each row, not
+    a since-superseded one.
 
 `duckdb` is imported lazily (inside `install_reference_macros`) so this
 module can be imported without duckdb installed - duckdb is not
@@ -115,9 +117,14 @@ def install_reference_macros(con) -> None:
     # `current_sp500(market_date)`: the effective-only mode - same
     # effective-interval and resolution_status = 'RESOLVED' predicates as
     # pit_sp500_membership, but deliberately WITHOUT any knowledge-time
-    # predicate (no available_at_ts, no system_to_ts check) - "what the lake
-    # currently says was effective on market_date", not a point-in-time
-    # knowledge reconstruction.
+    # (`available_at_ts`) predicate - "what the lake currently says was
+    # effective on market_date", not a point-in-time knowledge
+    # reconstruction. It DOES still restrict to `system_to_ts IS NULL`
+    # (final-review finding I5): "current" means the lake's presently-open
+    # system version of each membership row, not a system-versioned row
+    # that has since been superseded/corrected - a closed system_to_ts
+    # means a *later* row is now the current belief, so a closed row must
+    # never be returned here even though no as-of/decision_ts is given.
     con.execute(
         """
         CREATE OR REPLACE MACRO current_sp500(
@@ -133,6 +140,7 @@ def install_reference_macros(con) -> None:
             m.membership_effective_to IS NULL
             OR m.membership_effective_to > market_date
           )
+          AND m.system_to_ts IS NULL
           AND m.resolution_status = 'RESOLVED';
         """
     )

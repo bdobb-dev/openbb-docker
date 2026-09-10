@@ -17,6 +17,7 @@ W1 should still be served from legacy (`origin='LEGACY_UNVERSIONED'`), W2
 from silver (`origin='CAPTURE'`, corrected price, no duplicates).
 """
 import datetime as dt
+import decimal
 
 import duckdb
 import pyarrow as pa
@@ -108,7 +109,7 @@ def _silver_tick_row(**overrides) -> dict:
         "venue_id": None,
         "mic": None,
         "price_venue_type": "consolidated",
-        "price": _SILVER_W2_PRICE,
+        "price": decimal.Decimal(str(_SILVER_W2_PRICE)),
         "size": 100,
         "sale_condition_raw": "@   ",
         "sale_condition_flags": None,
@@ -131,6 +132,48 @@ def _silver_tick_row(**overrides) -> dict:
     return row
 
 
+_IDENTITY_AVAILABLE = dt.datetime(2020, 1, 1, tzinfo=dt.timezone.utc)
+
+
+def _aapl_identifier_row(**overrides) -> dict:
+    """A `silver.identifier_assignment_version` row resolving vendor
+    symbol "AAPL" -> `listing_id="lst_aapl"` (the same listing_id
+    `_silver_tick_row` writes), knowable from `_IDENTITY_AVAILABLE`
+    (2020-01-01, i.e. always knowable at every as_of/decision_ts this
+    file uses).
+
+    Fix-round finding (final review): without this row, `pit_listing`
+    resolves "AAPL" to nothing (the lake fixture seeded no identifier
+    rows at all), so `tick_vault.contract.query_ticks`'s symbol
+    resolution comes back empty and the silver-origin arm of the
+    union-mode symbol filter (`listing_id IN (...)`) never matches -
+    the W2 silver row becomes unreachable by symbol filtering even
+    though it is present in `vault_trade_tick`."""
+    row = {
+        "assignment_version_id": "ia_aapl",
+        "issuer_id": None,
+        "registrant_id": None,
+        "instrument_id": "ins_aapl",
+        "listing_id": "lst_aapl",
+        "id_namespace": "EODHD_SYMBOL",
+        "id_value": "AAPL",
+        "normalized_id_value": "AAPL",
+        "effective_from_ts": dt.datetime(1980, 1, 1, tzinfo=dt.timezone.utc),
+        "effective_to_ts": None,
+        "observed_at_ts": _IDENTITY_AVAILABLE,
+        "available_at_ts": _IDENTITY_AVAILABLE,
+        "system_from_ts": _IDENTITY_AVAILABLE,
+        "system_to_ts": None,
+        "source_system": "eodhd",
+        "source_capture_id": "cap_test",
+        "verification_status": "VERIFIED",
+        "confidence": "1.0000",
+        "supersedes_assignment_version_id": None,
+    }
+    row.update(overrides)
+    return row
+
+
 def _seed_lake(tmp_path):
     root = str(tmp_path / "lake")
     legacy_root = str(tmp_path / "ticks_sip")
@@ -141,6 +184,14 @@ def _seed_lake(tmp_path):
         [_silver_tick_row()], schema=SCHEMAS["silver.us_trade_tick_version"]
     )
     write_deltalake(f"{root}/silver/us_trade_tick_version", table, mode="append")
+
+    identifier_table = pa.Table.from_pylist(
+        [_aapl_identifier_row()],
+        schema=SCHEMAS["silver.identifier_assignment_version"],
+    )
+    write_deltalake(
+        f"{root}/silver/identifier_assignment_version", identifier_table, mode="append"
+    )
     return root, legacy_root
 
 

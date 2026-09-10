@@ -67,6 +67,18 @@ def attach(con, root: str) -> None:
     """
     from tick_vault.schemas import SCHEMAS  # lazy: pulls in pyarrow
 
+    # I6 (final-review finding): pin the DuckDB session timezone to UTC,
+    # here and only here, as the one authoritative place every caller of
+    # `attach()` passes through. DuckDB's session TimeZone setting affects
+    # naive<->TZ-aware casts throughout this codebase's SQL (e.g. this
+    # module's `pit_ticks_policy`/`contract._union_pit_sql`'s
+    # `CAST(trade_date AS TIMESTAMP WITH TIME ZONE)` simulated-availability
+    # floors, and `tick_vault.union_view`'s NY-session-date derivation from
+    # a naive-UTC `date` column) - CI runs in UTC so this was never
+    # observed there, but a non-UTC Mac host would silently shift every
+    # one of those casts.
+    con.execute("SET TimeZone='UTC'")
+
     for name in SCHEMAS:
         layer, table = name.split(".", 1)
         view_name = f"{layer}_{table}"
@@ -219,7 +231,7 @@ def install_macros(con, venue_priorities: dict | None = None) -> None:
                     AND (
                         CAST(trade_date AS TIMESTAMP WITH TIME ZONE)
                         + INTERVAL 1 DAY
-                        + INTERVAL '08:00:00' HOUR TO SECOND
+                        + INTERVAL 8 HOUR
                     ) <= as_of
                 )
         ),

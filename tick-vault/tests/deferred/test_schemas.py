@@ -53,5 +53,9 @@ def test_create_all_writes_every_table(tmp_path):
     for name in SCHEMAS:
         layer, table = name.split(".", 1)
         dt = DeltaTable(str(tmp_path / layer / table))
-        assert [f.name for f in dt.schema().to_pyarrow()] == \
-            [f.name for f in SCHEMAS[name]]
+        # `DeltaTable.schema().to_pyarrow()` was removed in deltalake>=1.0
+        # (I3, final-review finding) - compare field NAMES only, via
+        # `.fields`, which iterates stably across deltalake versions,
+        # rather than round-tripping through a pyarrow schema.
+        assert {f.name for f in dt.schema().fields} == \
+            {f.name for f in SCHEMAS[name]}

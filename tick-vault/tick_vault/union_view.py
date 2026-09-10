@@ -125,6 +125,22 @@ knowledge of the union). The PIT-mode rule for legacy
     as-is, with no availability gating at all (mirroring
     `latest_ticks()`'s "no `as_of`, so no availability filter" behavior).
 
+Transitional identity gap (final-review finding): `vault_trade_tick`
+itself carries no notion of reference-layer identity - silver rows are
+matched by `listing_id` (via `tick_vault.contract.query_ticks`'s
+`pit_listing` symbol resolution) while legacy rows are matched by the
+literal `vendor_request_symbol` this module injects. During the
+migration, a symbol that has been re-downloaded into silver but has NOT
+yet had its `silver.identifier_assignment_version` row(s) landed by the
+reference pipeline is therefore in an inconsistent state: its silver
+rows exist in `vault_trade_tick` but are unreachable by any
+symbol-filtered `query_ticks(..., symbols=[...])` call (no `listing_id`
+resolves for it), even though its pre-watermark legacy rows continue to
+be served just fine via the origin-scoped `vendor_request_symbol` arm.
+This is a sequencing hazard for Plan 2, not a bug in this module: the
+reference (identity) pipeline must land a symbol's identity
+before-or-with its re-download into silver, not after.
+
 `duckdb` is imported lazily (inside `install_union_view` and its
 helpers), matching the `tick_vault.temporal` / `tick_vault.reference_
 queries` / `tick_vault.contract` lazy-import discipline, so this module

@@ -125,10 +125,15 @@ def test_current_sp500_sql_has_no_availability_predicate():
     literals = _collect_execute_sql_literals(tree, "install_reference_macros")
     sql = _macro_sql(literals, "current_sp500")
 
-    # Effective-only mode: no knowledge-time predicate at all.
+    # Effective-only mode: no `available_at_ts`/`decision_ts` knowledge-
+    # time predicate at all.
     assert "available_at_ts" not in sql
-    assert "system_to_ts" not in sql
     assert "decision_ts" not in sql
+
+    # I5 (final-review finding): it DOES still restrict to the
+    # presently-open system version - "current" means the lake's current
+    # belief, not a since-superseded system-versioned row.
+    assert "system_to_ts IS NULL" in sql
 
     # But it keeps the effective-interval and resolution predicates.
     assert "membership_effective_from <=" in sql
