@@ -121,3 +121,23 @@ def test_events_carry_revealing_capture():
     for row in res.events.to_dict("records"):
         assert row["revealing_capture_id"] == "cap_y"
         assert row["observed_at_ts"] == OBS2
+
+
+def test_source_capture_id_uniform_across_kinds():
+    # incoming parsed from a different capture id than the revealing one;
+    # every emitted new_versions row must be provenance-stamped to the
+    # revealing capture, regardless of kind (REVISED, CANCELLED, LATE_ADD).
+    incoming_other = parse_tick_payload(
+        INCOMING_PAYLOAD, capture_id="cap_other", listing_id="lst_a",
+        instrument_id="ins_a", observed_at=OBS1,
+    )
+    res = diff_window(EXISTING, incoming_other, revealing_capture_id="cap_y", observed_at=OBS2)
+    rows = res.new_versions.to_dict("records")
+    kinds_present = {
+        "REVISED": [r for r in rows if r["is_correction"]],
+        "CANCELLED": [r for r in rows if r["is_cancelled"]],
+        "LATE_ADD": [r for r in rows if r["is_late_add"]],
+    }
+    for kind, kind_rows in kinds_present.items():
+        assert len(kind_rows) == 1, kind
+        assert kind_rows[0]["source_capture_id"] == "cap_y", kind

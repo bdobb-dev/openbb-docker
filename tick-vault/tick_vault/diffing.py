@@ -55,13 +55,20 @@ def _norm_size(value):
     return None if value is None or pd.isna(value) else int(value)
 
 
+_NORMALIZERS = {
+    "price": _norm_price,
+    "size": _norm_size,
+}
+
+
+def _identity(value):
+    return value
+
+
 def _norm_key(row: dict) -> tuple:
-    return (
-        _norm_price(row.get("price")),
-        _norm_size(row.get("size")),
-        row.get("sale_condition_raw"),
-        row.get("sub_mkt_raw"),
-        row.get("venue_code_raw"),
+    return tuple(
+        _NORMALIZERS.get(field, _identity)(row.get(field))
+        for field in _COMPARISON_FIELDS
     )
 
 
@@ -91,6 +98,15 @@ def diff_window(
     branches: REVISED (changed comparison fields), CANCELLED (present in
     `existing` but missing from `incoming`), LATE_ADD (present in `incoming`
     but missing from `existing`).
+
+    Callers are expected to parse `incoming` from the revealing capture
+    itself (i.e. `capture_id == revealing_capture_id` when calling
+    `parse_tick_payload`). Regardless of what capture id is embedded in the
+    incoming rows, every emitted `new_versions` row - REVISED, CANCELLED,
+    and LATE_ADD alike - is provenance-stamped with `source_capture_id =
+    revealing_capture_id`, uniformly. This keeps provenance answering "which
+    capture revealed this version" rather than "which capture originally
+    carried this data".
     """
     new_version_rows: list[dict] = []
     event_rows: list[dict] = []
@@ -104,7 +120,7 @@ def diff_window(
 
     all_keys = set(existing_by_key) | set(incoming_by_key)
 
-    for key in all_keys:
+    for key in sorted(all_keys):
         existing_row = existing_by_key.get(key)
         incoming_row = incoming_by_key.get(key)
 
@@ -159,6 +175,7 @@ def diff_window(
 
         else:  # in incoming but not existing: late add
             late_row = dict(incoming_row)
+            late_row["source_capture_id"] = revealing_capture_id
             late_row["revision_number"] = 1
             late_row["is_correction"] = False
             late_row["is_cancelled"] = False
