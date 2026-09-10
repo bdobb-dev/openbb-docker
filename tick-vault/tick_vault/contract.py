@@ -54,6 +54,42 @@ than every tick's `available_at_ts` (a cheap `MIN(available_at_ts)` check
 against `silver_us_trade_tick_version`) is NOT an error: it produces an
 empty result plus a `"as_of predates earliest capture"` warning.
 
+Transitional union-view routing (task-9 brief, preflight controller ruling
+- the plan's Files list was incomplete; this module also wires in
+`tick_vault.union_view`): `query_ticks` gains two optional keyword-only
+parameters, `legacy_root=None` and `watermarks=None`. When `legacy_root`
+is given, `query_ticks` calls `tick_vault.union_view.install_union_view(
+con, root, legacy_root, watermarks)` right after `attach()`, and the
+tick-source relation for EVERY mode becomes `vault_trade_tick` (silver at/
+after each symbol's watermark, legacy before it - see `tick_vault.
+union_view`'s module docstring) instead of `silver_us_trade_tick_version`
+directly. `tick_vault.temporal`'s macros (`latest_ticks`/`pit_ticks`/
+`pit_ticks_policy`) are NOT reused for union queries - they hard-code
+`silver_us_trade_tick_version` as their source and have no notion of the
+union - so this module keeps a parallel, union-aware revision-resolution
+SQL path (`_union_latest_sql`/`_union_pit_sql`, right below the mode
+constants) that applies the identical "highest revision_number per
+logical_tick_id, excluding a tombstoned latest revision" rule on top of
+`vault_trade_tick` instead.
+
+Union-mode PIT semantics for legacy (`origin='LEGACY_UNVERSIONED'`) rows
+specifically (full rationale in `tick_vault.union_view`'s module
+docstring):
+
+  - `'AS_INGESTED_LOCAL_V1'`: legacy rows are NEVER visible, at any
+    `as_of` - they carry no real `available_at_ts` (nothing was ever
+    actually ingested with a recorded arrival time), so an as-ingested
+    query must honestly return nothing for them rather than treat a NULL
+    capture time as "always available".
+  - `'HISTORICAL_VENDOR_FINAL_V1'`: legacy rows become visible once the
+    same SIMULATED availability floor silver rows use under this policy
+    is crossed (`trade_date + INTERVAL 1 DAY` at `08:00:00` UTC
+    `<= as_of`) - identical to how `tick_vault.temporal.pit_ticks_policy`
+    simulates availability for silver rows under this policy.
+  - `GOLD`/`EFFECTIVE_ONLY` (no `as_of` at all): legacy rows serve as-is,
+    unfiltered by availability - mirroring `latest_ticks()`'s own "no
+    `as_of`, so no availability filter" behavior.
+
 `duckdb` and `deltalake` are imported lazily (inside `query_ticks` and its
 helpers) so this module - including the pure `resolve_mode`/`validate_as_of`
 helpers - stays importable without either installed, matching the
@@ -145,6 +181,68 @@ def validate_as_of(as_of, now) -> None:
         )
 
 
+def _union_latest_sql() -> tuple:
+    """Union-mode analogue of `tick_vault.temporal.latest_ticks()`,
+    applied over `vault_trade_tick` instead of
+    `silver_us_trade_tick_version` (see module docstring's "Union-mode PIT
+    semantics" section) - no availability filter at all, just highest-
+    revision-per-logical_tick_id with tombstone exclusion."""
+    sql = """
+        WITH ranked AS (
+            SELECT
+                t.*,
+                row_number() OVER (
+                    PARTITION BY t.logical_tick_id
+                    ORDER BY t.revision_number DESC
+                ) AS rn
+            FROM vault_trade_tick AS t
+        )
+        SELECT * EXCLUDE (rn)
+        FROM ranked
+        WHERE rn = 1
+          AND COALESCE(is_cancelled, FALSE) = FALSE
+    """
+    return sql, []
+
+
+def _union_pit_sql(as_of, policy: str) -> tuple:
+    """Union-mode analogue of `tick_vault.temporal.pit_ticks`/
+    `pit_ticks_policy`, applied over `vault_trade_tick`. Legacy
+    (`origin = 'LEGACY_UNVERSIONED'`) rows are excluded entirely under
+    `POLICY_AS_INGESTED_LOCAL` (no real `available_at_ts`), and gated by
+    the same SIMULATED availability floor as silver rows under
+    `POLICY_HISTORICAL_VENDOR_FINAL` (`trade_date + INTERVAL 1 DAY` at
+    `08:00:00` UTC `<= as_of`) - see module docstring."""
+    if policy == POLICY_AS_INGESTED_LOCAL:
+        visible_predicate = (
+            "origin != 'LEGACY_UNVERSIONED' AND available_at_ts <= ?"
+        )
+    else:
+        visible_predicate = (
+            "(CAST(trade_date AS TIMESTAMP WITH TIME ZONE)"
+            " + INTERVAL 1 DAY + INTERVAL '08:00:00' HOUR TO SECOND) <= ?"
+        )
+    sql = f"""
+        WITH visible AS (
+            SELECT * FROM vault_trade_tick WHERE {visible_predicate}
+        ),
+        ranked AS (
+            SELECT
+                v.*,
+                row_number() OVER (
+                    PARTITION BY v.logical_tick_id
+                    ORDER BY v.revision_number DESC
+                ) AS rn
+            FROM visible AS v
+        )
+        SELECT * EXCLUDE (rn)
+        FROM ranked
+        WHERE rn = 1
+          AND COALESCE(is_cancelled, FALSE) = FALSE
+    """
+    return sql, [as_of]
+
+
 def _pinned_delta_versions(root: str) -> dict:
     """Pin `deltalake.DeltaTable(path).version()` for every table in
     `_PINNED_TABLES`, keyed by their `SCHEMAS`-registry dotted name."""
@@ -200,6 +298,8 @@ def query_ticks(
     as_of=None,
     effective=None,
     availability_policy: str = POLICY_AS_INGESTED_LOCAL,
+    legacy_root: str | None = None,
+    watermarks: dict | None = None,
 ) -> ContractResult:
     """Resolve and run a temporal tick query against the lake rooted at
     `root`, using the DuckDB connection `con`.
@@ -213,6 +313,13 @@ def query_ticks(
     `start`/`end` bound `trade_date` (inclusive). `as_of`/`effective`
     select the temporal mode per this module's docstring. `symbols`, if
     given, is a vendor-symbol allowlist resolved via `pit_listing`.
+
+    `legacy_root`/`watermarks`: when `legacy_root` is given, this function
+    also calls `tick_vault.union_view.install_union_view(con, root,
+    legacy_root, watermarks or {})` and every mode reads `vault_trade_tick`
+    instead of `silver_us_trade_tick_version` directly - see this module's
+    docstring ("Transitional union-view routing") for the full semantics,
+    including the union-mode PIT rules for legacy rows.
     """
     from tick_vault.temporal import attach, install_macros
     from tick_vault.reference_queries import install_reference_macros
@@ -227,6 +334,19 @@ def query_ticks(
     install_macros(con)
     install_reference_macros(con)
 
+    union_handle = None
+    if legacy_root is not None:
+        from tick_vault.union_view import install_union_view
+
+        union_handle = install_union_view(con, root, legacy_root, watermarks or {})
+
+    # Source relation for the pre-capture floor checks and the "no
+    # symbols requested" / "as_of predates ..." empty-result short
+    # circuits below: `vault_trade_tick` (which already carries every
+    # `silver_us_trade_tick_version` column) when union routing is
+    # active, else silver directly.
+    source_table = "vault_trade_tick" if legacy_root is not None else "silver_us_trade_tick_version"
+
     if mode == MODE_GOLD and availability_policy != POLICY_AS_INGESTED_LOCAL:
         # GOLD mode always reads latest_ticks() - availability_policy only
         # governs which PIT-availability macro a PIT/BITEMPORAL query uses,
@@ -240,7 +360,7 @@ def query_ticks(
         # through to the "no filter at all" behavior `None` gets.
         warnings.append("no symbols requested")
         df = con.execute(
-            "SELECT * FROM silver_us_trade_tick_version WHERE FALSE"
+            f"SELECT * FROM {source_table} WHERE FALSE"
         ).df()
         provenance = _build_provenance(
             mode=mode,
@@ -265,7 +385,7 @@ def query_ticks(
     if as_of is not None:
         if availability_policy == POLICY_HISTORICAL_VENDOR_FINAL:
             min_trade_date = con.execute(
-                "SELECT MIN(trade_date) FROM silver_us_trade_tick_version"
+                f"SELECT MIN(trade_date) FROM {source_table}"
             ).fetchone()[0]
             floor = (
                 dt.datetime.combine(
@@ -278,14 +398,14 @@ def query_ticks(
             floor_warning = "as_of predates simulated availability floor"
         else:
             floor = con.execute(
-                "SELECT MIN(available_at_ts) FROM silver_us_trade_tick_version"
+                f"SELECT MIN(available_at_ts) FROM {source_table}"
             ).fetchone()[0]
             floor_warning = "as_of predates earliest capture"
 
         if floor is not None and as_of < floor:
             warnings.append(floor_warning)
             df = con.execute(
-                "SELECT * FROM silver_us_trade_tick_version WHERE FALSE"
+                f"SELECT * FROM {source_table} WHERE FALSE"
             ).df()
             provenance = _build_provenance(
                 mode=mode,
@@ -297,7 +417,16 @@ def query_ticks(
             return ContractResult(df=df, provenance=provenance)
 
     # Base relation: which macro supplies the (revision-resolved) tick rows.
-    if mode in (MODE_GOLD, MODE_EFFECTIVE_ONLY):
+    # When union routing is active (`legacy_root` given), the temporal
+    # macros (which hard-code `silver_us_trade_tick_version`) are bypassed
+    # entirely in favor of the parallel union-aware SQL - see module
+    # docstring / `_union_latest_sql` / `_union_pit_sql`.
+    if legacy_root is not None:
+        if mode in (MODE_GOLD, MODE_EFFECTIVE_ONLY):
+            base_sql, base_params = _union_latest_sql()
+        else:
+            base_sql, base_params = _union_pit_sql(as_of, availability_policy)
+    elif mode in (MODE_GOLD, MODE_EFFECTIVE_ONLY):
         base_sql = "SELECT * FROM latest_ticks()"
         base_params: list = []
     elif availability_policy == POLICY_AS_INGESTED_LOCAL:
@@ -322,10 +451,22 @@ def query_ticks(
     params = list(base_params) + [start, end]
 
     if symbols:
+        # Under union routing, legacy rows carry no `listing_id` (identity
+        # is not tracked for them) - they are matched by
+        # `vendor_request_symbol` (the literal symbol `tick_vault.
+        # union_view` injects) instead, alongside the usual
+        # `listing_id IN (...)` match for silver rows.
+        conditions = []
         if listing_ids:
             placeholders = ", ".join("?" for _ in listing_ids)
-            sql += f" AND listing_id IN ({placeholders})"
+            conditions.append(f"listing_id IN ({placeholders})")
             params.extend(listing_ids)
+        if legacy_root is not None:
+            symbol_placeholders = ", ".join("?" for _ in symbols)
+            conditions.append(f"vendor_request_symbol IN ({symbol_placeholders})")
+            params.extend(symbols)
+        if conditions:
+            sql += " AND (" + " OR ".join(conditions) + ")"
         else:
             # every requested symbol was unresolved - no rows can qualify.
             sql += " AND FALSE"
@@ -345,4 +486,12 @@ def query_ticks(
         root=root,
         origin_flags=origin_flags,
     )
+    if union_handle is not None:
+        # Surface the union displacement frontier for every symbol this
+        # query actually resolved, so a downstream backtest manifest can
+        # record exactly which weeks came from silver vs. legacy without
+        # re-deriving it from `watermarks` itself.
+        provenance["union_provenance"] = {
+            symbol: union_handle.union_provenance(symbol) for symbol in (symbols or [])
+        }
     return ContractResult(df=df, provenance=provenance)
