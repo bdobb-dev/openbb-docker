@@ -455,7 +455,15 @@ def query_ticks(
         # is not tracked for them) - they are matched by
         # `vendor_request_symbol` (the literal symbol `tick_vault.
         # union_view` injects) instead, alongside the usual
-        # `listing_id IN (...)` match for silver rows.
+        # `listing_id IN (...)` match for silver rows. Fix-round finding
+        # 2: the vendor-symbol arm must be scoped to legacy rows only
+        # (`origin = 'LEGACY_UNVERSIONED'`) - matching it unconditionally
+        # against every row would let a silver row whose
+        # `vendor_request_symbol` happens to match a requested symbol
+        # through even when its own (correctly resolved) `listing_id`
+        # does NOT match, weakening silver's identity resolution for no
+        # reason: silver rows are always matched by `listing_id`, never
+        # by the raw request symbol.
         conditions = []
         if listing_ids:
             placeholders = ", ".join("?" for _ in listing_ids)
@@ -463,7 +471,10 @@ def query_ticks(
             params.extend(listing_ids)
         if legacy_root is not None:
             symbol_placeholders = ", ".join("?" for _ in symbols)
-            conditions.append(f"vendor_request_symbol IN ({symbol_placeholders})")
+            conditions.append(
+                "(origin = 'LEGACY_UNVERSIONED' AND vendor_request_symbol IN "
+                f"({symbol_placeholders}))"
+            )
             params.extend(symbols)
         if conditions:
             sql += " AND (" + " OR ".join(conditions) + ")"

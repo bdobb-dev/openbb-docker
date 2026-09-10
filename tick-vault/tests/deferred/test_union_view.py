@@ -239,3 +239,88 @@ def test_pit_simulated_includes_legacy(lake):
     # simulated floor for W1 (2021-11-01 + 1 day @ 08:00 = 2021-11-02 08:00)
     # is well before as_of (2021-11-10), so legacy W1 is visible.
     assert _W1_DATE in trade_dates
+
+
+
+def _write_symbol_legacy_table(legacy_root: str, symbol: str, rows: list) -> None:
+    table = pa.Table.from_pylist(
+        rows,
+        schema=pa.schema(
+            [
+                pa.field("date", pa.timestamp("us")),
+                pa.field("price", pa.float64()),
+                pa.field("size", pa.int64()),
+                pa.field("mkt", pa.string()),
+                pa.field("sub_mkt", pa.string()),
+                pa.field("seq", pa.int64()),
+                pa.field("sl", pa.string()),
+                pa.field("day", pa.string()),
+            ]
+        ),
+    )
+    write_deltalake(
+        f"{legacy_root}/{symbol}", table, mode="append", partition_by=["day"]
+    )
+
+
+def test_unwatermarked_symbol_served_from_legacy(lake):
+    """Fix-round finding 1: a symbol with NO entry in `watermarks` at all
+    (not even an empty-dict placeholder) must still be served entirely
+    from legacy, discovered straight off disk under `legacy_root` -
+    `install_union_view(con, root, legacy_root, {})` must not silently
+    drop it."""
+    con, root, legacy_root = lake
+    handle = install_union_view(con, root, legacy_root, {})
+    assert handle.watermarks == {}
+    assert "AAPL" in handle.discovered_symbols
+    rows = con.execute(
+        "SELECT trade_date, price, origin FROM vault_trade_tick"
+        " WHERE vendor_request_symbol = 'AAPL' ORDER BY trade_date"
+    ).fetchall()
+    # both legacy weeks served, unbounded (no watermark at all)
+    assert len(rows) == 2
+    for _, price, origin in rows:
+        assert origin == "LEGACY_UNVERSIONED"
+    prices = {price for _, price, _ in rows}
+    assert prices == {_LEGACY_W1_PRICE, _LEGACY_W2_PRICE}
+
+    prov = handle.union_provenance("AAPL")
+    assert prov["frontier"] is None
+    assert prov["serving"] == "legacy_only"
+
+
+def test_legacy_boundary_print_gets_prior_ny_session_date(tmp_path):
+    """Fix-round finding 3 (controller ruling): legacy `day` is a UTC
+    CALENDAR day, not the NY session date. A print at `01:30:00` naive-UTC
+    living in the `day='2021-11-06'` partition is really part of the
+    `2021-11-05` NY session (04:00 UTC is NY midnight during EDT, so
+    01:30 UTC is still the prior evening/night)."""
+    root = str(tmp_path / "lake")
+    legacy_root = str(tmp_path / "ticks_sip")
+    create_all(root)
+    _write_symbol_legacy_table(
+        legacy_root,
+        "MSFT",
+        [
+            {
+                "date": dt.datetime(2021, 11, 6, 1, 30, 0),
+                "price": 300.0,
+                "size": 50,
+                "mkt": "Q",
+                "sub_mkt": "",
+                "seq": 42,
+                "sl": "@   ",
+                "day": "2021-11-06",
+            }
+        ],
+    )
+    con = duckdb.connect()
+    attach(con, root)
+    handle = install_union_view(con, root, legacy_root, {})
+    assert "MSFT" in handle.discovered_symbols
+    rows = con.execute(
+        "SELECT trade_date FROM vault_trade_tick WHERE vendor_request_symbol = 'MSFT'"
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == dt.date(2021, 11, 5)
+    con.close()

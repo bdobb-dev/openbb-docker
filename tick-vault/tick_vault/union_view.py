@@ -7,6 +7,20 @@ columns `date` (naive-UTC timestamp index), `price`, `size`, `mkt`,
 `sub_mkt`, `seq`, `sl` - the layout `scripts/sip_backfill.py` wrote), a
 symbol's data is served from two places depending on calendar week:
 
+Legacy `day` is a UTC CALENDAR-day partition, NOT the NY trading-session
+date (fix-round controller ruling, verified against the real
+`scripts/sip_backfill.py`: "a UTC-day partition holds the tail of one US
+session (00:00-04:00 UTC) and most of the next"). A print timestamped
+`2021-11-06 01:30:00` (naive UTC) living in the `day='2021-11-06'`
+partition is actually part of the NY session that traded on
+`2021-11-05` (04:00 UTC is midnight NY during EDT, so 01:30 UTC is still
+the prior NY evening/night). `_legacy_symbol_select` below therefore
+derives `trade_date` from the `date` column with the same
+America/New_York session-dating `tick_vault.tick_parser.session_date`
+uses, NOT from `CAST(day AS DATE)` - `day` is kept only as a (still
+useful, coarser) partition-pruning hint for `delta_scan`, never as the
+row's actual trade date.
+
   - weeks that have been re-downloaded and versioned into
     `silver.us_trade_tick_version` are served from silver (full
     bitemporal/PIT machinery, `origin='CAPTURE'` etc.);
@@ -17,10 +31,28 @@ The boundary is per-symbol: `watermarks: dict[str, datetime.date]` maps
 `SYMBOL -> first re-downloaded week-monday`. Dates `>= watermark[symbol]`
 are served from silver; dates `< watermark[symbol]` are served from
 legacy. A symbol absent from `watermarks` has not been re-downloaded at
-all and is served entirely from legacy (there is nothing for it in
-silver yet - `silver.us_trade_tick_version` is only ever written for
-symbols under active watermark tracking, so this is not a special case,
-just the natural result of the join in `vault_trade_tick` below).
+all and is served entirely from legacy - there is nothing for it in
+silver yet (`silver.us_trade_tick_version` is only ever written for
+symbols under active watermark tracking), so ALL of its legacy rows must
+be served, unbounded (fix-round correction: this is NOT simply "the
+natural result of the join" unless the symbol's legacy table is actually
+present in `legacy_trade_tick` in the first place - see the discovery
+step below, which is what makes that true).
+
+`install_union_view` does not rely solely on `watermarks`' own keys to
+know which legacy tables exist: it also scans `legacy_root` itself
+(`os.listdir`, one entry per candidate symbol, keeping directories that
+contain a `_delta_log` subdirectory and excluding names starting with
+`"_"`) to discover every legacy symbol table actually on disk. The
+legacy branch of `vault_trade_tick` is built from the UNION of (a)
+watermarked symbols whose legacy table exists, and (b) discovered
+symbols that have NO watermark at all - so a symbol nobody has ever
+called `install_union_view` with a watermark for, but which does have a
+legacy Delta table on disk, is still served (entirely from legacy, no
+`< watermark` predicate, since it never joins to a `union_watermarks`
+row). Discovered-but-unwatermarked symbols are recorded on the returned
+handle and `union_provenance` reports `"legacy_only"` for them
+truthfully.
 
 `install_union_view(con, root, legacy_root, watermarks)` registers:
 
@@ -32,14 +64,19 @@ just the natural result of the join in `vault_trade_tick` below).
      bind a relation-valued parameter, so real registered views are used
      instead).
   2. `legacy_trade_tick` - a view unioning one `delta_scan(...)` per
-     symbol in `watermarks`, each projected into the exact column set of
+     symbol in the UNION of (watermarked symbols whose legacy table
+     exists on disk) and (symbols discovered on disk under `legacy_root`
+     that have no watermark at all - see `_discover_legacy_symbols`),
+     each projected into the exact column set of
      `silver.us_trade_tick_version` (NULL where legacy has no equivalent
-     column) with the vendor symbol injected as a literal. A symbol whose
-     legacy table path (`<legacy_root>/<SYMBOL>`) does not exist on disk
-     is skipped (not every watermarked symbol necessarily has legacy
-     history - e.g. a symbol added to coverage only after the migration
-     started); skipped symbols are recorded on the returned handle
-     (`UnionViewHandle.skipped_symbols`), not raised as an error.
+     column) with the vendor symbol injected as a literal. A watermarked
+     symbol whose legacy table path (`<legacy_root>/<SYMBOL>`) does not
+     exist on disk is skipped (not every watermarked symbol necessarily
+     has legacy history - e.g. a symbol added to coverage only after the
+     migration started); skipped symbols are recorded on the returned
+     handle (`UnionViewHandle.skipped_symbols`), not raised as an error.
+     Discovered-but-unwatermarked symbols are recorded on the handle as
+     `UnionViewHandle.discovered_symbols`.
   3. `vault_trade_tick` - `UNION ALL` of silver rows with
      `trade_date >= watermark` (joined to `union_watermarks` via
      `vendor_request_symbol`, which every silver row carries - a symbol
@@ -52,7 +89,8 @@ just the natural result of the join in `vault_trade_tick` below).
      ever relaxed).
 
 `install_union_view` returns a `UnionViewHandle` bundling the watermarks
-dict actually installed plus the list of skipped symbols; its
+dict actually installed, the list of skipped symbols, and the list of
+discovered-but-unwatermarked symbols; its
 `union_provenance(symbol)` method is the "displacement frontier" report
 the task-9 brief asks for (kept as a handle method rather than module-
 level state, per the controller ruling, so multiple `install_union_view`
@@ -156,7 +194,9 @@ SILVER_COLUMNS = [
 class UnionViewHandle:
     """The result of `install_union_view(...)`: the watermarks that were
     actually installed, the symbols whose legacy table was skipped (path
-    did not exist), plus the `union_provenance` reporting method.
+    did not exist), the symbols discovered on disk under `legacy_root`
+    that have no watermark at all (still served, entirely from legacy),
+    plus the `union_provenance` reporting method.
 
     A handle (rather than module-level state) so multiple
     `install_union_view` calls - e.g. against different connections/roots
@@ -166,6 +206,7 @@ class UnionViewHandle:
 
     watermarks: dict = field(default_factory=dict)
     skipped_symbols: list = field(default_factory=list)
+    discovered_symbols: list = field(default_factory=list)
 
     def union_provenance(self, symbol: str) -> dict:
         """The "displacement frontier" report for `symbol`: the watermark
@@ -180,10 +221,12 @@ class UnionViewHandle:
             (path did not exist): `"silver_only"` - there is no legacy
             history behind the (nonexistent) watermark, so only whatever
             silver has (if anything) is real.
-          - no watermark, legacy table present (or never attempted):
-            `"legacy_only"` - the symbol has not been re-downloaded, so
-            silver contributes nothing for it (per `vault_trade_tick`'s
-            join semantics) and legacy serves everything.
+          - no watermark, legacy table present (whether because it was
+            discovered on disk - `symbol in self.discovered_symbols` - or
+            simply never attempted): `"legacy_only"` - the symbol has not
+            been re-downloaded, so silver contributes nothing for it (per
+            `vault_trade_tick`'s join semantics) and legacy serves
+            everything, unbounded.
         """
         watermark = self.watermarks.get(symbol)
         if watermark is not None:
@@ -221,16 +264,34 @@ def _install_watermarks_view(con, watermarks: dict) -> None:
         )
 
 
+# The NY-session trade date of a legacy row's naive-UTC `date` timestamp -
+# NOT `CAST(day AS DATE)` (the legacy `day` partition is a UTC CALENDAR
+# day, not the NY session date; see module docstring). Localizes the
+# naive timestamp to UTC, converts to America/New_York, takes the date -
+# matching `tick_vault.tick_parser.session_date`'s own
+# `utc_dt.astimezone(_NY_TZ).date()` logic, just expressed in DuckDB SQL.
+# Shared by `trade_date` and `logical_tick_id` below so both agree.
+_NY_SESSION_DATE_SQL = "CAST(timezone('America/New_York', timezone('UTC', date)) AS DATE)"
+
+
 def _legacy_symbol_select(legacy_root: str, symbol: str) -> str:
     """The projection of one legacy `<legacy_root>/<symbol>` Delta table
     into `SILVER_COLUMNS`, with the vendor symbol injected as a literal
     (the legacy table has no symbol column of its own - it's implicit in
-    the table's path) and every silver-only column NULLed out."""
+    the table's path) and every silver-only column NULLed out.
+
+    `trade_date` (and the `logical_tick_id` built from it) is the
+    America/New_York SESSION date derived from the naive-UTC `date`
+    timestamp (`_NY_SESSION_DATE_SQL`), not `CAST(day AS DATE)` - `day`
+    is a UTC calendar-day partition and is deliberately left unused here
+    except implicitly via `delta_scan` partition pruning; a print in the
+    `day='2021-11-06'` partition timestamped `01:30:00` is really part of
+    the `2021-11-05` NY session (see module docstring)."""
     path = f"{legacy_root}/{symbol}"
     return f"""
         SELECT
             NULL::VARCHAR AS tick_version_id,
-            {symbol!r} || '|' || CAST(CAST(day AS DATE) AS VARCHAR) || '|' || CAST(seq AS VARCHAR) AS logical_tick_id,
+            {symbol!r} || '|' || CAST({_NY_SESSION_DATE_SQL} AS VARCHAR) || '|' || CAST(seq AS VARCHAR) AS logical_tick_id,
             'LEGACY_TICKS_SIP' AS source_system,
             NULL::VARCHAR AS source_capture_id,
             NULL::BIGINT AS source_page_ordinal,
@@ -239,7 +300,7 @@ def _legacy_symbol_select(legacy_root: str, symbol: str) -> str:
             NULL::VARCHAR AS instrument_id,
             {symbol!r} AS vendor_request_symbol,
             NULL::VARCHAR AS eodhd_exchange_code,
-            CAST(day AS DATE) AS trade_date,
+            {_NY_SESSION_DATE_SQL} AS trade_date,
             epoch_ms(date) AS trade_ts_ms,
             date AS trade_ts,
             mkt AS venue_code_raw,
@@ -270,15 +331,54 @@ def _legacy_symbol_select(legacy_root: str, symbol: str) -> str:
     """
 
 
-def _install_legacy_trade_tick_view(con, legacy_root: str, watermarks: dict) -> list:
-    """Register `legacy_trade_tick` as the `UNION ALL` of every watermarked
-    symbol's legacy table (skipping - and returning - symbols whose table
-    path does not exist). Only symbols present in `watermarks` are
-    considered: that dict is the only symbol universe `install_union_view`
-    is given."""
+def _discover_legacy_symbols(legacy_root: str) -> list:
+    """Discover legacy symbol tables actually present under `legacy_root`
+    by listing its immediate entries (`os.listdir`) and keeping the ones
+    that look like a Delta table: a directory containing a `_delta_log`
+    subdirectory. Entries whose own name starts with `"_"` are excluded
+    (Delta's own internal directories, e.g. a stray top-level
+    `_delta_log` if `legacy_root` itself were ever mistaken for a table
+    root) - this is what lets a symbol with legacy history but NO
+    watermark entry (nobody has called `install_union_view` about it yet)
+    still be discovered and served, entirely from legacy (fix-round
+    finding: previously, `legacy_trade_tick` was built ONLY from
+    `watermarks`' own keys, so an unwatermarked symbol contributed zero
+    rows from either source - a silent, total data loss for it)."""
+    if not os.path.isdir(legacy_root):
+        return []
+    discovered: list = []
+    for name in sorted(os.listdir(legacy_root)):
+        if name.startswith("_"):
+            continue
+        path = os.path.join(legacy_root, name)
+        if os.path.isdir(path) and os.path.isdir(os.path.join(path, "_delta_log")):
+            discovered.append(name)
+    return discovered
+
+
+def _install_legacy_trade_tick_view(con, legacy_root: str, watermarks: dict) -> tuple:
+    """Register `legacy_trade_tick` as the `UNION ALL` of every legacy
+    table in the UNION of (a) watermarked symbols whose legacy table
+    exists on disk, and (b) symbols discovered on disk under
+    `legacy_root` (`_discover_legacy_symbols`) that carry no watermark at
+    all - so a symbol absent from `watermarks` entirely is still served,
+    unbounded, straight from its discovered legacy table (see module
+    docstring / fix-round finding 1).
+
+    Returns `(skipped, discovered_unwatermarked)`: `skipped` is every
+    watermarked symbol whose legacy table path did not exist (not every
+    watermarked symbol necessarily has legacy history);
+    `discovered_unwatermarked` is every discovered symbol that had no
+    watermark entry (these are recorded on the handle so
+    `union_provenance` and callers can see they came from discovery, not
+    from an explicit watermark)."""
+    discovered = _discover_legacy_symbols(legacy_root)
+    discovered_unwatermarked = [s for s in discovered if s not in watermarks]
+    symbols_to_serve = list(watermarks) + discovered_unwatermarked
+
     skipped: list = []
     selects: list = []
-    for symbol in watermarks:
+    for symbol in symbols_to_serve:
         path = os.path.join(legacy_root, symbol)
         if not os.path.exists(path):
             skipped.append(symbol)
@@ -292,7 +392,7 @@ def _install_legacy_trade_tick_view(con, legacy_root: str, watermarks: dict) -> 
         union_sql = f"SELECT {null_cols} WHERE FALSE"
 
     con.execute(f"CREATE OR REPLACE VIEW legacy_trade_tick AS {union_sql}")
-    return skipped
+    return skipped, discovered_unwatermarked
 
 
 def _install_vault_trade_tick_view(con) -> None:
@@ -330,12 +430,22 @@ def install_union_view(con, root: str, legacy_root: str, watermarks: dict) -> Un
     `attach` already registered.
 
     Returns a `UnionViewHandle` (watermarks actually installed + skipped
-    symbols + `union_provenance`) - see `UnionViewHandle` docstring.
+    symbols + discovered-but-unwatermarked symbols + `union_provenance`)
+    - see `UnionViewHandle` docstring. Calling this with an empty
+    `watermarks` dict still serves every legacy symbol table discovered
+    on disk under `legacy_root` (fix-round finding 1) - `watermarks={}`
+    means "nothing has been re-downloaded yet", not "nothing exists".
     """
     import duckdb  # noqa: F401  (imported lazily; ensures duckdb is present)
 
     watermarks = dict(watermarks or {})
     _install_watermarks_view(con, watermarks)
-    skipped = _install_legacy_trade_tick_view(con, legacy_root, watermarks)
+    skipped, discovered_unwatermarked = _install_legacy_trade_tick_view(
+        con, legacy_root, watermarks
+    )
     _install_vault_trade_tick_view(con)
-    return UnionViewHandle(watermarks=watermarks, skipped_symbols=skipped)
+    return UnionViewHandle(
+        watermarks=watermarks,
+        skipped_symbols=skipped,
+        discovered_symbols=discovered_unwatermarked,
+    )

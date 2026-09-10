@@ -19,12 +19,22 @@ Checks:
     source
   - the `'LEGACY_UNVERSIONED'` literal is present
   - the `logical_tick_id` construction (symbol || '|' || trade_date || '|'
-    || seq, via the `day`/`seq` legacy columns) is present
+    || seq, via the NY-session `trade_date` expression and the legacy
+    `seq` column) is present
   - `tick_vault/contract.py` has a `legacy_root` parameter and references
     `vault_trade_tick`
   - the PIT-exclusion rule is documented: both availability-policy name
     literals (`AS_INGESTED_LOCAL_V1`, `HISTORICAL_VENDOR_FINAL_V1`) appear
     somewhere in union_view.py or contract.py's union-path source
+  - fix-round finding 3: union_view.py derives `trade_date` via
+    `timezone('America/New_York', timezone('UTC', ...))`, NOT
+    `CAST(day AS DATE)` (legacy `day` is a UTC calendar day, not the NY
+    session date)
+  - fix-round finding 2: contract.py's union-mode symbol filter scopes the
+    `vendor_request_symbol IN (...)` arm to `origin = 'LEGACY_UNVERSIONED'`
+    rows only, never weakening silver's `listing_id`-based resolution
+  - fix-round finding 1: union_view.py discovers legacy symbol tables off
+    disk (`os.listdir`/`os.scandir`), not just off `watermarks`' own keys
 """
 import importlib
 import os
@@ -78,11 +88,34 @@ def test_legacy_origin_literal_present():
 def test_logical_tick_id_construction_present():
     source = _read(_UNION_VIEW_PATH)
     assert "logical_tick_id" in source
-    # symbol || '|' || trade_date || '|' || seq, built from the legacy
-    # `day`/`seq` columns.
+    # symbol || '|' || trade_date || '|' || seq, built from the NY-session
+    # trade_date expression and the legacy `seq` column.
     assert "'|'" in source
-    assert "CAST(day AS DATE)" in source
     assert "seq" in source
+
+
+def test_trade_date_uses_ny_session_not_utc_day():
+    # Fix-round finding 3: legacy `day` is a UTC calendar-day partition,
+    # not the NY session date - trade_date must be derived via NY-session
+    # localization, not a bare CAST of the partition column.
+    source = _read(_UNION_VIEW_PATH)
+    assert "timezone('America/New_York'" in source
+    assert "timezone('UTC'" in source
+
+
+def test_contract_symbol_filter_scoped_to_legacy_origin_only():
+    # Fix-round finding 2: the vendor-symbol arm of the union-mode symbol
+    # filter must be scoped to legacy rows only, not OR'd in unconditionally
+    # alongside the listing_id match.
+    source = _read(_CONTRACT_PATH)
+    assert "origin = 'LEGACY_UNVERSIONED' AND vendor_request_symbol IN" in source
+
+
+def test_union_view_discovers_legacy_symbols_off_disk():
+    # Fix-round finding 1: legacy symbol discovery must scan legacy_root
+    # itself (os.listdir/os.scandir), not rely solely on watermarks' keys.
+    source = _read(_UNION_VIEW_PATH)
+    assert "os.listdir(legacy_root)" in source or "os.scandir(legacy_root)" in source
 
 
 def test_contract_has_legacy_root_param_and_vault_trade_tick_reference():
