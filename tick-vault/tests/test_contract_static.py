@@ -137,3 +137,46 @@ def test_validate_as_of_does_not_raise_for_past_or_none_as_of():
     past = dt.datetime(2020, 1, 1, tzinfo=dt.timezone.utc)
     validate_as_of(past, now)   # must not raise
     validate_as_of(None, now)   # must not raise
+
+
+def _pre_capture_region_source() -> str:
+    """The source text of the `query_ticks` function body - the region
+    that must contain both the local-capture and simulated-availability
+    floor branches (fix-round finding 1)."""
+    tree = _parse_module()
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "query_ticks":
+            with open(_CONTRACT_PATH, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            return "".join(lines[node.lineno - 1 : node.end_lineno])
+    raise AssertionError("query_ticks function not found in tick_vault/contract.py")
+
+
+def test_query_ticks_has_policy_aware_precapture_floor_branches():
+    # Fix-round finding 1: the pre-capture short-circuit must branch on
+    # availability_policy rather than always using MIN(available_at_ts) -
+    # under HISTORICAL_VENDOR_FINAL_V1 availability is simulated
+    # (trade_date + 1 day @ 08:00 UTC), so the local-capture floor must
+    # not be applied there.
+    source = _pre_capture_region_source()
+    assert "POLICY_HISTORICAL_VENDOR_FINAL" in source
+    assert "MIN(available_at_ts)" in source
+    assert "MIN(trade_date)" in source
+    assert "as_of predates earliest capture" in source
+    assert "as_of predates simulated availability floor" in source
+
+
+def test_query_ticks_handles_empty_symbols_list_with_warning():
+    # Fix-round finding 2: symbols=[] must not be treated like symbols=None
+    # - it should short-circuit to an empty result with a dedicated warning.
+    source = _pre_capture_region_source()
+    assert "no symbols requested" in source
+    assert "len(symbols) == 0" in source
+
+
+def test_query_ticks_warns_when_gold_mode_ignores_availability_policy():
+    # Fix-round finding 3: GOLD mode always reads latest_ticks() regardless
+    # of availability_policy - a non-default policy passed alongside GOLD
+    # mode should be surfaced via a warning, not silently dropped.
+    source = _pre_capture_region_source()
+    assert "availability_policy ignored in GOLD mode" in source

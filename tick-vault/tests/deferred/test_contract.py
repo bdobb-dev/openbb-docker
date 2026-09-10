@@ -55,7 +55,10 @@ from tick_vault.contract import (
 )
 from tick_vault.sl_conditions import DECODE_VERSION
 from tick_vault.tick_parser import PARSER_VERSION
-from tick_vault.temporal import SEQUENCE_POLICY
+from tick_vault.temporal import (
+    POLICY_HISTORICAL_VENDOR_FINAL,
+    SEQUENCE_POLICY,
+)
 
 try:
     from test_temporal import _tick
@@ -327,3 +330,79 @@ def test_provenance_pins_delta_versions(lake):
     assert result.provenance["sequence_policy_version"] == SEQUENCE_POLICY
     assert result.provenance["sl_decode_version"] == DECODE_VERSION
     assert result.provenance["parser_version"] == PARSER_VERSION
+
+
+def test_historical_vendor_final_policy_uses_simulated_floor_not_local_capture(lake):
+    # Fix-round finding 1: under HISTORICAL_VENDOR_FINAL_V1, availability is
+    # SIMULATED as trade_date + 1 day @ 08:00 UTC, not the locally-stored
+    # available_at_ts. Both tick rows here have trade_date = 2021-11-05, so
+    # the simulated floor is 2021-11-06T08:00Z - well before either row's
+    # real available_at_ts (2026-01-10 / 2026-02-01). An as_of just after
+    # the simulated floor but long before local ingestion must therefore
+    # see data (not be wrongly short-circuited to empty by the
+    # local-capture floor).
+    con, root = lake
+    as_of = dt.datetime(2021, 11, 6, 9, 0, tzinfo=dt.timezone.utc)
+    result = query_ticks(
+        con,
+        root,
+        start=dt.date(2021, 11, 1),
+        end=dt.date(2021, 11, 10),
+        as_of=as_of,
+        availability_policy=POLICY_HISTORICAL_VENDOR_FINAL,
+    )
+    assert len(result.df) > 0
+    assert "as_of predates earliest capture" not in result.provenance["warnings"]
+    assert "as_of predates simulated availability floor" not in result.provenance["warnings"]
+
+
+def test_historical_vendor_final_policy_before_simulated_floor_warns_empty(lake):
+    # Same policy, but as_of before the simulated floor (2021-11-06T08:00Z)
+    # - must be empty with the simulated-floor warning, not the
+    # local-capture one.
+    con, root = lake
+    as_of = dt.datetime(2021, 11, 6, 7, 0, tzinfo=dt.timezone.utc)
+    result = query_ticks(
+        con,
+        root,
+        start=dt.date(2021, 11, 1),
+        end=dt.date(2021, 11, 10),
+        as_of=as_of,
+        availability_policy=POLICY_HISTORICAL_VENDOR_FINAL,
+    )
+    assert len(result.df) == 0
+    assert "as_of predates simulated availability floor" in result.provenance["warnings"]
+
+
+def test_empty_symbols_list_returns_empty_result_with_warning(lake):
+    # Fix-round finding 2: symbols=[] is an explicit "nothing requested",
+    # distinct from symbols=None ("no filter") - must not raise, must
+    # return an empty result with a dedicated warning.
+    con, root = lake
+    result = query_ticks(
+        con,
+        root,
+        symbols=[],
+        start=dt.date(2021, 11, 1),
+        end=dt.date(2021, 11, 10),
+    )
+    assert len(result.df) == 0
+    assert "no symbols requested" in result.provenance["warnings"]
+
+
+def test_gold_mode_with_nondefault_policy_warns_ignored(lake):
+    # Fix-round finding 3: GOLD mode always reads latest_ticks() regardless
+    # of availability_policy - passing a non-default policy alongside GOLD
+    # mode (no as_of/effective) should warn, not silently do nothing.
+    con, root = lake
+    result = query_ticks(
+        con,
+        root,
+        start=dt.date(2021, 11, 1),
+        end=dt.date(2021, 11, 10),
+        availability_policy=POLICY_HISTORICAL_VENDOR_FINAL,
+    )
+    assert result.provenance["mode"] == MODE_GOLD
+    assert "availability_policy ignored in GOLD mode" in result.provenance["warnings"]
+    # Data is still latest_ticks() regardless of the (ignored) policy.
+    assert prices(result.df) == {101.0, 200.0}

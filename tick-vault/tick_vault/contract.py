@@ -78,6 +78,7 @@ from dataclasses import dataclass, field
 from tick_vault.sl_conditions import DECODE_VERSION as _SL_DECODE_VERSION
 from tick_vault.temporal import (
     POLICY_AS_INGESTED_LOCAL,
+    POLICY_HISTORICAL_VENDOR_FINAL,
     SEQUENCE_POLICY as _SEQUENCE_POLICY,
 )
 from tick_vault.tick_parser import PARSER_VERSION as _PARSER_VERSION
@@ -226,16 +227,63 @@ def query_ticks(
     install_macros(con)
     install_reference_macros(con)
 
-    # Cheap pre-capture check: an as_of earlier than every stored tick's
-    # available_at_ts can never see any data - short-circuit to an empty
-    # result with a warning rather than running the (still-correct, but
-    # pointless) macro query.
+    if mode == MODE_GOLD and availability_policy != POLICY_AS_INGESTED_LOCAL:
+        # GOLD mode always reads latest_ticks() - availability_policy only
+        # governs which PIT-availability macro a PIT/BITEMPORAL query uses,
+        # so a non-default policy passed alongside GOLD mode has no effect.
+        # Surface that rather than silently ignoring it.
+        warnings.append("availability_policy ignored in GOLD mode")
+
+    if symbols is not None and len(symbols) == 0:
+        # Explicit empty symbol list: nothing was requested, so nothing can
+        # match - return an empty result with a warning rather than falling
+        # through to the "no filter at all" behavior `None` gets.
+        warnings.append("no symbols requested")
+        df = con.execute(
+            "SELECT * FROM silver_us_trade_tick_version WHERE FALSE"
+        ).df()
+        provenance = _build_provenance(
+            mode=mode,
+            availability_policy=availability_policy,
+            warnings=warnings,
+            root=root,
+            origin_flags=[],
+        )
+        return ContractResult(df=df, provenance=provenance)
+
+    # Cheap pre-capture check: an as_of earlier than the floor at which any
+    # data could possibly be visible can never see any data - short-circuit
+    # to an empty result with a warning rather than running the (still-
+    # correct, but pointless) macro query. The floor itself depends on
+    # availability_policy: under 'AS_INGESTED_LOCAL_V1' it's the earliest
+    # actually-stored `available_at_ts`; under 'HISTORICAL_VENDOR_FINAL_V1'
+    # availability is SIMULATED (never stored) as
+    # `MIN(trade_date) + INTERVAL 1 DAY` at 08:00:00 UTC (mirroring
+    # `tick_vault.temporal.pit_ticks_policy`'s own simulated-availability
+    # formula) - using the stored `available_at_ts` floor here would wrongly
+    # suppress data that policy considers available.
     if as_of is not None:
-        min_available = con.execute(
-            "SELECT MIN(available_at_ts) FROM silver_us_trade_tick_version"
-        ).fetchone()[0]
-        if min_available is not None and as_of < min_available:
-            warnings.append("as_of predates earliest capture")
+        if availability_policy == POLICY_HISTORICAL_VENDOR_FINAL:
+            min_trade_date = con.execute(
+                "SELECT MIN(trade_date) FROM silver_us_trade_tick_version"
+            ).fetchone()[0]
+            floor = (
+                dt.datetime.combine(
+                    min_trade_date, dt.time(8, 0), tzinfo=dt.timezone.utc
+                )
+                + dt.timedelta(days=1)
+                if min_trade_date is not None
+                else None
+            )
+            floor_warning = "as_of predates simulated availability floor"
+        else:
+            floor = con.execute(
+                "SELECT MIN(available_at_ts) FROM silver_us_trade_tick_version"
+            ).fetchone()[0]
+            floor_warning = "as_of predates earliest capture"
+
+        if floor is not None and as_of < floor:
+            warnings.append(floor_warning)
             df = con.execute(
                 "SELECT * FROM silver_us_trade_tick_version WHERE FALSE"
             ).df()
