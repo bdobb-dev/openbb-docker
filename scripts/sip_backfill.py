@@ -46,8 +46,9 @@ Delta version; the pass records rows added per symbol. Weeks first fetched
 after the lag (the backfill) are already settled and are never re-fetched.
 
 Retry sweep: failed symbols of finished weeks are retried at most once a day,
-and given up after SIP_RETRY_MAX attempts. A symbol unservable in 3 different
-weeks (a 5xx at a one-day span on a day the vendor serves) is skipped for weeks
+and given up after SIP_RETRY_MAX attempts. A symbol unservable in SIP_BLACKLIST_WEEKS (5)
+different weeks inside its membership tenure (a 5xx at a one-day span on a day
+the vendor serves) is skipped for weeks
 at or before its newest failure and, while that failure is recent, in the daily
 pass (_progress/_blacklist.json). Scoped in time because a ticker rename makes
 a symbol unservable before the change only. A 5xx on a longer span only halves it.
@@ -179,6 +180,17 @@ class Universe:
     def for_week(self, monday: date) -> list[str]:
         return self.for_range(monday, monday + timedelta(days=4))
 
+    def in_tenure(self, sym: str, monday: date) -> bool:
+        """Whether the whole week sits inside the symbol's membership: the
+        vendor's EndDate lags the last trade, so the final (partial) week and
+        anything after it is expected to be empty. A symbol that ended before
+        the week's Friday is out of tenure for that week."""
+        friday = monday + timedelta(days=4)
+        for code, start, end in self.members:
+            if code == sym:
+                return start <= monday and (end is None or end - timedelta(days=14) >= friday)
+        return True
+
     def for_range(self, first: date, last: date) -> list[str]:
         """Members whose tenure overlaps [first, last] at all."""
         codes = {code for code, start, end in self.members
@@ -191,7 +203,10 @@ class Universe:
 class Blacklist:
     """Symbols the vendor does not serve -- scoped in TIME, because a ticker
     rename (BK -> BNY, mid-2026) makes a symbol unservable before the change
-    and fine after it. A symbol unservable in 3 different weeks is skipped
+    and fine after it. Delistings are the mirror image (unservable AFTER the
+    end) and must never block older weeks: failures outside the symbol's
+    membership tenure are ignored (11.4.7; before that MRO, CTLT, JNPR and
+    DAY were blocked for every older week). A symbol unservable in 3 different weeks is skipped
     for every week at or before its newest failure, and in the daily pass
     only while that newest failure is recent. Persisted at
     _progress/_blacklist.json. (Fetching pre-rename weeks under the old
@@ -203,9 +218,11 @@ class Blacklist:
         self.state = _read_json(self.fsys, self.path) or {}
         self.state.setdefault("unservable", {})  # sym -> [mondays]
 
+    THRESHOLD = int(os.environ.get("SIP_BLACKLIST_WEEKS", "5"))
+
     def _newest(self, sym: str) -> date | None:
         weeks = self.state["unservable"].get(sym, [])
-        return max(date.fromisoformat(w) for w in weeks) if len(weeks) >= 3 else None
+        return max(date.fromisoformat(w) for w in weeks) if len(weeks) >= self.THRESHOLD else None
 
     def blocked_for(self, monday: date) -> set[str]:
         return {s for s in self.state["unservable"] if (n := self._newest(s)) and monday <= n}
@@ -213,15 +230,17 @@ class Blacklist:
     def blocked_daily(self, today: date) -> set[str]:
         return {s for s in self.state["unservable"] if (n := self._newest(s)) and n >= today - timedelta(days=21)}
 
-    def note_week(self, monday: date, failed: dict) -> None:
+    def note_week(self, monday: date, failed: dict, uni: "Universe | None" = None) -> None:
         for sym, err in failed.items():
             if not str(err).startswith("unservable"):
                 continue  # a transient failure or a too-big span never blacklists
+            if uni is not None and not uni.in_tenure(sym, monday):
+                continue  # a delisting-week artefact (no data exists): never a verdict on older weeks
             weeks = self.state["unservable"].setdefault(sym, [])
             if str(monday) not in weeks:
                 weeks.append(str(monday))
-            if len(weeks) == 3:
-                log.warning("%s unservable in 3 weeks; skipping it for weeks up to %s", sym, max(weeks))
+            if len(weeks) == self.THRESHOLD:
+                log.warning("%s unservable in %d weeks; skipping it for weeks up to %s", sym, self.THRESHOLD, max(weeks))
         _write_json(self.fsys, self.path, self.state)
 
 
@@ -465,7 +484,7 @@ def load_week(monday: date, uni: Universe, key: str, store: TickStore, library: 
         prog.state["settled"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     elif mode == "load":
         prog.state["finished"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        blacklist.note_week(monday, prog.state["failed"])
+        blacklist.note_week(monday, prog.state["failed"], uni)
     prog.state["wall_minutes"] = round((prog.state.get("wall_minutes") or 0) + (time.time() - t0) / 60, 1)
     prog.save()
     st = prog.state
