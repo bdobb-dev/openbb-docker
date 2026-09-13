@@ -99,8 +99,15 @@ class Unservable(RuntimeError):
 
 
 class Budget(Exception):
-    """429 for hours: the daily API budget is spent. Not a RuntimeError on
-    purpose -- nothing may treat it as a failure of the symbol or the span."""
+    """429 for hours, or 403 for everyone: the API is not serving us right now
+    (budget spent, entitlement, or a block). Not a RuntimeError on purpose --
+    nothing may treat it as a failure of the symbol or the span."""
+
+
+class Forbidden(RuntimeError):
+    """HTTP 403 on one request. Per-symbol (BRK.B) or global (2026-09-13: the
+    tick endpoint answered 403 to every symbol for hours, and the old code
+    turned that into 338 "empty" symbol-weeks). The caller asks SPY to tell."""
 
 
 def _get_json(url: str, timeout: int = 1800, tries: int = 3):
@@ -135,6 +142,8 @@ def _get_json(url: str, timeout: int = 1800, tries: int = 3):
                 if attempt < tries:
                     time.sleep(5 * attempt)
                     continue
+            if e.code == 403:
+                raise Forbidden(f"HTTP 403: {body!r}") from e
             raise RuntimeError(f"HTTP {e.code}: {body!r}") from e
         except (TimeoutError, OSError) as e:
             if attempt < tries:
@@ -308,14 +317,37 @@ _spans: dict[str, int] = {}  # symbol -> largest span (days) known to succeed
 _spans_lock = threading.Lock()
 
 
+def _api_alive(key: str) -> bool:
+    """Whether the tick endpoint serves anything at all: SPY, limit=1, on a
+    day it has always served. A 403/429/5xx here means the outage is ours,
+    not the symbol's."""
+    frm = int(datetime(2026, 9, 4, tzinfo=timezone.utc).timestamp())
+    q = urllib.parse.urlencode({"s": "SPY", "from": frm, "to": frm + 86400 - 1, "limit": 1, "api_token": key})
+    try:
+        raw = _get_json(f"{TICKS}?{q}", tries=1)
+    except (RuntimeError, Budget):
+        return False
+    return bool(raw) and "ts" in raw and len(raw["ts"]) > 0
+
+
 def _day_served(key: str, frm: int) -> bool:
     """Whether the vendor serves this UTC day at all (SPY, limit=1)."""
     q = urllib.parse.urlencode({"s": "SPY", "from": frm, "to": frm + 86400 - 1, "limit": 1, "api_token": key})
     try:
         raw = _get_json(f"{TICKS}?{q}", tries=1)
+    except Forbidden:
+        raise Budget("403 on the SPY control: the API is not serving us")
     except RuntimeError:  # Budget is not a RuntimeError and propagates
+        if not _api_alive(key):
+            raise Budget("the SPY control fails too: outage or quota, not this day")
         return False
-    return bool(raw) and "ts" in raw and len(raw["ts"]) > 0
+    if not raw or "ts" not in raw or not raw["ts"]:
+        # An empty control on a multi-day-capable endpoint: holiday, or the
+        # vendor serving empties while over quota. Tell them apart.
+        if not _api_alive(key):
+            raise Budget("empty SPY control and the API is not alive")
+        return False
+    return True
 
 
 def fetch_span(sym: str, key: str, frm: int, ndays: int) -> list:
@@ -337,6 +369,10 @@ def fetch_span(sym: str, key: str, frm: int, ndays: int) -> list:
             try:
                 raw = _get_json(f"{TICKS}?{q}")
                 break
+            except Forbidden as e:
+                if not _api_alive(key):
+                    raise Budget(f"{sym}: 403 and the SPY control fails: the API is not serving us") from e
+                raise Unservable(str(e)) from e
             except (TooBig, RuntimeError) as e:
                 # A 5xx on a multi-day span -- slow (server timeout) or quick
                 # (the server refuses the span outright, which is how NVDA
@@ -360,6 +396,10 @@ def fetch_span(sym: str, key: str, frm: int, ndays: int) -> list:
                 log.info("%s: span too big, trying %d-day chunks", sym, span)
         if raw and "ts" in raw:
             frames.append(pd.DataFrame(raw))
+        elif span > 1 and not _api_alive(key):
+            # A whole multi-day span empty for a listed symbol while SPY
+            # also fails: the vendor is answering empties over quota.
+            raise Budget(f"{sym}: empty {span}-day span and the API is not alive")
         pos += span
     return frames
 
