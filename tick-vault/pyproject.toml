@@ -5,6 +5,9 @@ description = "Bitemporal S&P 500 tick lakehouse: schemas, ingestion, temporal q
 requires-python = ">=3.12"
 dependencies = ["pandas>=2,<3", "pyarrow>=16", "deltalake>=1.0", "duckdb>=1.0"]
 
+[project.scripts]
+vault = "tick_vault.cli:main"
+
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 
