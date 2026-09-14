@@ -363,11 +363,34 @@ def compute_symbol_upsert(
     `tick_vault.eodhd_reference.parse_symbols`'s output: `code, name,
     exchange, type, isin`) not already carrying a currently-open
     `EODHD_SYMBOL` assignment, allocate a new `silver.instrument` +
-    `silver.listing_version` row and an `EODHD_SYMBOL` assignment row
-    (`effective_from_ts=None` - "since listing start", per the task
-    brief). Idempotent: a code with an existing open assignment (whether
+    `silver.listing_version` row and an `EODHD_SYMBOL` assignment row.
+    `effective_from_ts=None` ("since listing start", per the task brief)
+    UNLESS the normalized code has EVER been assigned before (any prior
+    row in `assignments_df` for that normalized code, system-closed or
+    effective-closed - i.e. a reused ticker) - see the controller ruling
+    below. Idempotent: a code with an existing open assignment (whether
     already in `assignments_df`, or created earlier within this same
     call, for a duplicate row) yields no new rows for that code.
+
+    Reused-code `effective_from_ts` (controller ruling, fix-round 2):
+    an unbounded `effective_from_ts=None` on a REUSED code's new
+    assignment makes `pit_listing` (baseline Sec 4.1's bitemporal DuckDB
+    layer) multi-valued for historical queries - a `market_date` inside
+    the OLD assignment's effective window, combined with a `decision_ts`
+    AFTER the reuse was captured, would satisfy both the old close-row's
+    effective interval (system-closed, but `system_to_ts` plays no part
+    in `pit_listing`'s effective-interval predicate) AND the new row's
+    unbounded-from-below interval. So: if the assignments frame shows ANY
+    prior assignment for that normalized code (regardless of state -
+    system-closed via `system_to_ts`, or effective-closed via
+    `effective_to_ts`, or even currently open, though that path is
+    already excluded by `known_codes` above), the new assignment's
+    `effective_from_ts` is bounded at `observed_at` - the best available
+    bound given only vendor symbol-list snapshots (a documented
+    approximation; a later Phase-0/vendor symbol-change-history episode
+    may refine this to the actual reuse date once that data is
+    available). A code with NO prior assignment at all (first-ever
+    listing) keeps `effective_from_ts=None`, unchanged.
     """
     observed_at_ts = _to_utc_ts(observed_at)
     current = _current_rows(assignments_df)
@@ -375,6 +398,14 @@ def compute_symbol_upsert(
     if not current.empty:
         existing = current[current["id_namespace"] == NAMESPACE_EODHD_SYMBOL]
         known_codes = set(existing.loc[existing["effective_to_ts"].isna(), "id_value"])
+
+    # Any EODHD_SYMBOL assignment ever written (open or closed, system or
+    # effective) for a given normalized code, across the FULL history -
+    # not just `current` - used to detect ticker reuse above.
+    ever_assigned_normalized_codes = set()
+    if assignments_df is not None and not assignments_df.empty:
+        all_eodhd = assignments_df[assignments_df["id_namespace"] == NAMESPACE_EODHD_SYMBOL]
+        ever_assigned_normalized_codes = set(all_eodhd["normalized_id_value"].dropna())
 
     instrument_rows, listing_rows, assignment_rows = [], [], []
     for _, r in symbols_df.iterrows():
@@ -392,6 +423,17 @@ def compute_symbol_upsert(
             # "UNKNOWN" rather than writing a null into a non-null column
             # (minor fix from review).
             instrument_type = "UNKNOWN"
+
+        # Reused-code bound (controller ruling, fix-round 2 - see
+        # docstring above): a normalized code with ANY prior assignment
+        # gets effective_from_ts=observed_at instead of the unbounded
+        # None a first-ever code gets.
+        normalized_code = _normalize(code)
+        assignment_effective_from_ts = (
+            observed_at_ts
+            if normalized_code in ever_assigned_normalized_codes
+            else None
+        )
         instrument_rows.append(_row(
             _INSTRUMENT_COLUMNS,
             instrument_id=instrument_id,
@@ -424,7 +466,8 @@ def compute_symbol_upsert(
             listing_id=listing_id,
             id_namespace=NAMESPACE_EODHD_SYMBOL,
             id_value=code,
-            normalized_id_value=_normalize(code),
+            normalized_id_value=normalized_code,
+            effective_from_ts=assignment_effective_from_ts,
             observed_at_ts=observed_at_ts,
             available_at_ts=observed_at_ts,
             system_from_ts=observed_at_ts,
@@ -434,6 +477,7 @@ def compute_symbol_upsert(
             confidence=AUTO_CONFIDENCE,
         ))
         known_codes.add(code)
+        ever_assigned_normalized_codes.add(normalized_code)
 
     return {
         "instrument": pd.DataFrame(instrument_rows, columns=_INSTRUMENT_COLUMNS),
