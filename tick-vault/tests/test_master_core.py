@@ -324,6 +324,102 @@ def test_ticker_reuse_two_listings():
 
 
 # ---------------------------------------------------------------------------
+# 5b. reused code (fix-round 2 controller ruling): bounded effective_from_ts
+# ---------------------------------------------------------------------------
+
+def test_reused_code_upsert_bounds_effective_from_and_resolves_by_date():
+    """After BK -> BNY closes out the original BK assignment (both
+    effective- and system-closed), a LATER `upsert_from_symbols` call that
+    allocates a brand-new instrument/listing for the reused code "BK"
+    must NOT get an unbounded `effective_from_ts=None` - it must be
+    bounded at that second upsert's `observed_at` (controller ruling,
+    fix-round 2), so that a historical `resolve_symbol_at`/`pit_listing`
+    query still resolves to the ORIGINAL BK listing, and only a
+    current-dated query resolves to the NEW one.
+    """
+    lake = _FakeLake()
+    mb = _builder(lake)
+
+    symbols = _symbols_df([{"code": "BK", "name": "Bank of NY", "exchange": "US", "type": "Common Stock", "isin": None}])
+    first_upsert = mb.upsert_from_symbols(symbols, CAP1, OBS1)
+    old_listing_id = first_upsert["listing_version"].iloc[0]["listing_id"]
+
+    change_date = dt.date(2026, 6, 15)
+    mb.apply_symbol_changes(_changes_df([{"old": "BK", "new": "BNY", "date": change_date}]), CAP2, OBS2)
+
+    # A later vendor snapshot reuses the bare code "BK" for a brand-new
+    # issuer/listing.
+    OBS3 = dt.datetime(2026, 9, 1, tzinfo=dt.timezone.utc)
+    reuse_symbols = _symbols_df([{"code": "BK", "name": "Brand New Bancorp", "exchange": "US", "type": "Common Stock", "isin": None}])
+    reuse_upsert = mb.upsert_from_symbols(reuse_symbols, "cap_reuse", OBS3)
+
+    assert len(reuse_upsert["identifier_assignment_version"]) == 1
+    reused_row = reuse_upsert["identifier_assignment_version"].iloc[0]
+    # the binding fix: bounded, not None, because "BK" was assigned before.
+    assert reused_row["effective_from_ts"] == OBS3
+    new_listing_id = reuse_upsert["listing_version"].iloc[0]["listing_id"]
+    assert new_listing_id != old_listing_id
+
+    # historical resolution (inside the OLD BK window) still finds the OLD
+    # listing; a current-dated resolution finds the NEW one.
+    historical_date = dt.date(2026, 3, 1)
+    current_date = dt.date(2026, 10, 1)
+    assert mb.resolve_symbol_at("BK", historical_date) == old_listing_id
+    assert mb.resolve_symbol_at("BK", current_date) == new_listing_id
+
+
+def test_reused_code_pit_listing_predicate_single_valued_in_pandas():
+    """Simulate `reference_queries.pit_listing`'s SQL predicate directly in
+    pandas over the assignments table left behind by the same BK -> BNY ->
+    (reused) BK sequence, for a HISTORICAL `market_date` and a
+    `decision_ts` taken AFTER the reuse was captured - the exact shape the
+    controller-ruling fix is protecting. Exactly one row must match.
+    """
+    lake = _FakeLake()
+    mb = _builder(lake)
+
+    symbols = _symbols_df([{"code": "BK", "name": "Bank of NY", "exchange": "US", "type": "Common Stock", "isin": None}])
+    mb.upsert_from_symbols(symbols, CAP1, OBS1)
+
+    change_date = dt.date(2026, 6, 15)
+    mb.apply_symbol_changes(_changes_df([{"old": "BK", "new": "BNY", "date": change_date}]), CAP2, OBS2)
+
+    OBS3 = dt.datetime(2026, 9, 1, tzinfo=dt.timezone.utc)
+    reuse_symbols = _symbols_df([{"code": "BK", "name": "Brand New Bancorp", "exchange": "US", "type": "Common Stock", "isin": None}])
+    mb.upsert_from_symbols(reuse_symbols, "cap_reuse", OBS3)
+
+    assignments = lake.get("silver.identifier_assignment_version")
+    candidates = assignments[
+        assignments["id_namespace"].isin([NAMESPACE_EODHD_SYMBOL, "TICKER"])
+        & (assignments["id_value"] == "BK")
+    ]
+    assert len(candidates) == 3  # original (system-closed) BK row + close-row BK + reused BK row
+
+    market_date = dt.datetime(2026, 3, 1, tzinfo=dt.timezone.utc)  # inside the OLD window
+    decision_ts = dt.datetime(2026, 10, 1, tzinfo=dt.timezone.utc)  # after the reuse
+
+    def _pit_listing_matches(row) -> bool:
+        efrom = row["effective_from_ts"]
+        eto = row["effective_to_ts"]
+        if efrom is not None and pd.notna(efrom) and efrom > market_date:
+            return False
+        if eto is not None and pd.notna(eto) and eto <= market_date:
+            return False
+        available_at = row["available_at_ts"]
+        if available_at is None or pd.isna(available_at) or available_at > decision_ts:
+            return False
+        system_to = row["system_to_ts"]
+        if system_to is not None and pd.notna(system_to) and system_to <= decision_ts:
+            return False
+        return True
+
+    matches = candidates[candidates.apply(_pit_listing_matches, axis=1)]
+    assert len(matches) == 1
+    assert matches.iloc[0]["effective_from_ts"] is None or pd.isna(matches.iloc[0]["effective_from_ts"])
+    assert matches.iloc[0]["effective_to_ts"] == dt.datetime(2026, 6, 15, tzinfo=dt.timezone.utc)
+
+
+# ---------------------------------------------------------------------------
 # 6. CUSIP attached at instrument scope
 # ---------------------------------------------------------------------------
 

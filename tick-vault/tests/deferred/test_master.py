@@ -125,6 +125,44 @@ def test_full_upsert_change_resolve_round_trip(root):
     assert mb.resolve_symbol_at("BK", dt.date(2026, 8, 1)) is None
 
 
+def test_reused_code_upsert_bounds_effective_from_ts(root):
+    """Real-Delta counterpart of `tests/test_master_core.py::
+    test_reused_code_upsert_bounds_effective_from_and_resolves_by_date`
+    (controller ruling, fix-round 2): after BK -> BNY closes out the
+    original BK assignment, a LATER `upsert_from_symbols` reusing the bare
+    code "BK" for a brand-new instrument/listing must land with a
+    BOUNDED `effective_from_ts` (= that second upsert's `observed_at`),
+    not the unbounded `None` a first-ever code gets - verified by
+    re-reading the real Delta table, and by `resolve_symbol_at` returning
+    the OLD listing for a historical date and the NEW listing for a
+    current-dated one.
+    """
+    mb = MasterBuilder(root)
+    symbols = _symbols_df([{"code": "BK", "name": "Bank of NY", "exchange": "US", "type": "Common Stock", "isin": None}])
+    first_upsert = mb.upsert_from_symbols(symbols, "cap_1", OBS1)
+    old_listing_id = first_upsert["listing_version"].iloc[0]["listing_id"]
+
+    change_date = dt.date(2026, 6, 15)
+    mb.apply_symbol_changes(_changes_df([{"old": "BK", "new": "BNY", "date": change_date}]), "cap_2", OBS2)
+
+    OBS3 = dt.datetime(2026, 9, 1, tzinfo=dt.timezone.utc)
+    reuse_symbols = _symbols_df([{"code": "BK", "name": "Brand New Bancorp", "exchange": "US", "type": "Common Stock", "isin": None}])
+    reuse_upsert = mb.upsert_from_symbols(reuse_symbols, "cap_reuse", OBS3)
+    new_listing_id = reuse_upsert["listing_version"].iloc[0]["listing_id"]
+    assert new_listing_id != old_listing_id
+
+    assignments = _read(root, "silver.identifier_assignment_version")
+    bk_rows = assignments[assignments["id_value"] == "BK"]
+    assert len(bk_rows) == 3  # original (system-closed) + close-row + reused row
+
+    reused_row = bk_rows[bk_rows["listing_id"] == new_listing_id].iloc[0]
+    assert pd.notna(reused_row["effective_from_ts"])
+    assert reused_row["effective_from_ts"].to_pydatetime().astimezone(dt.timezone.utc) == OBS3
+
+    assert mb.resolve_symbol_at("BK", dt.date(2026, 3, 1)) == old_listing_id
+    assert mb.resolve_symbol_at("BK", dt.date(2026, 10, 1)) == new_listing_id
+
+
 def test_unknown_old_code_lands_in_queue_table(root):
     mb = MasterBuilder(root)
     changes = _changes_df([{"old": "GHOST", "new": "GHOST2", "date": dt.date(2026, 3, 1)}])
