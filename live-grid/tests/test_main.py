@@ -424,3 +424,12 @@ def test_the_tick_time_column_is_declared_text():
     body = make_client().get("/widgets.json").json()
     (t,) = [c for c in body["kdb_ticks"]["data"]["table"]["columnsDefs"] if c["field"] == "time"]
     assert t["cellDataType"] == "text"
+
+
+def test_live_grid_rsi_bars_grow_outward_from_the_30_70_bands():
+    # bdobb's meter draws nothing between the bands and grows the bar from
+    # the band the RSI has crossed: 15 from 30 down, 85 from 70 up.
+    spec = make_client().get("/widgets.json").json()
+    cols = spec["live_grid"]["data"]["table"]["columnsDefs"]
+    rsi = next(c for c in cols if c["field"] == "rsi")
+    assert rsi["renderFnParams"]["bands"] == [30, 70]

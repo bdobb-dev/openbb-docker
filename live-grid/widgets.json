@@ -80,7 +80,7 @@
       "width": 116,
       "headerName": "RSI",
       "renderFn": ["rangeBar"],
-      "renderFnParams": { "min": 0, "max": 100, "guides": [30, 50, 70] }
+      "renderFnParams": { "min": 0, "max": 100, "guides": [30, 50, 70], "bands": [30, 70] }
      },
      {
       "field": "avwap",
