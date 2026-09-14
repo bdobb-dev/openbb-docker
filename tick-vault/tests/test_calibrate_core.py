@@ -227,6 +227,61 @@ def test_write_calibration_report_contains_key_figures():
         shutil.rmtree(d)
 
 
+def test_write_calibration_report_reconciliation_not_configured_is_honest():
+    d = _tmpdir()
+    try:
+        path = os.path.join(d, "report.md")
+        measured = CalibrationMeasurements(
+            calls=300, wall_minutes=40.0, rows=50_000, bytes_written=2_000_000,
+            symbols=505, week=dt.date(2026, 8, 31),
+        )
+        projection = calibration_projection(measured)
+        write_calibration_report(
+            path, projection, measured,
+            reconciliation={"configured": False, "tranches_checked": 0, "held": 0},
+        )
+        content = open(path).read()
+        assert "NOT CONFIGURED" in content
+        assert "reconciliation_gate" in content
+    finally:
+        shutil.rmtree(d)
+
+
+def test_write_calibration_report_reconciliation_ran_reports_counts():
+    d = _tmpdir()
+    try:
+        path = os.path.join(d, "report.md")
+        measured = CalibrationMeasurements(
+            calls=300, wall_minutes=40.0, rows=50_000, bytes_written=2_000_000,
+            symbols=505, week=dt.date(2026, 8, 31),
+        )
+        projection = calibration_projection(measured)
+        write_calibration_report(
+            path, projection, measured,
+            reconciliation={"configured": True, "tranches_checked": 5, "held": 1},
+        )
+        content = open(path).read()
+        assert "RAN (5 tranche(s) checked, 1 held)" in content
+    finally:
+        shutil.rmtree(d)
+
+
+def test_write_calibration_report_reconciliation_unset_says_not_reported():
+    d = _tmpdir()
+    try:
+        path = os.path.join(d, "report.md")
+        measured = CalibrationMeasurements(
+            calls=300, wall_minutes=40.0, rows=50_000, bytes_written=2_000_000,
+            symbols=505, week=dt.date(2026, 8, 31),
+        )
+        projection = calibration_projection(measured)
+        write_calibration_report(path, projection, measured)
+        content = open(path).read()
+        assert "NOT REPORTED" in content
+    finally:
+        shutil.rmtree(d)
+
+
 def test_write_calibration_report_includes_legacy_median_when_present():
     import pandas as pd
 

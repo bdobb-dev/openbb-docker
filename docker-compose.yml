@@ -642,7 +642,13 @@ services:
     build: ./tick-vault
     image: openbb-tick-vault:latest
     container_name: openbb-tick-vault
-    restart: unless-stopped
+    # I3 fix-round: NOT "unless-stopped". `vault backfill --loop` refuses
+    # to start at all without a calibration report AND (C2 fix-round)
+    # without reconciliation Phase-A configured - an operator who hits
+    # either refusal (or any other startup failure) needs to actually SEE
+    # the container exit and go fix the underlying cause, not have Docker
+    # silently crash-loop it forever in the background.
+    restart: "no"
     profiles: ["tick-vault"]
     networks:
       - openbb-internal
@@ -650,7 +656,18 @@ services:
       - EOD_API_KEY=${EOD_API_KEY:?}
       - VAULT_ROOT=${VAULT_ROOT:-/data/vault}
       - LEGACY_ROOT=${LEGACY_ROOT:-}
-      - CALIBRATION_REPORT=${CALIBRATION_REPORT:-docs/superpowers/verification/ep15-calibration.md}
+      # I3 fix-round: the OLD default here (a bare relative path,
+      # `docs/superpowers/verification/ep15-calibration.md`) does not
+      # exist inside this container - it isn't under the only volume this
+      # service mounts (`tick-vault-data` at `VAULT_ROOT`), so it can
+      # neither be read (the `vault calibrate` report an operator wrote
+      # from OUTSIDE the container is invisible here) nor survive a
+      # container recreate (nothing outside the mounted volume persists).
+      # Default it under VAULT_ROOT instead, so the same report path is
+      # reachable both from `vault calibrate` runs on the host/desktop
+      # (per the Phase-0 runbook, Step 3) and from this container, and
+      # actually persists on the mounted volume.
+      - CALIBRATION_REPORT=${CALIBRATION_REPORT:-/data/vault/calibration/ep15-calibration.md}
     volumes:
       - tick-vault-data:${VAULT_ROOT:-/data/vault}
     command: ["vault", "backfill", "--loop"]

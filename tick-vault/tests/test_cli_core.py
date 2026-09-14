@@ -169,14 +169,23 @@ def test_backfill_loop_proceeds_with_calibration_report_present():
         old_env = os.environ.get("CALIBRATION_REPORT")
         os.environ["CALIBRATION_REPORT"] = report_path
 
+        # C2 fix-round: `--loop` also refuses when `ctx.reconcile_step` is
+        # None, so this "proceeds" test needs a fake ctx that HAS one
+        # wired (a bare sentinel string, as this test used before the
+        # fix-round, has no such attribute and would now be refused).
+        class _FakeReconcileConfiguredCtx:
+            reconcile_step = staticmethod(lambda *a, **k: None)
+
+        fake_ctx = _FakeReconcileConfiguredCtx()
+
         recorder = _Recorder(return_value=0)
         original = _patch_handler("run_backfill_loop", recorder)
         try:
             args = cli.build_parser().parse_args(["backfill", "--loop"])
-            rc = cli.handle_backfill(args, ctx_factory=lambda: "FAKE_CTX")
+            rc = cli.handle_backfill(args, ctx_factory=lambda: fake_ctx)
             assert rc == 0
             assert len(recorder.calls) == 1
-            assert recorder.calls[0][0] == "FAKE_CTX"
+            assert recorder.calls[0][0] is fake_ctx
         finally:
             _restore_handler("run_backfill_loop", original)
             if old_env is None:
@@ -237,6 +246,324 @@ def test_backfill_loop_override_flag_bypasses_gate_and_logs_note():
 
 
 # ---------------------------------------------------------------------------
+# I7: reference --sync / figi --drain / manifest --generate / calibrate
+# each open+close one ops.ingestion_run row
+# ---------------------------------------------------------------------------
+
+def _run_type_rows(writer):
+    return [(df.iloc[0]["run_type"], df.iloc[0]["status"]) for _table, df in writer.writes]
+
+
+def test_handle_manifest_opens_and_closes_ingestion_run():
+    writer = _FakeIngestionRunWriter()
+    now = dt.datetime(2026, 9, 14, 12, 0, tzinfo=dt.timezone.utc)
+    ctx = cli.loop_mod.LoopContext(root="mem://test", clock=lambda: now, ingestion_run_writer=writer)
+
+    class _FakeBuilder:
+        def __init__(self, root, manifest_reader=None):
+            self.root = root
+
+        def generate(self, first, last):
+            return [{"work_id": "wrk_1"}]
+
+    original = cli.ManifestBuilder
+    cli.ManifestBuilder = _FakeBuilder
+    try:
+        args = cli.build_parser().parse_args(["manifest", "--generate", "2016-01-04", "2026-08-31"])
+        rc = cli.handle_manifest(args, ctx_factory=lambda: ctx)
+        assert rc == 0
+    finally:
+        cli.ManifestBuilder = original
+
+    assert [table for table, _df in writer.writes] == ["ops.ingestion_run", "ops.ingestion_run"]
+    assert _run_type_rows(writer) == [
+        ("manifest_generate", "RUNNING"),
+        ("manifest_generate", "COMPLETED"),
+    ]
+
+
+def test_handle_reference_opens_and_closes_ingestion_run():
+    writer = _FakeIngestionRunWriter()
+    now = dt.datetime(2026, 9, 14, 12, 0, tzinfo=dt.timezone.utc)
+    ctx = cli.loop_mod.LoopContext(root="mem://test", clock=lambda: now, ingestion_run_writer=writer)
+
+    class _FakeReferenceClient:
+        def __init__(self, transport, store, api_token):
+            pass
+
+        def get_exchange_symbols(self):
+            return None
+
+        def get_delisted(self):
+            return None
+
+        def get_symbol_changes(self):
+            return None
+
+        def get_index_components(self):
+            return None
+
+    import tick_vault.eodhd_reference as eodhd_reference_mod
+
+    original = eodhd_reference_mod.ReferenceClient
+    eodhd_reference_mod.ReferenceClient = _FakeReferenceClient
+    try:
+        args = cli.build_parser().parse_args(["reference", "--sync"])
+        rc = cli.handle_reference(args, ctx_factory=lambda: ctx)
+        assert rc == 0
+    finally:
+        eodhd_reference_mod.ReferenceClient = original
+
+    assert _run_type_rows(writer) == [
+        ("reference_sync", "RUNNING"),
+        ("reference_sync", "COMPLETED"),
+    ]
+
+
+def test_handle_figi_opens_and_closes_ingestion_run():
+    writer = _FakeIngestionRunWriter()
+    now = dt.datetime(2026, 9, 14, 12, 0, tzinfo=dt.timezone.utc)
+    ctx = cli.loop_mod.LoopContext(root="mem://test", clock=lambda: now, ingestion_run_writer=writer)
+
+    class _FakeFigiWorker:
+        def __init__(self, transport, store, root, api_token):
+            pass
+
+        def run_batch(self):
+            return {"resolved": 0}
+
+    import tick_vault.figi as figi_mod
+
+    original = figi_mod.FigiWorker
+    figi_mod.FigiWorker = _FakeFigiWorker
+    try:
+        args = cli.build_parser().parse_args(["figi", "--drain"])
+        rc = cli.handle_figi(args, ctx_factory=lambda: ctx)
+        assert rc == 0
+    finally:
+        figi_mod.FigiWorker = original
+
+    assert _run_type_rows(writer) == [
+        ("figi_drain", "RUNNING"),
+        ("figi_drain", "COMPLETED"),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# C2: backfill --loop also refuses without ctx.reconcile_step configured
+# ---------------------------------------------------------------------------
+
+def test_backfill_loop_refuses_without_reconcile_step():
+    d = _tmpdir()
+    try:
+        report_path = os.path.join(d, "ep15-calibration.md")
+        with open(report_path, "w") as f:
+            f.write("# calibration report\n")
+        old_env = os.environ.get("CALIBRATION_REPORT")
+        os.environ["CALIBRATION_REPORT"] = report_path
+
+        class _FakeNoReconcileCtx:
+            reconcile_step = None
+
+        try:
+            args = cli.build_parser().parse_args(["backfill", "--loop"])
+            try:
+                cli.handle_backfill(args, ctx_factory=lambda: _FakeNoReconcileCtx())
+                raise AssertionError("expected SystemExit refusal")
+            except SystemExit as exc:
+                assert "reconcil" in str(exc).lower()
+                assert "i-know-what-im-doing" in str(exc)
+        finally:
+            if old_env is None:
+                os.environ.pop("CALIBRATION_REPORT", None)
+            else:
+                os.environ["CALIBRATION_REPORT"] = old_env
+    finally:
+        shutil.rmtree(d)
+
+
+def test_backfill_loop_override_logs_reconcile_missing_note():
+    d = _tmpdir()
+    try:
+        report_path = os.path.join(d, "ep15-calibration.md")
+        with open(report_path, "w") as f:
+            f.write("# calibration report\n")
+        old_env = os.environ.get("CALIBRATION_REPORT")
+        os.environ["CALIBRATION_REPORT"] = report_path
+
+        recorder = _Recorder(return_value=0)
+        original_loop = _patch_handler("run_backfill_loop", recorder)
+
+        opened = []
+        closed = []
+
+        class _FakeNoReconcileCtx:
+            reconcile_step = None
+
+        def fake_open_run(ctx, run_type, *, note=None):
+            opened.append((run_type, note))
+            return "run_fake"
+
+        def fake_close_run(ctx, run_id, *, status=None, run_type=None):
+            closed.append((run_id, status))
+
+        original_open = cli.loop_mod.open_run
+        original_close = cli.loop_mod.close_run
+        cli.loop_mod.open_run = fake_open_run
+        cli.loop_mod.close_run = fake_close_run
+        try:
+            args = cli.build_parser().parse_args(["backfill", "--loop", "--i-know-what-im-doing"])
+            rc = cli.handle_backfill(args, ctx_factory=lambda: _FakeNoReconcileCtx())
+            assert rc == 0
+            assert len(opened) == 1
+            assert "reconcil" in opened[0][1].lower()
+            assert len(closed) == 1
+        finally:
+            cli.loop_mod.open_run = original_open
+            cli.loop_mod.close_run = original_close
+            _restore_handler("run_backfill_loop", original_loop)
+            if old_env is None:
+                os.environ.pop("CALIBRATION_REPORT", None)
+            else:
+                os.environ["CALIBRATION_REPORT"] = old_env
+    finally:
+        shutil.rmtree(d)
+
+
+# ---------------------------------------------------------------------------
+# C2: _pandas_reconcile_step - wired ctx with a fake ReferenceClient and a
+# fake existing_ticks_reader calls ctx.gate.check with an incrementing
+# sequence number
+# ---------------------------------------------------------------------------
+
+class _FakeGateRecorder:
+    """Fake `tick_vault.reconcile.Gate`: records every `check(sequence_
+    number, report)` call and always returns a fixed decision, so the
+    test can assert on the sequence numbers `_pandas_reconcile_step`
+    passed through without depending on real divergence math."""
+
+    def __init__(self):
+        self.calls = []
+
+    def check(self, sequence_number, report):
+        from tick_vault.reconcile import GateDecision
+
+        self.calls.append((sequence_number, report.status))
+        return GateDecision(hold=False, reason="PASS")
+
+
+def _ticks_df_for_reconcile_test():
+    import datetime as _dt
+
+    from tick_vault.tick_parser import parse_tick_payload
+
+    observed_at = _dt.datetime(2026, 7, 6, 20, 0, tzinfo=_dt.timezone.utc)
+    trade_date = _dt.date(2026, 7, 6)  # a Monday
+
+    def _ts_ms(hour, minute):
+        from zoneinfo import ZoneInfo
+
+        local = _dt.datetime(
+            trade_date.year, trade_date.month, trade_date.day, hour, minute,
+            tzinfo=ZoneInfo("America/New_York"),
+        )
+        epoch = _dt.datetime(1970, 1, 1, tzinfo=_dt.timezone.utc)
+        return (local.astimezone(_dt.timezone.utc) - epoch) // _dt.timedelta(milliseconds=1)
+
+    payload = [
+        {"ts": _ts_ms(9, 30), "price": 100.0, "shares": 100, "seq": 1, "sl": "@   ",
+         "mkt": "Q", "sub_mkt": "", "ex": "US"},
+        {"ts": _ts_ms(15, 59), "price": 101.0, "shares": 50, "seq": 2, "sl": "@   ",
+         "mkt": "Q", "sub_mkt": "", "ex": "US"},
+    ]
+    return parse_tick_payload(
+        payload, capture_id="cap_1", listing_id="lst_a", instrument_id="ins_a",
+        observed_at=observed_at,
+    )
+
+
+class _FakeReferenceClientForReconcile:
+    """Fake `tick_vault.eodhd_reference.ReferenceClient`: returns a
+    canned EOD frame whose close/volume EXACTLY match the fake ticks
+    frame's own aggregated daily bar, so `reconcile_tranche` reports
+    `PASS` (this test is about sequence-number plumbing, not divergence
+    math, which `tests/test_reconcile_core.py` already covers)."""
+
+    def __init__(self, transport, store, api_token):
+        self.calls = []
+
+    def get_eod(self, symbol, from_date, to_date, *, exchange=None, observed_at=None):
+        import pandas as pd
+
+        self.calls.append((symbol, from_date, to_date, exchange))
+        df = pd.DataFrame([
+            {
+                "date": dt.date(2026, 7, 6), "open": 100.0, "high": 101.0,
+                "low": 100.0, "close": 101.0, "adjusted_close": 101.0, "volume": 150.0,
+            },
+        ])
+        return df, None
+
+
+def test_pandas_reconcile_step_calls_gate_check_with_incrementing_sequence():
+    import tick_vault.eodhd_reference as eodhd_reference_mod
+
+    ticks_df = _ticks_df_for_reconcile_test()
+    fake_gate = _FakeGateRecorder()
+
+    ctx = cli.loop_mod.LoopContext(
+        root="mem://test",
+        transport=object(),
+        store=object(),
+        api_token="real-eod-key",
+        existing_ticks_reader=lambda root, listing_id: ticks_df,
+        gate=fake_gate,
+    )
+    item = {
+        "listing_id": "lst_a",
+        "vendor_symbol_at_date": "AAPL.US",
+        "week_monday": dt.date(2026, 7, 6),
+        "eodhd_exchange_code": "US",
+    }
+
+    original_client = eodhd_reference_mod.ReferenceClient
+    eodhd_reference_mod.ReferenceClient = _FakeReferenceClientForReconcile
+    try:
+        decision_0 = cli._pandas_reconcile_step(ctx, item, "unused_fetch_result", 0)
+        decision_1 = cli._pandas_reconcile_step(ctx, item, "unused_fetch_result", 1)
+    finally:
+        eodhd_reference_mod.ReferenceClient = original_client
+
+    assert decision_0.hold is False
+    assert decision_1.hold is False
+    assert fake_gate.calls == [(0, "PASS"), (1, "PASS")]
+
+
+def test_pandas_reconcile_step_returns_none_without_existing_ticks_reader():
+    ctx = cli.loop_mod.LoopContext(root="mem://test")
+    item = {"listing_id": "lst_a", "vendor_symbol_at_date": "AAPL.US", "week_monday": dt.date(2026, 7, 6)}
+    assert cli._pandas_reconcile_step(ctx, item, "unused", 0) is None
+
+
+def test_build_ctx_from_env_wires_reconcile_step_only_with_real_api_key():
+    old_key = os.environ.get("EOD_API_KEY")
+    try:
+        os.environ.pop("EOD_API_KEY", None)
+        ctx_no_key = cli.build_ctx_from_env()
+        assert ctx_no_key.reconcile_step is None
+
+        os.environ["EOD_API_KEY"] = "a-real-looking-key"
+        ctx_with_key = cli.build_ctx_from_env()
+        assert ctx_with_key.reconcile_step is cli._pandas_reconcile_step
+        assert ctx_with_key.existing_ticks_reader is cli._default_existing_ticks_reader
+    finally:
+        if old_key is None:
+            os.environ.pop("EOD_API_KEY", None)
+        else:
+            os.environ["EOD_API_KEY"] = old_key
+
+
+# ---------------------------------------------------------------------------
 # format_status (pure)
 # ---------------------------------------------------------------------------
 
@@ -266,7 +593,10 @@ def test_format_status_no_frontier():
 
 class _FakeCalibrateCtx:
     """A minimal stand-in for `loop_mod.LoopContext`, exposing exactly
-    the attributes `handle_calibrate` touches."""
+    the attributes `handle_calibrate` touches - including `config`/
+    `ingestion_run_writer`/`reconcile_step` now that `handle_calibrate`
+    brackets its work with `loop_mod.open_run`/`close_run` (I7 fix-round)
+    and honestly reports whether reconciliation ran (I3 fix-round)."""
 
     def __init__(self, root, manifest_df, legacy_root=None):
         self.root = root
@@ -280,12 +610,27 @@ class _FakeCalibrateCtx:
         self.tick_writer = None
         self.existing_ticks_reader = None
         self.verifier = None
+        self.config = cli.loop_mod.LoopConfig()
+        self.reconcile_step = None
+        self.ingestion_run_writer = _FakeIngestionRunWriter()
 
     def manifest_reader(self, root):
         return self._manifest_df
 
     def now(self):
         return dt.datetime(2026, 9, 1, tzinfo=dt.timezone.utc)
+
+
+class _FakeIngestionRunWriter:
+    """Fake `ops.ingestion_run` writer for `LoopContext`-shaped fakes in
+    this file - avoids `tick_vault.capture.append_rows`'s real (lazy
+    pyarrow/deltalake) default, which is unavailable in this sandbox."""
+
+    def __init__(self):
+        self.writes = []
+
+    def __call__(self, root, table, df):
+        self.writes.append((table, df.copy()))
 
 
 def test_handle_calibrate_measures_real_bytes_written():

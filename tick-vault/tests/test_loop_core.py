@@ -176,6 +176,35 @@ def test_run_cycle_settle_already_done_today_is_skipped():
     assert action.kind == CYCLE_SLEEP
 
 
+def test_execute_settle_records_state_even_when_existing_latest_reader_unwired():
+    """I5 regression: `_execute_settle` used to `return` immediately when
+    `ctx.existing_latest_reader` is unwired (`None`, a Plan-3 concern),
+    WITHOUT recording `today` against the item's `work_id` in `state[
+    "last_settle_date_by_work_id"]` first. Since a skipped settle never
+    changes the manifest, `run_cycle`'s priority-2 `_due` check would keep
+    re-selecting the exact same SETTLE item every subsequent cycle -
+    busy-spinning the loop on one item forever instead of advancing to
+    SLEEP or whatever else becomes due."""
+    from tick_vault.loop import _execute_action
+
+    now = dt.datetime(2024, 2, 1, 12, 0, tzinfo=UTC)
+    ctx = _ctx(now, config=LoopConfig(settle_horizon_days=14))
+    state: dict = {}
+    _already_ran_daily_today(ctx, state)
+    manifest = pd.DataFrame([
+        _row(work_id="wrk_live", week_monday=dt.date(2024, 1, 29), status=STATUS_COMPLETE),
+    ])
+    assert ctx.existing_latest_reader is None  # the unwired case this test targets
+
+    action1 = run_cycle(ctx, manifest, state)
+    assert action1.kind == CYCLE_SETTLE
+    _execute_action(ctx, action1, state)
+    assert state["last_settle_date_by_work_id"].get("wrk_live") == now.date()
+
+    action2 = run_cycle(ctx, manifest, state)
+    assert action2.kind != CYCLE_SETTLE
+
+
 # ---------------------------------------------------------------------------
 # priority 3: FAILED retry >24h
 # ---------------------------------------------------------------------------

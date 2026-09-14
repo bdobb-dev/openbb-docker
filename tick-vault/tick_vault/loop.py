@@ -184,11 +184,16 @@ class LoopContext:
     verifier: "object | None" = None
 
     # reconcile (task-9) - a single injectable hook, kept optional: real
-    # OHLCV-aggregation + ReferenceClient wiring is Plan-3's job (see
-    # module docstring's "thin" requirement); when set, it is called as
-    # `reconcile_step(ctx, item, fetch_result) -> GateDecision | None`
-    # after every FETCH/RETRY that reached COMPLETE/PARTIAL, and `None`
-    # means "no reconciliation performed for this tranche" (gate skipped).
+    # OHLCV-aggregation + ReferenceClient wiring is now provided by
+    # `tick_vault.cli.build_ctx_from_env` (C2 fix-round) when a reference
+    # config is available; when set, it is called as
+    # `reconcile_step(ctx, item, fetch_result, sequence_number) ->
+    # GateDecision | None` after every FETCH/RETRY that reached
+    # COMPLETE/PARTIAL, with `sequence_number` the loop's own monotonic
+    # tranche counter (`state["gate_sequence"]`, read BEFORE the call - see
+    # `_execute_fetch_like`) so the hook can call `ctx.gate.check(
+    # sequence_number, report)` itself. `None` means "no reconciliation
+    # performed for this tranche" (gate skipped, sequence NOT advanced).
     reconcile_step: "object | None" = None
 
     api_token: str = _REDACTED
@@ -335,22 +340,17 @@ def run_cycle(ctx: LoopContext, manifest_df: "pd.DataFrame | None", state: dict)
             row = retryable.sort_values("updated_at_ts", ascending=True).iloc[0]
             return CycleAction(kind=CYCLE_RETRY, item=row.to_dict(), reason="failed retry >24h")
 
-    # priority 4: next PENDING week backwards - STILL gated by the T+1
-    # completeness rule (fix, task-10 fix-round: the original version
-    # here picked the newest PENDING week unconditionally, bypassing
-    # T+1 and fetching data before the vendor had finalized it). Since
-    # priority 1 above already tried this exact `pending`/`complete_mask`
-    # combination and only falls through to here when it found nothing,
-    # this branch is reachable in practice only when priority 2/3 fired
-    # in between on a DIFFERENT status subset (COMPLETE/FAILED rows) -
-    # it never picks an incomplete week. If every remaining PENDING row
-    # is incomplete, there is nothing safe to do this cycle: SLEEP.
-    if not pending.empty:
-        complete_mask = pending["week_monday"].apply(lambda wm: _week_is_complete(_to_date(wm), now_utc))
-        complete_pending = pending[complete_mask]
-        if not complete_pending.empty:
-            row = complete_pending.sort_values("week_monday", ascending=False).iloc[0]
-            return CycleAction(kind=CYCLE_FETCH, item=row.to_dict(), reason="backward historical walk")
+    # priority 4 (historical backward walk) is priority 1 itself: priority
+    # 1 already selects the newest T+1-complete PENDING week every cycle,
+    # so once the live-edge weeks near "today" are exhausted or not yet
+    # due, the SAME priority-1 branch keeps draining the manifest queue
+    # newest-to-oldest - there is no separate "backward walk" branch to
+    # run here (M8 fix, task-10 fix-round: this used to be a dead,
+    # byte-for-byte duplicate of priority 1's own `pending`/`complete_mask`
+    # check, which can never find anything priority 1 didn't already find
+    # or reject, since neither `pending` nor `now_utc` changes between the
+    # two checks). If nothing above applied, there is nothing safe to do
+    # this cycle: SLEEP.
 
     return CycleAction(kind=CYCLE_SLEEP, seconds=ctx.config.sleep_seconds, reason="nothing to do")
 
@@ -485,9 +485,19 @@ def _execute_fetch_like(ctx: LoopContext, action: CycleAction, state: dict) -> N
     updated_row = update_manifest_row(item, result, completed_at=ctx.now())
 
     if result.status in (STATUS_COMPLETE, STATUS_PARTIAL) and ctx.reconcile_step is not None:
-        decision = ctx.reconcile_step(ctx, item, result)
+        # Minor fix (C2): `ctx.reconcile_step` needs the loop's own
+        # monotonic tranche sequence number to call `Gate.check(sequence_
+        # number, report)` (task-9: "sequence numbers 0..n_gated-1, tracked
+        # by the caller's ingest loop"). Read the CURRENT counter before
+        # calling the hook (sequence numbers start at 0), and only advance
+        # it once the hook actually returns a decision (a `None` return
+        # means "no reconciliation performed for this tranche", per
+        # `LoopContext.reconcile_step`'s own docstring, and must not
+        # consume a sequence number).
+        sequence_number = state.get("gate_sequence", 0)
+        decision = ctx.reconcile_step(ctx, item, result, sequence_number)
         if decision is not None:
-            state["gate_sequence"] = state.get("gate_sequence", 0) + 1
+            state["gate_sequence"] = sequence_number + 1
             updated_row = apply_gate_decision(updated_row, decision)
 
     if ctx.manifest_row_writer is not None:
@@ -498,8 +508,18 @@ def _execute_settle(ctx: LoopContext, action: CycleAction, state: dict) -> None:
     from tick_vault.settle import settle_pass
 
     item = action.item
+    today = ctx.now().date()
     if ctx.existing_latest_reader is None:
-        # Not wired up (Plan-3 concern) - nothing safe to do.
+        # Not wired up (Plan-3 concern) - nothing safe to do. Still record
+        # `today` against this work_id BEFORE returning (fix, I5): leaving
+        # this unrecorded means `run_cycle`'s priority-2 `_due` check keeps
+        # re-selecting the exact same SETTLE item every subsequent cycle
+        # (nothing else about the manifest changes when settle is skipped),
+        # busy-spinning the loop on one item forever instead of falling
+        # through to whatever else is due (or SLEEP). Recording the date
+        # here marks the item "considered today" exactly like a real
+        # settle would, so the loop advances instead of spinning.
+        state.setdefault("last_settle_date_by_work_id", {})[item.get("work_id")] = today
         return
     settle_pass(
         ctx.transport,
@@ -514,7 +534,6 @@ def _execute_settle(ctx: LoopContext, action: CycleAction, state: dict) -> None:
         events_writer=ctx.events_writer,
         now=ctx.now(),
     )
-    today = ctx.now().date()
     state.setdefault("last_settle_date_by_work_id", {})[item.get("work_id")] = today
 
 
