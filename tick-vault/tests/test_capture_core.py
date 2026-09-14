@@ -440,3 +440,20 @@ def test_urllib_transport_retries_on_urlerror_then_succeeds():
     assert (status, body) == (200, b"ok")
     assert len(calls) == 2
     assert sleeps == [5]
+
+
+def test_urllib_transport_retries_on_bare_timeout_then_succeeds():
+    # A read timeout mid-response escapes urllib unwrapped (not a URLError);
+    # it crashed the Phase-0 calibration after 11 symbols (2026-09-14).
+    calls = []
+
+    def opener(url, timeout):
+        calls.append(url)
+        if len(calls) == 1:
+            raise TimeoutError("The read operation timed out")
+        return _FakeResponse(200, b"ok")
+
+    sleeps = []
+    transport = UrlLibTransport(opener=opener, sleeper=sleeps.append, max_attempts=3)
+    assert transport.get("http://x") == (200, b"ok")
+    assert sleeps == [5]

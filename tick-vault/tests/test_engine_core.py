@@ -567,3 +567,40 @@ def test_manifest_builder_wires_seams_and_coerces_blocked_symbol_for_write():
     assert written["table"] == "ops.backfill_manifest"
     # the persisted (written) frame coerces None -> "" for the NOT NULL column
     assert written["df"].iloc[0]["vendor_symbol_at_date"] == ""
+
+
+def test_fetch_week_treats_spent_transport_timeout_like_5xx():
+    # An OSError that outlives the transport's own retries halves a multi-day
+    # window instead of crashing the run (Phase-0 calibration, 2026-09-14).
+    from_sec = 1704067200  # Monday
+    to_sec = from_sec + 604799
+    second_half_start = from_sec + 302400
+    responses = [
+        TimeoutError("The read operation timed out"),              # full-week window
+        (200, _tick_json(from_sec * 1000 + 1000, 1)),               # first half-week
+        (200, _tick_json((second_half_start + 10) * 1000, 2)),      # second half-week
+    ]
+
+    class _TimingOutTransport:
+        def get(self, url, timeout=30):
+            r = responses.pop(0)
+            if isinstance(r, Exception):
+                raise r
+            return r
+
+    span_memory = SpanMemory()
+    item = {
+        "listing_id": "lst_mega", "instrument_id": "ins_mega",
+        "vendor_symbol_at_date": "MEGA",
+        "request_from_sec": from_sec, "request_to_sec": to_sec,
+    }
+
+    result = fetch_week(
+        _TimingOutTransport(), FakeStore(), "/tmp/fake-root", item,
+        span_memory=span_memory, budget=Budget(sleeper=lambda seconds: None), now=NOW,
+        writer=FakeWriter(), monotonic=lambda: 0.0,
+    )
+
+    assert span_memory.span("MEGA") == 3.5
+    assert result.status == STATUS_COMPLETE
+    assert result.rows_written == 2
