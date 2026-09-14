@@ -155,6 +155,13 @@ def test_manifest_membership_end_is_exclusive():
 
     assert list(out["week_monday"]) == [dt.date(2024, 1, 1)]
 
+    # `vault manifest --generate` passes ISO strings straight from argparse
+    from_cli = generate_manifest(
+        membership_df, assignments_df, "2024-01-01", "2024-01-08",
+        existing_manifest_df=None, created_at=NOW,
+    )
+    assert list(from_cli["week_monday"]) == [dt.date(2024, 1, 1)]
+
 
 # ---------------------------------------------------------------------------
 # 2. blocked identity when unresolvable
