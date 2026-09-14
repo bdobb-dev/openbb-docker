@@ -23,6 +23,7 @@ from tick_vault.reconcile import (
     reconcile_tranche,
     ReconcileTolerance,
     ReconcileReport,
+    BarStats,
     Gate,
     BAR_INCLUSION_POLICY,
     INELIGIBLE_FLAGS,
@@ -169,13 +170,157 @@ def test_aggregate_bars_1m_bucket_boundaries():
     assert (TRADE_DATE, "09:31") in buckets
 
     # seq 4 at 15:59:59.999 floors into the 15:59 bucket (last bucket of the
-    # session - 16:00:00.000 itself would be out of session and excluded).
+    # session).
     last = buckets[(TRADE_DATE, "15:59")]
     assert last["close"] == 99.50
+
+    # There is no real 16:00 trading minute - anything at/after the close
+    # folds into the 15:59 bucket (BAR_INCL_V1, see below).
     assert (TRADE_DATE, "16:00") not in buckets
 
     # seq 8 (late add, 13:00:00.000) gets its own bucket.
     assert (TRADE_DATE, "13:00") in buckets
+
+
+# ---------------------------------------------------------------------------
+# aggregate_bars: BAR_INCL_V1 inclusive close + closing-print grace window
+# ---------------------------------------------------------------------------
+
+def test_aggregate_bars_exact_close_regular_print_included_in_final_bucket():
+    payload = [
+        _tick(1, 15, 59, 0, 100.00, 100),
+        _tick(2, 16, 0, 0, 105.00, 200),  # exact close, REGULAR, no CLOSING_PRINT flag
+    ]
+    df = parse_tick_payload(
+        payload, capture_id="cap_x", listing_id="lst_a", instrument_id="ins_a", observed_at=OBS
+    )
+
+    bars_1m = aggregate_bars(df, interval="1m")
+    buckets = {
+        row["bucket_start"].strftime("%H:%M"): row for _, row in bars_1m.iterrows()
+    }
+    assert "16:00" not in buckets
+    last = buckets["15:59"]
+    assert last["close"] == 105.00  # exact-close print folded into final bucket
+    assert last["volume"] == 300
+
+    bars_1d = aggregate_bars(df, interval="1d")
+    assert bars_1d.iloc[0]["close"] == 105.00
+
+
+def test_aggregate_bars_closing_print_grace_window_included_as_close():
+    payload = [
+        _tick(1, 15, 59, 0, 100.00, 100),
+        _tick(2, 16, 3, 0, 110.00, 50, sl="M   "),  # CLOSING_PRINT, 16:03 - within grace
+    ]
+    df = parse_tick_payload(
+        payload, capture_id="cap_x", listing_id="lst_a", instrument_id="ins_a", observed_at=OBS
+    )
+
+    bars_1d = aggregate_bars(df, interval="1d")
+    assert len(bars_1d) == 1
+    assert bars_1d.iloc[0]["close"] == 110.00
+    assert bars_1d.iloc[0]["volume"] == 150
+
+    bars_5m = aggregate_bars(df, interval="5m")
+    buckets = {
+        row["bucket_start"].strftime("%H:%M"): row for _, row in bars_5m.iterrows()
+    }
+    assert "16:00" not in buckets
+    assert buckets["15:55"]["close"] == 110.00
+
+
+def test_aggregate_bars_regular_print_in_grace_window_still_excluded():
+    payload = [
+        _tick(1, 15, 59, 0, 100.00, 100),
+        _tick(2, 16, 3, 0, 110.00, 50),  # 16:03, REGULAR (no CLOSING_PRINT flag) - excluded
+    ]
+    df = parse_tick_payload(
+        payload, capture_id="cap_x", listing_id="lst_a", instrument_id="ins_a", observed_at=OBS
+    )
+
+    bars_1d = aggregate_bars(df, interval="1d")
+    assert len(bars_1d) == 1
+    assert bars_1d.iloc[0]["close"] == 100.00
+    assert bars_1d.iloc[0]["volume"] == 100
+
+
+def test_aggregate_bars_closing_print_past_grace_window_excluded():
+    payload = [
+        _tick(1, 15, 59, 0, 100.00, 100),
+        _tick(2, 16, 11, 0, 999.00, 50, sl="M   "),  # CLOSING_PRINT but past 16:10 grace
+    ]
+    df = parse_tick_payload(
+        payload, capture_id="cap_x", listing_id="lst_a", instrument_id="ins_a", observed_at=OBS
+    )
+
+    bars_1d = aggregate_bars(df, interval="1d")
+    assert len(bars_1d) == 1
+    assert bars_1d.iloc[0]["close"] == 100.00
+    assert bars_1d.iloc[0]["volume"] == 100
+
+
+# ---------------------------------------------------------------------------
+# aggregate_bars: null size accounting
+# ---------------------------------------------------------------------------
+
+def test_aggregate_bars_null_size_contributes_zero_and_is_counted():
+    payload = [
+        _tick(1, 10, 0, 0, 100.00, 100),
+        _tick(2, 10, 0, 30, 100.00, None),  # null size
+    ]
+    df = parse_tick_payload(
+        payload, capture_id="cap_x", listing_id="lst_a", instrument_id="ins_a", observed_at=OBS
+    )
+
+    bars, stats = aggregate_bars(df, interval="1d", return_stats=True)
+    assert len(bars) == 1
+    assert bars.iloc[0]["volume"] == 100  # null size contributes 0, not dropped
+    assert isinstance(stats, BarStats)
+    assert stats.null_size_rows == 1
+
+
+def test_aggregate_bars_return_stats_default_false():
+    payload = [_tick(1, 10, 0, 0, 100.00, 100)]
+    df = parse_tick_payload(
+        payload, capture_id="cap_x", listing_id="lst_a", instrument_id="ins_a", observed_at=OBS
+    )
+    result = aggregate_bars(df, interval="1d")
+    assert not isinstance(result, tuple)
+
+
+def test_aggregate_bars_null_size_stats_zero_when_no_nulls():
+    payload = [_tick(1, 10, 0, 0, 100.00, 100)]
+    df = parse_tick_payload(
+        payload, capture_id="cap_x", listing_id="lst_a", instrument_id="ins_a", observed_at=OBS
+    )
+    _, stats = aggregate_bars(df, interval="1d", return_stats=True)
+    assert stats.null_size_rows == 0
+
+
+def test_reconcile_tranche_surfaces_null_size_count_from_stats():
+    payload = [
+        _tick(1, 10, 0, 0, 100.00, 1000),
+        _tick(2, 10, 0, 30, 100.00, None),
+    ]
+    df = parse_tick_payload(
+        payload, capture_id="cap_x", listing_id="lst_a", instrument_id="ins_a", observed_at=OBS
+    )
+    ours, stats = aggregate_bars(df, interval="1d", return_stats=True)
+    theirs = _ref_eod(close=100.00, volume=1000)
+
+    report = reconcile_tranche(
+        {"listing_id": "lst_a"}, ours, theirs, our_daily_stats=stats,
+    )
+    assert report.status == "PASS"
+    assert report.null_size_count == 1
+
+
+def test_reconcile_tranche_null_size_count_defaults_to_zero():
+    ours = _daily_bars(close=100.00, volume=1000)
+    theirs = _ref_eod(close=100.00, volume=1000)
+    report = reconcile_tranche({"listing_id": "lst_a"}, ours, theirs)
+    assert report.null_size_count == 0
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +459,22 @@ def test_gate_waiver_row_shape():
     assert row["status"] == "RESOLVED"
     assert row["detected_at_ts"] is not None
     assert row["resolved_at_ts"] is not None
+    assert row["listing_id"] is None
+    assert row["trade_date"] is None
+    import json
+    details = json.loads(row["details_json"])
+    assert details["work_id"] == "wrk_123"
+    assert details["reason"] == "known vendor outage 2026-07-01"
+
+
+def test_gate_waiver_row_threads_listing_id_and_trade_date():
+    gate = Gate()
+    row = gate.waive(
+        "wrk_123", "known vendor outage 2026-07-01",
+        listing_id="lst_a", trade_date=TRADE_DATE,
+    )
+    assert row["listing_id"] == "lst_a"
+    assert row["trade_date"] == TRADE_DATE
     import json
     details = json.loads(row["details_json"])
     assert details["work_id"] == "wrk_123"

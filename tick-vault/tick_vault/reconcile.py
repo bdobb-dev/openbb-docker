@@ -20,19 +20,49 @@ A tick row contributes to a regular-session bar iff, after resolving to
 the latest revision per `logical_tick_id` and dropping cancellations:
 
 1. Its America/New_York trade time falls in the regular session window
-   `[09:30:00.000, 16:00:00.000)` (late adds are included at their
-   original market time - `is_late_add` is not itself a filter).
+   `[09:30:00.000, 16:00:00.000]` - INCLUSIVE at the close boundary
+   (late adds are included at their original market time - `is_late_add`
+   is not itself a filter). A print at exactly `16:00:00.000` is a
+   regular-session print, no `CLOSING_PRINT` flag required.
+
+   Additionally, a *closing-auction grace window*: any print whose
+   stored `sale_condition_flags` include `CLOSING_PRINT` and whose
+   America/New_York trade time falls in `(16:00:00.000, 16:10:00.000]`
+   is also included - closing-auction prints are eligible by design but
+   commonly stamp a few minutes after the nominal 16:00:00 close, and
+   excluding them on a strict boundary would create a systematic close
+   divergence against vendor EOD references. A print in that same
+   `(16:00, 16:10]` window WITHOUT the `CLOSING_PRINT` flag is excluded,
+   and any print (flagged or not) after `16:10:00.000` is excluded.
+
+   For `1m`/`5m` bucketing, any included print at or after
+   `16:00:00.000` (i.e. the exact-close regular print or a grace-window
+   closing print) is assigned to the session's final intraday bucket
+   (`15:59` for `1m`, `15:55` for `5m`) rather than floored to its own
+   wall-clock minute - there is no real `16:00` trading minute, so these
+   prints fold into the last real bucket and participate in that
+   bucket's (and the daily bar's) close/high/low/volume.
 2. None of its stored `sale_condition_flags` is in `INELIGIBLE_FLAGS`.
    `INELIGIBLE_FLAGS` is transcribed directly from
    `tick_vault.sl_conditions`'s internal decode table (the single source
    of truth for which flags mark a print bars-ineligible) - this module
    filters on the *stored* flags column, it never re-decodes
-   `sale_condition_raw` itself.
+   `sale_condition_raw` itself. (`CLOSING_PRINT` is itself eligible, so a
+   grace-window print that qualifies under rule 1 always passes rule 2.)
 
 Bars are analytics output, not the bitemporal system of record: OHLCV
 values are plain Python floats/ints even when the input frame carries
 `Decimal` price/size columns (as real silver rows do) - precision loss at
 the 1e-10 level is immaterial for a reconciliation tolerance check.
+
+Null `size`: a print with a `None`/null `size` contributes 0 to bar
+`volume` (rather than being silently dropped from the sum via pandas'
+default `skipna=True` behavior, which would understate volume without
+any visible signal). Callers that need visibility into how many such
+rows were folded in at 0 can pass `return_stats=True` to `aggregate_bars`
+to get a `BarStats(null_size_rows=...)` alongside the bars frame, and
+thread it through to `reconcile_tranche` (`our_daily_stats`/
+`our_minute_stats`) so it surfaces as `ReconcileReport.null_size_count`.
 """
 from __future__ import annotations
 
@@ -113,15 +143,60 @@ def _session_close(ts: "pd.Timestamp") -> "pd.Timestamp":
     return ts.replace(hour=16, minute=0, second=0, microsecond=0, nanosecond=0)
 
 
+_CLOSING_GRACE = dt.timedelta(minutes=10)
+
+
+def _is_closing_print(flags) -> bool:
+    return bool(flags) and "CLOSING_PRINT" in flags
+
+
+def _in_session_or_closing_grace(ts: "pd.Timestamp", flags) -> bool:
+    """BAR_INCL_V1 session-window test: inclusive `[09:30:00, 16:00:00]`,
+    plus a `CLOSING_PRINT`-only grace window `(16:00:00, 16:10:00]` for
+    closing-auction prints that stamp a few minutes after the nominal
+    close."""
+    open_ts = _session_open(ts)
+    close_ts = _session_close(ts)
+    if open_ts <= ts <= close_ts:
+        return True
+    if close_ts < ts <= close_ts + _CLOSING_GRACE:
+        return _is_closing_print(flags)
+    return False
+
+
+def _intraday_bucket(ts: "pd.Timestamp", minutes: int) -> "pd.Timestamp":
+    """Floor `ts` to its `minutes`-wide bucket, except that anything at or
+    after the 16:00:00 session close (the exact-close regular print, or a
+    closing-auction grace-window print) folds into the session's final
+    intraday bucket (15:59 for 1m, 15:55 for 5m) rather than a
+    nonexistent post-close bucket."""
+    close_ts = _session_close(ts)
+    if ts >= close_ts:
+        return close_ts - dt.timedelta(minutes=minutes)
+    return _floor_minute(ts, minutes)
+
+
 # ---------------------------------------------------------------------------
 # aggregate_bars
 # ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class BarStats:
+    """Visibility into `aggregate_bars` accounting decisions that don't
+    show up in the bars frame itself. `null_size_rows` counts
+    contributing rows (post session/eligibility filtering) whose `size`
+    was `None`/null - those rows contribute 0 to `volume` rather than
+    being silently skipped."""
+    null_size_rows: int = 0
+
 
 def aggregate_bars(
     ticks_df: pd.DataFrame,
     interval: str = "1d",
     policy: str = BAR_INCLUSION_POLICY,
-) -> pd.DataFrame:
+    *,
+    return_stats: bool = False,
+):
     """Aggregate a `silver.us_trade_tick_version`-shaped tick frame into
     OHLCV bars under `policy` (only `BAR_INCLUSION_POLICY` is supported
     today - the argument exists so a future policy version can be passed
@@ -135,15 +210,22 @@ def aggregate_bars(
     Returns a frame with columns `BAR_COLUMNS`: `open` is the price of the
     earliest-by-`(trade_ts_ms, session_seq)` contributing row in the
     bucket, `close` the latest, `high`/`low` the extrema, `volume` the sum
-    of `size`.
+    of `size` (a `None` `size` contributes 0, it is never dropped from the
+    sum). If `return_stats=True`, returns `(bars_df, BarStats)` instead.
     """
     if policy != BAR_INCLUSION_POLICY:
         raise ValueError(f"unsupported bar inclusion policy: {policy!r}")
     if interval not in ("1d", "1m", "5m"):
         raise ValueError(f"unsupported interval: {interval!r}")
 
+    def _empty():
+        empty_bars = pd.DataFrame(columns=BAR_COLUMNS)
+        if return_stats:
+            return empty_bars, BarStats()
+        return empty_bars
+
     if ticks_df is None or len(ticks_df) == 0:
-        return pd.DataFrame(columns=BAR_COLUMNS)
+        return _empty()
 
     df = ticks_df.copy()
 
@@ -154,31 +236,38 @@ def aggregate_bars(
     # 2. Drop cancelled prints (even if they're the latest revision).
     df = df[~df["is_cancelled"].astype(bool)]
     if df.empty:
-        return pd.DataFrame(columns=BAR_COLUMNS)
+        return _empty()
 
-    # 3. Regular session window, America/New_York.
+    # 3. Regular session window (inclusive at close) + closing-print grace
+    #    window, America/New_York.
     ny_ts = df["trade_ts"].dt.tz_convert(_NY_TZ)
     df = df.assign(_ny_ts=ny_ts)
-    in_session = df["_ny_ts"].apply(
-        lambda t: _session_open(t) <= t < _session_close(t)
+    in_session = df.apply(
+        lambda r: _in_session_or_closing_grace(r["_ny_ts"], r["sale_condition_flags"]),
+        axis=1,
     )
     df = df[in_session]
     if df.empty:
-        return pd.DataFrame(columns=BAR_COLUMNS)
+        return _empty()
 
     # 4. Stored-flag eligibility (never re-decode sale_condition_raw).
     eligible = df["sale_condition_flags"].apply(_is_eligible_flags)
     df = df[eligible]
     if df.empty:
-        return pd.DataFrame(columns=BAR_COLUMNS)
+        return _empty()
 
-    # 5. Bucket.
+    # 5. Bucket. At/after 16:00:00 (exact-close regular print, or a
+    #    closing-grace print) folds into the session's final bucket.
     if interval == "1d":
         bucket_start = df["_ny_ts"].apply(_session_open)
     else:
         minutes = 1 if interval == "1m" else 5
-        bucket_start = df["_ny_ts"].apply(lambda t: _floor_minute(t, minutes))
+        bucket_start = df["_ny_ts"].apply(lambda t: _intraday_bucket(t, minutes))
     df = df.assign(_bucket_start=bucket_start)
+
+    # Null-size accounting: a None size contributes 0 to volume rather
+    # than being dropped by pandas' default skipna sum.
+    null_size_rows = int(df["size"].isna().sum())
 
     # Sort so first/last-in-group gives open/close by (trade_ts_ms, session_seq).
     df = df.sort_values(["trade_ts_ms", "session_seq"])
@@ -188,7 +277,8 @@ def aggregate_bars(
         ["trade_date", "_bucket_start"], sort=True
     ):
         prices = group["price"].astype(float)
-        sizes = group["size"].astype(float)
+        sizes = group["size"]
+        sizes = sizes.where(sizes.notna(), 0).astype(float)
         rows.append({
             "trade_date": trade_date,
             "bucket_start": bucket_start,
@@ -200,7 +290,10 @@ def aggregate_bars(
         })
 
     bars = pd.DataFrame(rows, columns=BAR_COLUMNS)
-    return bars.sort_values(["trade_date", "bucket_start"]).reset_index(drop=True)
+    bars = bars.sort_values(["trade_date", "bucket_start"]).reset_index(drop=True)
+    if return_stats:
+        return bars, BarStats(null_size_rows=null_size_rows)
+    return bars
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +319,7 @@ class ReconcileReport:
     status: str  # "PASS" | "DIVERGENT"
     diffs_df: pd.DataFrame
     issues_df: pd.DataFrame
+    null_size_count: int = 0
 
 
 def _pct_diff(ours: float, theirs) -> "float | None":
@@ -244,6 +338,8 @@ def reconcile_tranche(
     ref_minute_df: "pd.DataFrame | None" = None,
     *,
     tolerance: ReconcileTolerance = ReconcileTolerance(),
+    our_daily_stats: "BarStats | None" = None,
+    our_minute_stats: "BarStats | None" = None,
 ) -> ReconcileReport:
     """Compare our OHLCV bars (from `aggregate_bars`) against vendor
     reference bars (from `ReferenceClient.get_eod`/`get_intraday`, already
@@ -263,6 +359,13 @@ def reconcile_tranche(
     report) but does NOT by itself flip the report to `DIVERGENT`
     (baseline §16.3) - only an actual close/volume/minute-close mismatch
     beyond tolerance does that.
+
+    `our_daily_stats`/`our_minute_stats` are the optional `BarStats`
+    returned by `aggregate_bars(..., return_stats=True)` for
+    `our_daily_df`/`our_minute_df` respectively; when supplied their
+    `null_size_rows` are summed onto `ReconcileReport.null_size_count` so
+    null-size accounting stays visible through the reconciliation report
+    instead of being buried inside volume.
     """
     diff_rows: list = []
     now = dt.datetime.now(dt.timezone.utc)
@@ -327,6 +430,12 @@ def reconcile_tranche(
                     "theirs": theirs.get("close"), "pct": pct, "kind": DIFF_KIND_DIVERGENCE,
                 })
 
+    null_size_count = 0
+    if our_daily_stats is not None:
+        null_size_count += our_daily_stats.null_size_rows
+    if our_minute_stats is not None:
+        null_size_count += our_minute_stats.null_size_rows
+
     diffs_df = pd.DataFrame(diff_rows, columns=_DIFF_COLUMNS)
 
     # One ops.data_quality_issue row per trade_date that has at least one
@@ -365,7 +474,10 @@ def reconcile_tranche(
 
     issues_df = pd.DataFrame(issue_rows, columns=_DQ_COLUMNS)
     status = "DIVERGENT" if divergent else "PASS"
-    return ReconcileReport(status=status, diffs_df=diffs_df, issues_df=issues_df)
+    return ReconcileReport(
+        status=status, diffs_df=diffs_df, issues_df=issues_df,
+        null_size_count=null_size_count,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -404,16 +516,31 @@ class Gate:
             return GateDecision(hold=True, reason=GATE_REASON_HOLD)
         return GateDecision(hold=False, reason=GATE_REASON_LOGGED)
 
-    def waive(self, work_id: str, reason: str) -> dict:
+    def waive(
+        self,
+        work_id: str,
+        reason: str,
+        *,
+        listing_id: "str | None" = None,
+        trade_date: "dt.date | None" = None,
+    ) -> dict:
         """Build (but do not write) a waiver `ops.data_quality_issue`-shaped
         row for `work_id`. The caller is responsible for appending it to
-        the table (this class never touches storage)."""
+        the table (this class never touches storage).
+
+        `listing_id`/`trade_date` are optional and, when supplied, are
+        threaded into the row's fixed columns (not just `details_json`)
+        so a waiver row is directly correlatable/filterable against other
+        `ops.data_quality_issue` rows for the same listing/day without
+        parsing JSON."""
         now = dt.datetime.now(dt.timezone.utc)
         return _row(
             _DQ_COLUMNS,
             issue_id=new_id("wrk"),
             check_name=DQ_CHECK_RECONCILE_WAIVED,
             severity="INFO",
+            listing_id=listing_id,
+            trade_date=trade_date,
             details_json=json.dumps({"work_id": work_id, "reason": reason}),
             status="RESOLVED",
             detected_at_ts=now,
