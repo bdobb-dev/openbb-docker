@@ -419,3 +419,20 @@ def test_urllib_transport_handles_http_error_as_status():
     assert status == 404
     assert body == b"not found body"
     assert sleeps == []  # 404 is not >=500, no retry
+
+
+def test_urllib_transport_retries_on_urlerror_then_succeeds():
+    calls = []
+
+    def opener(url, timeout):
+        calls.append(url)
+        if len(calls) == 1:
+            raise urllib.error.URLError("connection reset")
+        return _FakeResponse(200, b"ok")
+
+    sleeps = []
+    transport = UrlLibTransport(opener=opener, sleeper=sleeps.append, max_attempts=3)
+    status, body = transport.get("http://x")
+    assert (status, body) == (200, b"ok")
+    assert len(calls) == 2
+    assert sleeps == [5]
