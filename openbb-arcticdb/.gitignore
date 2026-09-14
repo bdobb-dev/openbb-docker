@@ -1,0 +1,13 @@
+# Python build artifacts
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.DS_Store
+
+# Secrets — never commit connection URIs/credentials (e.g. S3 access/secret in ARCTICDB_URI)
+.env
+*.env
+!.env.example
+*.lic

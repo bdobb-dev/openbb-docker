@@ -1,6 +1,3 @@
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
-# SPDX-License-Identifier: Apache-2.0
-
 """credentials.env reader with docker-compose-dotenv semantics.
 
 The parse rules replicate compose v2.29 as observed on the NAS: this module is
@@ -12,8 +9,6 @@ from __future__ import annotations
 
 import os
 import re
-import stat
-import tempfile
 
 _LINE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
 
@@ -80,9 +75,14 @@ def set_value(path: str, env_var: str, value: str) -> None:
     """Update one variable in credentials.env, preserving comments, blank
     lines, ordering and every other entry.
 
-    Rewritten atomically (temp file in the same directory + os.replace) so a
-    crash mid-write cannot truncate the file the API loads its credentials
-    from. A partial credentials.env is worse than a stale one.
+    Written in place (truncate + write the existing path, no temp file) --
+    NOT the usual tempfile-in-same-dir + os.replace atomic-rename pattern.
+    In production this path is a single-file Docker bind mount, and
+    os.replace() onto a path that is itself a mount target fails with
+    EBUSY: the kernel refuses to swap out an active mountpoint. Writing
+    into the existing inode sidesteps that -- the trade is that a crash
+    mid-write can leave a truncated file, which a rename would have
+    avoided.
 
     Known round-trip hazard: a value containing " #" (space then hash), or
     with leading/trailing whitespace, is written correctly but does not come
@@ -110,13 +110,12 @@ def set_value(path: str, env_var: str, value: str) -> None:
     if value and value.splitlines() != [value]:
         raise ValueError(f"value for {env_var!r} must not contain a line break")
 
+    exists = os.path.exists(path)
     try:
         with open(path, encoding="utf-8") as f:
             lines = f.read().splitlines()
-            original_mode: int | None = stat.S_IMODE(os.fstat(f.fileno()).st_mode)
     except OSError:
         lines = []
-        original_mode = None
 
     replaced = False
     out: list[str] = []
@@ -130,25 +129,12 @@ def set_value(path: str, env_var: str, value: str) -> None:
     if not replaced:
         out.append(f"{env_var}={value}")
 
-    directory = os.path.dirname(os.path.abspath(path)) or "."
-    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".credentials.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write("\n".join(out) + "\n")
-        # mkstemp creates the temp file at 0600, and os.replace is a rename,
-        # so without this the credentials file would silently narrow to
-        # 0600 on every write regardless of what mode it was created with.
-        # If the API process reads the file as a different user or group
-        # than this writer, that breaks credential loading with no error
-        # anywhere -- the same failure the atomic write exists to prevent,
-        # by a different route. No original file (first write) leaves
-        # mkstemp's restrictive default in place, which is the right call
-        # for a brand-new credentials file.
-        if original_mode is not None:
-            os.chmod(tmp, original_mode)
-        os.replace(tmp, path)
-    except BaseException:
-        # Never leave a temp file holding a credential behind.
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-        raise
+    # Writing into the existing inode leaves its mode/ownership untouched,
+    # so there is nothing to carry over except for a brand-new file, which
+    # gets a restrictive mode explicitly (matching mkstemp's old default).
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(out) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+    if not exists:
+        os.chmod(path, 0o600)

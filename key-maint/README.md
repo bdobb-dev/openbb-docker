@@ -51,6 +51,22 @@ admin password to store, leak or rotate.
   `ssh -L 18446:<stack-dir>/key-maint-admin/key-maint-admin.sock <host>` →
   `http://localhost:18446`. `scripts/smoke_live.py` needs this `-L` form.
 
+## Running the stack on a Mac
+
+Docker Desktop cannot `chmod` a unix socket inside a macOS bind mount, so with
+the default admin mount this service dies at startup with
+
+    OSError: [Errno 22] Invalid argument: '/config/admin/key-maint-admin.sock'
+
+Put the socket on a named volume instead:
+
+    KEY_MAINT_ADMIN=key-maint-admin docker compose up -d
+
+The service then runs normally. The trade is that the socket is no longer on
+the host, so the `--unix-socket` and `ssh -L` flows above do not apply — reach
+the admin API from inside the container (`docker compose exec key-maint`)
+while working this way. The Linux default is unchanged.
+
 ## Test
 
     pip install -e . && pytest

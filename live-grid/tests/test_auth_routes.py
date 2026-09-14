@@ -1,6 +1,3 @@
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
-# SPDX-License-Identifier: Apache-2.0
-
 """Auth over the real app, including the two surfaces easiest to miss."""
 
 import base64
@@ -116,3 +113,19 @@ def test_everything_passes_through_when_auth_is_disabled(monkeypatch):
     assert client.get("/widgets.json").status_code == 200
     with client.websocket_connect("/live_grid_ws") as ws:
         ws.send_json({"params": {"symbol": "AAPL"}})
+
+
+def test_the_subscriptions_page_itself_is_guarded(guarded):
+    """The page is served by the same app, so it needs credentials too --
+    and the browser will have them, because it authenticated to load the page."""
+    assert guarded.get("/subscriptions").status_code == 401
+    assert guarded.get("/subscriptions", headers=_hdr()).status_code == 200
+
+
+def test_the_page_and_its_api_share_one_origin(guarded):
+    """The page fetches /api/subscriptions with a root-relative URL, so the
+    browser sends the same credentials it used for the page. If these ever
+    diverge in origin, the widget breaks silently for authenticated users."""
+    page = guarded.get("/subscriptions", headers=_hdr())
+    assert "/api/subscriptions" in page.text
+    assert "http://" not in page.text and "https://" not in page.text

@@ -1,13 +1,8 @@
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
-# SPDX-License-Identifier: Apache-2.0
-
 # OpenBB Platform API behind a Tailscale sidecar — Adventures in OpenBB, Ep. 1–2.
 #
-# The containers share a private bridge network, openbb-internal. Only the
-# sidecar is on the tailnet, so the stack still appears there as ONE node named
-# "openbb" — because nothing else has a tailnet presence of its own, not because
-# they share a network namespace. NOTHING is published to the LAN and no ports
-# are mapped — Tailscale Serve is the only way in:
+# The tailscale container owns the network namespace; the API joins it, so the
+# pair appears on your tailnet as one node named "openbb". NOTHING is published
+# to the LAN and no ports are mapped — Tailscale Serve is the only way in:
 #
 #   https://openbb.<your-tailnet>.ts.net/    (Serve terminates TLS, real LE cert)
 #
@@ -38,10 +33,10 @@ services:
       - TS_HOSTNAME=openbb
       # MANDATORY. The image defaults to userspace networking, where tailscaled
       # terminates inbound tailnet connections itself and forwards them to
-      # 127.0.0.1 — this container's OWN loopback, where nothing listens: the
-      # services are on the bridge, not in this namespace. Kernel mode (this,
-      # plus the tun device and NET_ADMIN below) gives the node a real interface
-      # and lets Serve proxy to each service by name over openbb-internal.
+      # 127.0.0.1 — which would make the API reachable AROUND Serve at
+      # <node-ip>:6900. Kernel mode (this, plus the tun device and NET_ADMIN
+      # below) makes the tailnet IP a real interface, so the 127.0.0.1 socket
+      # below is genuinely unreachable from other peers.
       - TS_USERSPACE=false
       - TS_STATE_DIR=/var/lib/tailscale
       - TS_SERVE_CONFIG=/config/serve.json
@@ -50,23 +45,45 @@ services:
       # brand-new machine joining with a possibly-expired key).
       - ./ts-state:/var/lib/tailscale
       - ./ts-config:/config
-    networks: [openbb-internal]
     devices:
       - /dev/net/tun:/dev/net/tun
     cap_add:
       - NET_ADMIN
       - NET_RAW
+    # Bridge migration (D3): the sidecar keeps its own
+    # netns for WireGuard (unaffected above) and gains a bridge interface so
+    # it can resolve the container names Serve now proxies to. tailscaled
+    # manipulating routing/iptables while dual-homed is the one genuinely
+    # unproven part of the design -- see
+    # docs/superpowers/specs/2026-08-27-bridge-network-design.md.
+    networks:
+      - openbb-internal
 
   # OpenBB Platform REST API. Binds 127.0.0.1 so only Serve can reach it.
   openbb-api:
     build: .
-    image: openbb-local:10.0.0
+    # 4.7.2 = the skill-built image (OpenBB 4.7.2, openbb-eodhd 9.5.0 with the
+    # full FMP-parity fetcher set — 52 eodhd widgets).
+    image: openbb-local:4.7.2
+    # ArcticDB publishes no aarch64 Linux wheels, so the image is amd64.
+    # On Apple Silicon this runs under emulation -- correct, but slower.
+    platform: linux/amd64
     container_name: openbb-api
     restart: unless-stopped
-    networks: [openbb-internal]
+    # Bridge migration (Layer 1): was `network_mode: service:tailscale`.
+    networks:
+      - openbb-internal
     depends_on:
       - tailscale
-    command: ["openbb-api", "--host", "0.0.0.0", "--port", "6900"]
+    # `--app/--factory` serves api_app.py's factory instead of the stock
+    # Platform app: same API, plus the CORS layer that answers Chrome's
+    # Private Network Access preflight so pro.openbb.co can reach a backend
+    # the browser classifies as local (see Ep. 2's gotchas, and api_app.py).
+    # Bridge migration (Layer 2): --host was 127.0.0.1 -- isolation now comes from
+    # openbb-internal not being reachable from outside Docker, not from the
+    # bind (see D1's accepted cost in the design doc).
+    command: ["openbb-api", "--app", "/opt/api_app.py", "--name", "main", "--factory",
+              "--host", "0.0.0.0", "--port", "6900"]
     env_file:
       # Provider API keys (optional — keyless providers work with none).
       - path: ./credentials.env
@@ -76,24 +93,30 @@ services:
       # purpose: without it the API would come up unauthenticated.
       - path: ./api-auth.env
         required: true
-    # Ep. 10: the kdb+ read-through cache. q runs as its OWN service on
-    # openbb-internal (see `kdb:` below) rather than as a child process here.
+      # Ep. 11: ARCTICDB_S3_* -- the MinIO store, shared with tick-lab.
+      - path: ./minio.env
+        required: false
+    # Ep. 10: the kdb+ read-through cache. This repo ships NO KX software --
+    # the licence does not permit redistributing q. Bring your own:
     #
-    # Why it changed: the child-process arrangement bound q to this container's
-    # 127.0.0.1, which worked only because every service shared one network
-    # namespace -- loopback reached all of them at once. On the bridge each
-    # container has its own loopback, so a child q would be visible to
-    # openbb-api alone and live-grid's tick recording and unified chart (Ep. 10's
-    # headline feature) would silently stop.
+    #   1. Drop a q binary into ./kdb (mounted below at /opt/kx:ro,
+    #      KDB_LOCAL_QHOME=/opt/kx) and set KDB_EMBEDDED=true to spawn it as
+    #      a CHILD of this container instead of using the kdb service.
+    #   2. Or run your own kdb container and set KDB_HOST in credentials.env
+    #      -- see credentials.env.example for the platform-specific value
+    #      and the bind/publish rules for that setup.
     #
-    # You can still drop a q binary into ./kdb and set KDB_EMBEDDED=true to
-    # spawn a child instead -- the read-through cache works fine that way. It
-    # just cannot be shared, so live-grid's chart stays off.
-    #
-    # Bring your own licence: register with KX, drop kc.lic into ./kdb-license/
-    # (git-ignored). Without a reachable q AND a licence, the cache passes
-    # through to the upstream provider and the stack runs uncached.
+    # Bring your own license too: register with KX, drop kc.lic into
+    # ./kdb-license/ (git-ignored). Without a reachable q AND a licence, the
+    # cache passes through to the upstream provider and the stack runs
+    # uncached.
     environment:
+      # q runs as the `kdb` service on openbb-internal (see its block), not as a
+      # child of this container: a child would bind this container's own
+      # loopback and be invisible to live-grid, stores-mcp and stores-explorer,
+      # which all need the same store. Set KDB_EMBEDDED=true with a q binary in
+      # ./kdb to spawn a private child instead -- the read-through cache works,
+      # but nothing else can see it.
       - KDB_EMBEDDED=false
       - KDB_HOST=kdb
       - KDB_PORT=5000
@@ -111,56 +134,129 @@ services:
     # all -- instead of q hitting -w and dying alone.
     mem_limit: 12g
 
-  # kdb+ (Ep. 10): the read-through cache's q process, as its own service on
-  # openbb-internal so both openbb-api and live-grid can reach it by name.
-  # KX_PORT with no host binds every interface IN THIS CONTAINER, which on a
-  # private bridge means the bridge -- no ports are published, so nothing off
-  # this Docker host reaches it.
+  # kdb+ (Ep. 10): the read-through cache's q, as its own service on
+  # openbb-internal so openbb-api, live-grid, stores-mcp and stores-explorer can
+  # all reach the same store by name. KX_PORT with no host binds every interface
+  # IN THIS CONTAINER, which on a private bridge means the bridge -- plus the
+  # single host-loopback publish below for the websocket tick stream.
   #
   # READ THIS BEFORE RUNNING IT. q executes arbitrary q code and has no
-  # authentication whatsoever. On the bridge that means any process on this
-  # Docker host, and any container you attach to openbb-internal, can execute
-  # code inside this container. Under the older shared-namespace arrangement
-  # the same was true of every service in that namespace, so the sibling
-  # containers are not new -- host processes are. It is never reachable from
-  # your LAN or your tailnet, and Serve publishes no route to it. If you run
-  # untrusted workloads on this host, do not run this service.
+  # authentication whatsoever. On the bridge, any process on this Docker host
+  # and any container attached to openbb-internal can execute code inside it.
+  # The loopback publish extends that to processes on this host: q IPC shares
+  # the port with the websocket stream, so 127.0.0.1:5999 is arbitrary code
+  # execution for anything local. Raw IPC is never reachable from your LAN
+  # or your tailnet: never widen the bind past 127.0.0.1. Serve DOES publish
+  # :5999 on the tailnet (ts-config/serve.json) for the NAS-side EOD flush --
+  # that is safe by construction, not an exception: Serve reverse-proxies
+  # HTTP only, so what crosses the tailnet is .z.ph's read-only GET routes
+  # and the JSON websocket, never the IPC protocol. NEVER funnel it. If you
+  # run untrusted workloads on this host, remove the ports block or do not
+  # run this service.
+  #
+  # Needs ./kdb-data/startup.q, which this repo does not ship (kdb-data/ is
+  # git-ignored). Without it the container exits and the cache passes through
+  # to the upstream provider. Start from kdb-ws/startup.q for a tick cache
+  # that also publishes trades to websocket subscribers (see kdb-ws/README.md);
+  # bdobb-v2's live chart consumes that stream at ws://127.0.0.1:5999/.
   kdb:
     image: ghcr.io/artcashin/kdb-x:amd64
     container_name: openbb-kdb
     restart: unless-stopped
-    networks: [openbb-internal]
+    networks:
+      - openbb-internal
     environment:
       - KX_PORT=5000
+    ports:
+      - "127.0.0.1:5999:5000"
     volumes:
       - ./kdb-data:/data
       - ./kdb-license:/opt/kx-license:ro
     command: ["/data/startup.q"]
 
+  # eod-dump: the classic kdb+ day cycle's .u.end, as a sidecar. The kdb
+  # service is this stack's tickerplant AND its RDB (in-memory trades, g# on
+  # sym); at 00:05 UTC daily this flushes the ended UTC day into the Ep. 11
+  # Delta Lake/MinIO store -- our HDB -- one Delta table per (ticker, day),
+  # in the `ticks_live` library. Where .Q.hdpf would purge the RDB's RAM,
+  # this deliberately does not: live-grid's rolling window prunes the cache
+  # on its own cadence, and the chart's seam needs the trailing day
+  # queryable. Reuses the openbb-local image (pykx + deltalake + the same
+  # DELTA_S3_* env as every other consumer). Requires the env file -- without
+  # the HDB half there is nowhere to flush, so this service refuses to start.
+  #
+  # THE PRODUCTION FLUSH RUNS ON THE NAS, NOT HERE: a container on the NAS
+  # (network-sharing openbb-minio, so it sits on the tailnet next to the
+  # store) reads the day over the read-only HTTP endpoints Serve publishes
+  # at :5999 (KDB_HTTP_URL) and writes to MinIO over loopback-adjacent
+  # tailnet. This compose service is the on-host alternative -- same
+  # script, IPC source -- for a stack with no NAS.
+  eod-dump:
+    # openbb-local:1.0.0 is the Ep. 11 Delta Lake image — built natively for
+    # this host's arch (no amd64 pin; deltalake/pyarrow ship aarch64 wheels).
+    image: openbb-local:1.0.0
+    container_name: openbb-eod-dump
+    restart: unless-stopped
+    networks:
+      - openbb-internal
+    entrypoint: ["python", "/opt/eod_dump.py", "--loop"]
+    environment:
+      - KDB_HOST=kdb
+      - KDB_PORT=5000
+      - QLIC=/opt/kx-license
+    # DELTA_S3_* for the store. Currently eod.env -> the local s3-local MinIO
+    # (NAS down since 2026-08-31); point back at minio.env when the tailnet
+    # store returns.
+    env_file:
+      - path: ./eod.env
+        required: true
+    volumes:
+      - ./scripts/eod_dump.py:/opt/eod_dump.py:ro
+      - ./kdb-license:/opt/kx-license:ro
+
   # OpenBB MCP server (Ep. 6): wraps the same Platform app as openbb-api,
   # in-process, and serves MCP over streamable-http for the AI analyst.
-  # On openbb-internal; Serve publishes it on :8443 — tailnet-only, NEVER
+  # Bound to 127.0.0.1; Serve publishes it on :8443 — tailnet-only, NEVER
   # funneled (it has no auth of its own; do NOT load api-auth.env here —
-  # auth on this in-process wrapper breaks its tool calls). Like live-grid and
-  # kdb, it is reachable from this Docker host — see the kdb block above.
+  # auth on this in-process wrapper breaks its tool calls).
   # Endpoint path is /mcp (a request to /mcp/ 307-redirects there).
   openbb-mcp:
     build: .
-    image: openbb-local:10.0.0
+    # 4.7.2 = the skill-built image (OpenBB 4.7.2, openbb-eodhd 9.5.0), same
+    # as openbb-api — the MCP tool set tracks the same provider registry.
+    image: openbb-local:4.7.2
+    # ArcticDB publishes no aarch64 Linux wheels, so the image is amd64.
+    # On Apple Silicon this runs under emulation -- correct, but slower.
+    platform: linux/amd64
     container_name: openbb-mcp
     restart: unless-stopped
-    networks: [openbb-internal]
+    # Bridge migration (Layer 1): was
+    # `network_mode: service:tailscale`.
+    networks:
+      - openbb-internal
     depends_on:
       - tailscale
-    # --default-categories + --tool-discovery keep the initial tools/list
+    # --default-categories + tool discovery keep the initial tools/list
     # small enough for a local model's context slot: all 219 tools cost
     # ~152k prompt tokens against a 65,536-token slot, which hard-errors
     # EVERY chat request. Discovery mode exposes ~10 tools (~1.4k tokens)
     # and lets the agent activate categories on demand. LOAD-BEARING —
-    # removing these flags breaks chat completely (see Ep. 6's gotchas).
+    # lose it and chat breaks completely (see Ep. 6's gotchas).
+    # Bridge migration (Layer 2): --host was 127.0.0.1.
     command: ["openbb-mcp", "--host", "0.0.0.0", "--port", "6901",
-              "--default-categories", "equity", "--tool-discovery"]
+              "--default-categories", "equity"]
     environment:
+      # Tool discovery is requested by SETTING, not by the CLI flag, because
+      # that flag is a moving target: openbb-mcp-server 1.3.x defaulted
+      # discovery ON and spelled the switch `--no-tool-discovery`; 1.4.x
+      # flipped the default OFF and spelled it `--tool-discovery`. A pinned
+      # image is fine either way, but an unrecognised flag is a hard argparse
+      # error, so the flag turns a version bump into a container that will not
+      # start. `OPENBB_MCP_ENABLE_TOOL_DISCOVERY` is documented and accepted by
+      # BOTH lines, and a setting that stops being read degrades to the default
+      # rather than refusing to boot. Verified on the pinned 1.4.1: unset ->
+      # enable_tool_discovery=False, "true" -> True.
+      - OPENBB_MCP_ENABLE_TOOL_DISCOVERY=true
       # Neutralize the unconditionally-registered `install_skill` admin tool:
       # its only write target is the bundled skills provider, and an agent
       # reaching this server could otherwise persist files that later agent
@@ -171,36 +267,146 @@ services:
     env_file:
       - path: ./credentials.env
         required: false
+      # Ep. 11: ARCTICDB_S3_* -- this server wraps the same Platform app as
+      # openbb-api in-process, so its equity/etf/crypto/currency/index
+      # historical-price tools accept provider="arcticdb" too. Without this,
+      # ARCTICDB_S3_* is unset here and the provider falls back silently to a
+      # local LMDB store instead of the shared MinIO bucket (see
+      # openbb_arcticdb.utils.resolve_config) -- same store, no auth of its
+      # own either way, so it's safe to share the file.
+      - path: ./minio.env
+        required: false
     volumes:
       - openbb-data:/root/.openbb_platform
 
+  # stores-mcp (Ep. 11): read-only ArcticDB + kdb+ discovery/query MCP
+  # server -- see mcp_stores/README.md. Complements openbb-api/openbb-mcp's
+  # REST/tool surface, which only answers known-symbol OHLCV and returns 204
+  # against raw quote/trade tick data: these tools give an agent
+  # library/symbol/table/schema discovery plus capped raw reads. Read-only,
+  # no auth of its own (same posture as openbb-mcp's :8443) -- Serve should
+  # publish it tailnet-only, never funneled.
+  stores-mcp:
+    build: .
+    image: openbb-local:11.0.0
+    platform: linux/amd64
+    container_name: openbb-stores-mcp
+    restart: unless-stopped
+    # Bridge migration (Layer 1): was
+    # `network_mode: service:tailscale`.
+    networks:
+      - openbb-internal
+    depends_on:
+      - tailscale
+    command: ["python", "/opt/mcp_stores/server.py"]
+    # Bridge migration (Layer 2 + 4): STORES_HOST was 127.0.0.1, KX_HOST was
+    # 127.0.0.1 (reached the openbb-api-embedded q over the shared
+    # namespace) -- now the openbb-internal bridge alias.
+    environment:
+      - STORES_HOST=0.0.0.0
+      - STORES_PORT=6902
+      - KX_HOST=kdb
+      - KX_PORT=5000
+      # This process only ever connects to an EXISTING q as an IPC client
+      # (pykx.SyncQConnection) -- it never spawns or embeds one, so it needs
+      # no kdb+ licence. Without this, `import pykx` looks for one and fails.
+      - PYKX_UNLICENSED=1
+      - PYKX_IGNORE_QHOME=1
+    env_file:
+      # ARCTICDB_URI: the same combined-URI fallback openbb-arcticdb itself
+      # reads (see minio.env.example) -- this server takes no split
+      # ARCTICDB_S3_* vars, just the one URI.
+      - path: ./minio.env
+        required: false
+
+  # stores-explorer (Ep. 11): read-only widget backend for the same
+  # ArcticDB/kdb+ discovery code as stores-mcp, over a plain REST/widgets.json
+  # surface instead of MCP -- see stores-explorer/README.md. Loopback :6904;
+  # Serve publishes it on :6904 -- tailnet-only, matching live-grid's :6903
+  # (no auth of its own, so: don't funnel it). Reached externally because its
+  # caller, bdobb, runs on the user's own remote machine rather than
+  # alongside this stack (unlike stores-mcp, which only sibling containers
+  # call, hence no external port for it).
+  #
+  # Build context is the repo ROOT, not ./stores-explorer: the image installs
+  # the sibling mcp_stores/ package, and a Dockerfile can only COPY paths
+  # inside its build context -- same reasoning as live-grid's kdb-store COPY.
+  stores-explorer:
+    build:
+      context: .
+      dockerfile: stores-explorer/Dockerfile
+    image: openbb-stores-explorer:11.2.0
+    # ArcticDB publishes no aarch64 Linux wheels, so the image is amd64.
+    # On Apple Silicon this runs under emulation -- correct, but slower.
+    platform: linux/amd64
+    container_name: openbb-stores-explorer
+    restart: unless-stopped
+    # Bridge migration (Layer 1): was
+    # `network_mode: service:tailscale`.
+    networks:
+      - openbb-internal
+    depends_on:
+      - tailscale
+    # Bridge migration (Layer 2): the image's Dockerfile CMD binds 127.0.0.1 by
+    # design (a compose that forgets this override fails closed rather than
+    # exposing it) -- overridden here rather than rebuilt, per the design
+    # doc's Layer 2.
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "6904"]
+    environment:
+      # Bridge migration (Layer 4): was 127.0.0.1 -- now the openbb-internal
+      # bridge alias for the openbb-api-embedded q.
+      - KX_HOST=kdb
+      - KX_PORT=5000
+      - PYKX_UNLICENSED=1
+      - PYKX_IGNORE_QHOME=1
+    env_file:
+      - path: ./minio.env
+        required: true
+
   # key-maint: the transport-tiered "key status" widget backend (Ep. 3).
-  # One process, two servers: a network server on :8447 (published by Serve on
-  # :10000 and as the Tailscale Service svc:openbb-keys — tailnet-only; the
-  # :10000 funnel that once existed was deliberately removed. It enforces the
-  # same Basic auth as the API) and an admin server on a unix socket whose
+  # One process, two servers: a network server on loopback :8447 (published by
+  # Serve on :10000 and as the Tailscale Service svc:openbb-keys — tailnet-only;
+  # the :10000 funnel that once existed was deliberately removed. It enforces
+  # the same Basic auth as the API) and an admin server on a unix socket whose
   # 0700 host directory IS the tier-3 authorization (filesystem access via
   # SSH — no port, no header).
   key-maint:
     build: ./key-maint
-    image: openbb-key-maint:10.0.0
+    image: openbb-key-maint:latest
     container_name: openbb-key-maint
     restart: unless-stopped
-    environment:
-      # key-maint's network bind is in Python, not in this file; it defaults to
-      # loopback so a compose file that forgets this fails closed. Only the
-      # NETWORK server moves -- the admin server is a unix socket and stays off
-      # the bridge, with its 0700 host directory as the authorization.
-      - KEYMAINT_NETWORK_HOST=0.0.0.0
-    networks: [openbb-internal]
+    # Bridge migration (Layer 1): was
+    # `network_mode: service:tailscale`.
+    networks:
+      - openbb-internal
     depends_on:
       - tailscale
+    # Bridge migration (Layer 2): key-maint's network server was hardcoded to
+    # 127.0.0.1 (D5's prerequisite) -- see the KEY_MAINT_HOST commit. Its
+    # admin unix-socket server (below) is untouched by this migration.
+    environment:
+      - KEY_MAINT_HOST=0.0.0.0
     volumes:
-      - ./credentials.env:/config/credentials.env:ro
+      # rw: the tier-3 PUT /keys/{env_var} endpoint rewrites this file (see
+      # app/credfile.py's set_value -- it writes in place rather than via
+      # tempfile+rename specifically because this is a single-file bind
+      # mount, and renaming onto a path that is itself a mountpoint fails
+      # with EBUSY).
+      - ./credentials.env:/config/credentials.env
       - ./api-auth.env:/config/api-auth.env:ro
       # Admin bind lives here. Create it 0700, owned by the host admin user:
       #   mkdir -p key-maint-admin && chmod 700 key-maint-admin
-      - ./key-maint-admin:/config/admin
+      #
+      # Docker Desktop cannot chmod a unix socket inside a macOS bind mount, so
+      # on a Mac this service dies at startup with
+      #   OSError: [Errno 22] Invalid argument: '/config/admin/key-maint-admin.sock'
+      # The default below is the Linux deployment target and is unchanged --
+      # the socket stays on the host, which is what the SSH admin flow in
+      # key-maint/README.md connects to. On a Mac, run the stack with
+      #   KEY_MAINT_ADMIN=key-maint-admin docker compose up -d
+      # to put it on a named volume instead: the service runs, at the cost of
+      # the socket no longer being reachable from the host.
+      - ${KEY_MAINT_ADMIN:-./key-maint-admin}:/config/admin
 
   # live-grid (Ep. 9; tick recording + unified chart added Ep. 10): OpenBB
   # Workspace live_grid backend streaming EODHD websocket prices. Loopback
@@ -216,31 +422,61 @@ services:
     build:
       context: .
       dockerfile: live-grid/Dockerfile
-    image: openbb-live-grid:10.0.0
+    image: openbb-live-grid:latest
     container_name: openbb-live-grid
     restart: unless-stopped
-    # live-grid's bind is baked into its Dockerfile CMD as 127.0.0.1:6903.
-    # Override it HERE rather than editing the Dockerfile, so the image keeps
-    # defaulting to loopback: a compose file that ever drops this line gets an
-    # unreachable container, not one silently exposed on the bridge.
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "6903"]
-    networks: [openbb-internal]
+    # Bridge migration (Layer 1): was
+    # `network_mode: service:tailscale`.
+    networks:
+      - openbb-internal
     depends_on:
       - tailscale
-    # Ep. 10: live-grid records the tick stream into the SAME q as openbb-api
-    # and aggregates it into bars for the unified chart. Both now reach it at
-    # kdb:5000 on openbb-internal. KDB_EMBEDDED=false stays load-bearing:
-    # without it this service's default would spawn its own child q, which no
-    # one else can see and which would diverge from the shared store.
-    # With no reachable q the chart and tick recording simply stay off and
+    # Bridge migration (Layer 2): the image's Dockerfile CMD binds 127.0.0.1 by
+    # design -- overridden here rather than rebuilt, per the design doc's
+    # Layer 2 (same reasoning as stores-explorer, above).
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "6903"]
+    # Ep. 10: live-grid records the tick stream into the SAME q openbb-api
+    # spawns and aggregates it into bars for the unified chart.
+    # Bridge migration (Layer 4, not in the original design doc's table -- found
+    # while implementing it): KDB_BIND_HOST=kdb is new here. Before this
+    # migration, live-grid found openbb-api's spawn via
+    # kdb-store/kdb_store/session.py's link 2, hardcoded to 127.0.0.1 and
+    # reachable only because both containers shared one network namespace.
+    # Off that namespace, link 2 needs an explicit target -- the same
+    # openbb-internal alias openbb-api spawns q under.
+    # KDB_EMBEDDED=false is load-bearing: without it this service's default
+    # (a loopback host spawns its own q) would race openbb-api to bind
+    # :5000, and the loser gives up on kdb+ for the life of its process.
+    # Exactly one service may own the spawn; openbb-api does. With no
+    # reachable q the chart and tick recording simply stay off and
     # /live_grid, /live_grid_ws behave exactly as before Ep. 10.
     environment:
       - LIVE_GRID_CHART=true
       - LIVE_TICK_WINDOW_SECONDS=86400
+      - KDB_BIND_HOST=kdb
+      # Bridge migration (Layer 4, same class of gap as KDB_BIND_HOST): the
+      # default is http://127.0.0.1:6900, which reached openbb-api only under
+      # the old shared namespace. On the bridge it must be named -- without
+      # this every historical fetch fails and /chart, /series and /ta_chart
+      # render "bars unavailable". Takes effect once openbb-api itself is
+      # recreated onto openbb-internal (a pre-migration container binds
+      # loopback in the tailscale namespace and is unreachable by this name).
+      - OPENBB_URL=http://openbb-api:6900
+      # TA chart (see docs/superpowers/specs/2026-08-25-ta-chart-widget-design.md).
+      # TA_EODHD_MIN_REFETCH_S is a cost guard, not a performance knob: EODHD
+      # bills 5 API calls per indicator per request, so an unthrottled live
+      # chart would spend a 100k/day budget in under an hour.
+      - TA_PUSH_INTERVAL_MS=1000
+      - TA_EODHD_MIN_REFETCH_S=60
+      # Mount a directory here to add chart macros without rebuilding.
+      # - TA_MACRO_DIR=/srv/macros-custom
       - KDB_EMBEDDED=false
-      - KDB_HOST=kdb
-      - KDB_PORT=5000
       - QLIC=/opt/kx-license
+      # The subscription widget needs live-grid's externally-reachable URL, because
+      # an iframe widget's endpoint is handed to the client verbatim and must be
+      # absolute. Unset -> the widget is omitted from /widgets.json rather than
+      # advertised broken. Set it to whatever Tailscale Serve publishes :6903 as.
+      # - LIVE_GRID_PUBLIC_URL=https://<your-host>.<your-tailnet>.ts.net:6903
     env_file:
       # EODHD_API_KEY comes from here (the public demo websocket key covers
       # the default watchlist for testing).
@@ -257,6 +493,15 @@ services:
         required: true
     volumes:
       - ./kdb-license:/opt/kx-license:ro
+      # The durable watchlist (app/watchlist.py) writes /data/watchlist.json
+      # and its docstring already assumes "a mount that is not the
+      # container's root" -- without this volume, pins silently die with the
+      # container and only TTL leases (in-process, also non-durable) keep
+      # feeds alive. live-grid-data/ is git-ignored, like kdb-data/.
+      - ./live-grid-data:/data
+      # The subscription watchlist lives here. live-grid otherwise has no
+      # writable mount, so without this a restart would silently empty the list.
+      - ./live-grid-data:/data
 
   # rss-ticker (Ep. 8): the news wire — polls RSS feeds, streams new articles
   # over a websocket, serves a Bloomberg-style news window widget. Source lives
@@ -270,10 +515,16 @@ services:
   #   cp rss-ticker.env.example rss-ticker.env       # TICKER_ADMIN_KEY
   rss-ticker:
     build: https://github.com/artcashin/rss-ticker.git
-    image: rss-ticker:10.0.0
+    image: rss-ticker:8.0.0
     container_name: openbb-rss-ticker
     restart: unless-stopped
-    networks: [openbb-internal]
+    # Bridge migration (Layer 1): was
+    # `network_mode: service:tailscale`. Its tailscale_auth guard needed a
+    # source change first (rss-ticker's own repo, feat/ticker-server) --
+    # bind_host: 0.0.0.0 (rss-ticker-config/config.yaml.example) refused to
+    # start before that landed.
+    networks:
+      - openbb-internal
     depends_on:
       - tailscale
     env_file:
@@ -285,14 +536,128 @@ services:
       - ./rss-ticker-config:/config:ro
       - rss-ticker-data:/data
 
-networks:
-  # Private to this stack. Docker networks are isolated from each other by
-  # default, so this bridge is the boundary the shared namespace used to be.
-  # Do NOT set `internal: true` — it blocks egress, and the API exists to make
-  # outbound calls to data providers.
-  openbb-internal:
-    driver: bridge
+  # --- Ep. 11: the shared store -------------------------------------------
+  # MinIO, joined to the tailnet as its own node named "minio". No sidecar:
+  # tailscaled runs INSIDE this container because its control socket is a file
+  # and network_mode shares only the network namespace -- see minio/Dockerfile.
+  #
+  # NOTHING is published to the host, so :9000/:9001 exist on the tailscale
+  # interface (and the docker bridge) only.
+  #
+  # Before first start:
+  #   cp minio.env.example minio.env && chmod 600 minio.env
+  minio:
+    build: ./minio
+    image: openbb-minio:11.0.0
+    platform: linux/amd64
+    container_name: openbb-minio
+    hostname: minio
+    restart: unless-stopped
+    env_file:
+      # TS_AUTHKEY -- the same reusable tagged key the openbb node uses.
+      - path: ./ts.env
+        required: true
+      - path: ./minio.env
+        required: true
+    environment:
+      # NOTE: a Tailscale node cannot take a name that an existing Tailscale
+      # SERVICE already owns. If your tailnet already has `svc:minio`, this
+      # node silently becomes `minio-1` and `tailscale cert` then fails with
+      # `invalid domain ... must be one of [minio-1...]`, because a node may
+      # only be issued a certificate for its OWN name. Either retire that
+      # service or pick a free name here and set MINIO_CERT_DOMAIN to match.
+      - TS_HOSTNAME=minio
+      # Only needed when the node name and the name clients connect to differ
+      # (see above). Defaults to ARCTICDB_S3_ENDPOINT, which is correct when
+      # they are the same.
+      # - MINIO_CERT_DOMAIN=minio.<your-tailnet>.ts.net
+      - TS_STATE_DIR=/var/lib/tailscale
+      # NOTE: the cert domain is NOT set here. Compose interpolates ${...} from
+      # the shell or a root .env only -- never from env_file -- so referencing
+      # ARCTICDB_S3_ENDPOINT here would silently expand to empty. The entrypoint
+      # reads it from its own environment instead, where env_file did put it.
+      - MINIO_CERT_RENEW_SECONDS=43200
+    command: ["/data", "--console-address", ":9001"]
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    volumes:
+      - minio-data:/data
+      # Persist node identity AND the issued certificate across restarts --
+      # otherwise every restart joins as a brand-new machine and re-runs ACME.
+      #
+      # A NAMED VOLUME, not a relative bind like the openbb node's ./ts-state.
+      # A relative bind is resolved by the CLIENT and sent to the daemon as an
+      # absolute path, so against a REMOTE docker context (DOCKER_HOST / a
+      # `docker context` pointing at a NAS) the daemon dutifully creates that
+      # literal client-side path -- e.g. /Users/you/... -- on the remote host's
+      # ROOT filesystem. It works, which is why it goes unnoticed: the state
+      # persists, just on the appliance's small system partition instead of the
+      # data volume, outside whatever backs that volume up. Losing it costs you
+      # the node identity and a fresh certificate issuance. A named volume is
+      # resolved by the daemon and always lands in its own storage.
+      - minio-ts-state:/var/lib/tailscale
+
+  # One-shot: ArcticDB will NOT create its own bucket, so `docker compose up`
+  # would otherwise leave you with a store that 404s on first write.
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+    container_name: openbb-minio-init
+    network_mode: service:minio
+    depends_on:
+      - minio
+    env_file:
+      - path: ./minio.env
+        required: true
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        # tailscaled does NOT take over DNS inside these containers -- resolv.conf
+        # still points at Docker's resolver -- so the MagicDNS name does not
+        # resolve in here, even though every tailnet client outside resolves it
+        # fine. We share minio's network namespace, so map the name to loopback
+        # and keep FULL certificate verification: the cert is issued for exactly
+        # this name, so TLS still validates.
+        echo "127.0.0.1 $${ARCTICDB_S3_ENDPOINT}" >> /etc/hosts
+        for i in $$(seq 1 60); do
+          if mc alias set store "https://$${ARCTICDB_S3_ENDPOINT}:$${ARCTICDB_S3_PORT}" \
+               "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" >/dev/null 2>&1; then
+            mc mb --ignore-existing "store/$${ARCTICDB_S3_BUCKET}"
+            echo "minio-init: bucket $${ARCTICDB_S3_BUCKET} ready"
+            exit 0
+          fi
+          sleep 2
+        done
+        echo "minio-init: MinIO did not become reachable" >&2
+        exit 1
+    restart: "no"
 
 volumes:
   openbb-data:
   rss-ticker-data:
+  minio-data:
+  minio-ts-state:
+  # Only used when KEY_MAINT_ADMIN names it (see key-maint's admin mount).
+  # Declaring it unconditionally costs nothing on the Linux default, where the
+  # admin socket stays a host bind mount.
+  key-maint-admin:
+
+# Bridge migration (D1): replaces the loopback boundary
+# `network_mode: service:tailscale` gave the eight services below. Docker
+# networks are isolated by default, so nothing outside this project reaches
+# them even though they now bind 0.0.0.0 -- but D1's accepted cost applies:
+# any container LATER attached to openbb-internal gets unauthenticated access
+# to live-grid, stores-explorer, both MCP services, and kdb (none of which
+# authenticate); rss-ticker is the exception -- it still authenticates via
+# tailscale_auth, extended to trust 0.0.0.0 under this same isolation
+# guarantee (see rss-ticker's own feat/ticker-server, not this repo). Only
+# the seven services docs/superpowers/specs/2026-08-27-bridge-network-
+# design.md names were in the original design; rss-ticker's inclusion (and
+# its tailscale_auth fix) was a scope decision made while implementing it,
+# not in that doc.
+networks:
+  openbb-internal:
+    driver: bridge

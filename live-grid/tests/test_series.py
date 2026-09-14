@@ -82,3 +82,13 @@ def test_stitch_output_is_time_ordered_even_if_inputs_are_not():
 )
 def test_tick_capable_rejects_intervals_wider_than_the_window(interval, window, ok):
     assert tick_capable(interval, window) is ok
+
+
+def test_stitch_parses_string_history_dates():
+    """History rows arrive with the provider's ISO strings while tick bars
+    carry datetimes -- the seam comparison must not TypeError on the mix."""
+    history = [{"date": "2026-08-28T17:00:00", "close": 1.0},
+               {"date": "2026-08-28T18:00:00", "close": 2.0}]
+    ticks = [{"date": datetime(2026, 8, 28, 18, 0), "close": 3.0}]
+    out = stitch(history, ticks, datetime(2026, 8, 28, 18, 0))
+    assert [r["close"] for r in out] == [1.0, 3.0]

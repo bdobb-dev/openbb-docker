@@ -1,6 +1,3 @@
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
-# SPDX-License-Identifier: Apache-2.0
-
 # OpenBB Platform API + MCP server, containerized. Companion image for the
 # Adventures in OpenBB series (v9.0.0).
 #
@@ -128,94 +125,6 @@ print(f"cftc_router patched: {n_getattr} getattr + {n_attr} attribute call(s) gu
       f"lifespan network call guarded")
 PY
 
-# Patch openbb_core.api.rest_api to require Basic auth on the WHOLE app.
-# Upstream wires authenticate_user only into the /api/v1 command router, so
-# the Workspace metadata routes that openbb_platform_api.main hangs off this
-# same app (/, /widgets.json, /apps.json, /agents.json) and FastAPI's own
-# /docs, /redoc and /openapi.json are served unauthenticated even with
-# OPENBB_API_AUTH=true. Funnel can publish this port to the public internet,
-# so the lock has to cover everything -- see docker-compose.yml's header,
-# which has told the reader since v2.0.0 that /widgets.json returns 401
-# without credentials. Until this patch, it did not.
-#
-# Middleware rather than a route dependency: /docs and /openapi.json are
-# registered by FastAPI itself and have no router to attach one to, and
-# middleware stays correct if a future OpenBB adds another root route.
-#
-# ORDER IS LOAD-BEARING. Starlette's add_middleware inserts at index 0 and
-# builds the stack in reverse, so the middleware registered LAST runs FIRST.
-# This block is injected ABOVE the CORSMiddleware registration, which leaves
-# CORS outermost. Get it backwards and auth outranks CORS: a browser preflight
-# (which by definition carries no credentials) gets a bare 401 with no
-# Access-Control-Allow-* headers, and every cross-origin caller -- OpenBB
-# Workspace at pro.openbb.co, the whole point of the stack -- is locked out.
-# curl never sends a preflight, so no amount of curl testing catches it.
-RUN python - <<'PY'
-import pathlib
-p = pathlib.Path("/usr/local/lib/python3.12/site-packages/openbb_core/api/rest_api.py")
-src = p.read_text()
-anchor = "app.add_middleware(\n    CORSMiddleware,"
-assert anchor in src, "rest_api.py CORS registration not found - upstream changed"
-guard = '''
-import base64 as _base64
-import binascii as _binascii
-import secrets as _secrets
-
-from starlette.responses import Response as _Response
-
-
-@app.middleware("http")
-async def _require_basic_auth(request, call_next):
-    """Require HTTP Basic auth on every path when OPENBB_API_AUTH is set.
-
-    No-ops when auth is off, which is what keeps the in-process openbb-mcp
-    wrapper (started deliberately without api-auth.env) working.
-    """
-    env = Env()
-    if not env.API_AUTH:
-        return await call_next(request)
-    username = env.API_USERNAME or ""
-    password = env.API_PASSWORD or ""
-    header = request.headers.get("authorization", "")
-    supplied_user = supplied_pw = ""
-    if header[:6].lower() == "basic ":
-        try:
-            supplied_user, _, supplied_pw = (
-                _base64.b64decode(header[6:]).decode("utf8").partition(":")
-            )
-        except (_binascii.Error, UnicodeDecodeError, ValueError):
-            supplied_user = supplied_pw = ""
-    ok_user = _secrets.compare_digest(supplied_user.encode(), username.encode())
-    ok_pw = _secrets.compare_digest(supplied_pw.encode(), password.encode())
-    # `username and password` fails CLOSED when either is unconfigured:
-    # without it, compare_digest("", "") is true on both halves and
-    # `Basic <base64 of ":">` would authenticate against an empty pair.
-    if not (username and password and ok_user and ok_pw):
-        return _Response(status_code=401, headers={"WWW-Authenticate": "Basic"})
-    return await call_next(request)
-
-
-'''
-p.write_text(src.replace(anchor, guard + anchor, 1))
-PY
-RUN python -c "import ast; ast.parse(open('/usr/local/lib/python3.12/site-packages/openbb_core/api/rest_api.py').read()); print('rest_api auth patch parses OK')"
-
-# Patch openbb_core.api.rest_api CORS setup to answer Chrome's Private Network
-# Access preflight. OpenBB Workspace runs at https://pro.openbb.co (a public
-# origin); when the browser classifies your backend's address as private/local
-# (see Ep. 2's gotchas), the fetch is gated behind an OPTIONS preflight carrying
-# Access-Control-Request-Private-Network: true. Starlette rejects it unless
-# allow_private_network=True, and OpenBB exposes no setting for this.
-RUN python - <<'PY'
-import pathlib
-p = pathlib.Path("/usr/local/lib/python3.12/site-packages/openbb_core/api/rest_api.py")
-src = p.read_text()
-anchor = "    allow_headers=system.api_settings.cors.allow_headers,\n)"
-assert anchor in src, "rest_api.py CORS block not found - upstream changed"
-p.write_text(src.replace(anchor, anchor.replace("\n)", "\n    allow_private_network=True,\n)"), 1))
-PY
-RUN python -c "import ast; ast.parse(open('/usr/local/lib/python3.12/site-packages/openbb_core/api/rest_api.py').read()); print('rest_api CORS patch parses OK')"
-
 # Custom EODHD provider extension (Ep. 9): equity/ETF/crypto/forex historical
 # (EOD + intraday) and fundamentals via the official SDK, pinned to a GitHub
 # commit (the PyPI release predates the SDK's typed errors and timeouts).
@@ -234,6 +143,14 @@ RUN pip install --no-cache-dir /tmp/kdb-store && rm -rf /tmp/kdb-store
 COPY openbb-kdb /tmp/openbb-kdb
 RUN pip install --no-cache-dir /tmp/openbb-kdb && rm -rf /tmp/openbb-kdb
 
+# ArcticDB store + provider extension (Ep. 11). Bars and ticks persisted to
+# S3/MinIO can stand in for an upstream API call via provider="arcticdb".
+#
+# ArcticDB ships manylinux x86_64 wheels ONLY -- no aarch64. That is why the
+# compose services pin platform: linux/amd64.
+COPY openbb-arcticdb /tmp/openbb-arcticdb
+RUN pip install --no-cache-dir /tmp/openbb-arcticdb && rm -rf /tmp/openbb-arcticdb
+
 # Official OpenBB MCP server (Ep. 6): wraps the Platform FastAPI app
 # in-process and serves MCP over streamable-http. PIP_CONSTRAINT still
 # applies, so it cannot drag shared libs anywhere the stack doesn't tolerate.
@@ -245,9 +162,33 @@ RUN python -c "import openbb_mcp_server; print('openbb-mcp-server import OK')"
 RUN python -c "import openbb; openbb.build(); from openbb import obb; \
 assert 'eodhd' in obb.coverage.providers, 'eodhd provider not registered'; \
 assert 'kdb' in obb.coverage.providers, 'kdb provider not registered'; \
-print('OpenBB Platform OK:', len(obb.coverage.providers), 'providers (incl. eodhd, kdb)')"
+assert 'arcticdb' in obb.coverage.providers, 'arcticdb provider not registered'; \
+print('OpenBB Platform OK:', len(obb.coverage.providers), 'providers (incl. eodhd, kdb, arcticdb)')"
+
+# The FastAPI app factory `openbb-api --factory` serves (see api_app.py):
+# the stock Platform app with Chrome's Private Network Access preflight
+# answered. Replaces an earlier build-time rewrite of openbb_core's
+# rest_api.py -- same effect, but through the documented `--app/--factory`
+# entrypoint instead of a text substitution against upstream source.
+COPY api_app.py /opt/api_app.py
+RUN python -c "\
+from openbb_platform_api.utils.api import import_app; \
+from starlette.middleware.cors import CORSMiddleware; \
+app = import_app('/opt/api_app.py', 'main', True); \
+layers = [mw for mw in app.user_middleware if mw.cls is CORSMiddleware]; \
+assert layers, 'api_app: no CORS middleware on the built app'; \
+assert all(mw.kwargs.get('allow_private_network') is True for mw in layers), \
+    'api_app: a CORS layer is missing allow_private_network'; \
+print('api_app factory OK:', len(layers), 'CORS layer(s), all private-network enabled')"
 
 WORKDIR /workspace
+
+# stores-mcp (Ep. 11): read-only ArcticDB/kdb+ discovery/query MCP server.
+# Runs `python /opt/mcp_stores/server.py` (see docker-compose.yml's
+# stores-mcp service) directly against this image -- nothing extra to
+# install: fastmcp came in with openbb-mcp-server above, arcticdb/pandas with
+# openbb-arcticdb, pykx with openbb-kdb. Just the two files.
+COPY mcp_stores/server.py mcp_stores/test_server.py /opt/mcp_stores/
 
 # Self-provision persistent mount points so the image is drop-in on any host
 # (NAS container managers, plain Docker) with bind mounts to not-yet-created
@@ -258,5 +199,8 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 # Default: the REST API on loopback (the compose file's Tailscale sidecar is
-# the only way in — see docker-compose.yml).
-CMD ["openbb-api", "--host", "127.0.0.1", "--port", "6900"]
+# the only way in — see docker-compose.yml). `--app/--factory` serves
+# api_app.py's factory rather than the stock app, which is what answers
+# Chrome's Private Network Access preflight.
+CMD ["openbb-api", "--app", "/opt/api_app.py", "--name", "main", "--factory", \
+     "--host", "127.0.0.1", "--port", "6900"]

@@ -1,0 +1,49 @@
+#!/usr/bin/env sh
+# obb-up — one-command wrapper around docker compose for the OpenBB stack.
+#
+#   ./obb-up            # launch the interactive OpenBB Terminal (default)
+#   ./obb-up s3         # start the shared ArcticDB store (MinIO) + create bucket
+#   ./obb-up api        # start the REST API server (http://localhost:6900)
+#   ./obb-up shell      # drop into a bash shell in the OpenBB container
+#   ./obb-up status     # show all stack containers
+#   ./obb-up down       # stop everything (data volumes are kept)
+#
+# Combine, e.g.:  ./obb-up s3 && ./obb-up terminal
+set -e
+cd "$(dirname "$0")"
+
+cmd="${1:-terminal}"
+case "$cmd" in
+  s3)
+    docker compose --profile s3 up -d minio minio-setup
+    echo ""
+    echo "MinIO store is up."
+    echo "  console : http://localhost:9001  (default: minioadmin / minioadmin)"
+    echo "  to use  : uncomment the S3 ARCTICDB_URI block in credentials.env"
+    echo "            (see credentials.env.example), then: ./obb-up terminal"
+    ;;
+  api)
+    docker compose --profile api up -d openbb-api
+    echo "OpenBB REST API: http://localhost:6900/docs"
+    ;;
+  terminal)
+    docker compose run --rm openbb
+    ;;
+  shell)
+    docker compose run --rm openbb bash
+    ;;
+  status|ps)
+    docker compose --profile s3 --profile api ps
+    ;;
+  down)
+    docker compose --profile s3 --profile api down
+    ;;
+  -h|--help|help)
+    sed -n '2,16p' "$0"
+    ;;
+  *)
+    echo "unknown command: $cmd" >&2
+    echo "usage: ./obb-up [terminal|s3|api|shell|status|down]" >&2
+    exit 1
+    ;;
+esac

@@ -1,6 +1,3 @@
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
-# SPDX-License-Identifier: Apache-2.0
-
 """One official-SDK websocket client per EODHD feed, driven by grid subscriptions."""
 
 import asyncio
@@ -95,11 +92,12 @@ class FeedManager:
         self._active: dict[str, frozenset[str]] = {}  # feed -> subscribed set
         self._rebuild_pending = False
         self._last_rebuild = float("-inf")
-        # -inf, NOT 0.0: loop.time() is CLOCK_MONOTONIC, whose origin is boot,
-        # so `now - 0.0 >= PRUNE_INTERVAL` is only true once the HOST has been up
-        # PRUNE_INTERVAL seconds. On a freshly booted machine (a CI runner, a NAS
-        # that just rebooted) the first prune silently never fires. -inf makes
-        # the first cycle always prune, which is the intent.
+        # -inf, not 0.0, and for the same reason as _last_rebuild above:
+        # loop.time() is CLOCK_MONOTONIC, so 0.0 is not a harmless "long
+        # ago" -- it is a real instant this host may not have reached yet.
+        # Comparing against it made the startup prune depend on machine
+        # uptime, skipping it entirely on a host booted less than
+        # PRUNE_INTERVAL ago (a CI runner is exactly that).
         self._last_prune = float("-inf")
         self._clock = clock
         self._last_tick: dict[str, float] = {}  # feed -> clock() at last buffer activity
@@ -107,12 +105,12 @@ class FeedManager:
 
     # -- subscription tracking ------------------------------------------------
     def register(self, conn_id: str, symbols: list[str]) -> None:
-        # _dirty FIRST. These are two separate statements, so another thread can
-        # observe the dicts between them; establishing the dirty set before the
-        # connection becomes visible means "conn_id is in _conns" always implies
-        # "conn_id is in _dirty". The reverse order let a caller that waited on
-        # _conns write a dirty mark into a dict that did not have the key yet --
-        # the mark went nowhere and the row was never flushed.
+        # _dirty FIRST. These are two separate statements, so another thread
+        # can observe the dict between them; establishing the dirty set before
+        # the connection becomes visible means "conn_id is in _conns" always
+        # implies "conn_id is in _dirty". The reverse order let a caller that
+        # waited on _conns write a dirty mark into a dict that did not have the
+        # key yet -- the mark went nowhere and the row was never flushed.
         self._dirty.setdefault(conn_id, set())
         self._conns[conn_id] = split_by_feed(symbols)
         self._rebuild_pending = True

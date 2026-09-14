@@ -10,6 +10,16 @@ import pytest
 from app.quotes import QuoteTable
 
 
+class _client:
+    """A stand-in for the EODHD SDK client: one canned snapshot for any ticker."""
+
+    def __init__(self, snapshot):
+        self._snapshot = snapshot
+
+    def get_live_stock_prices(self, ticker):
+        return self._snapshot
+
+
 def make_rest(snapshots: dict):
     """MagicMock APIClient whose get_live_stock_prices returns per-ticker dicts."""
     client = MagicMock()
@@ -88,6 +98,16 @@ class TestApplyTick:
         assert abs(row["change_percent"] - 0.125) < 1e-9
         assert row["last_size"] == 25.0
         assert row["updated_at"] == "22:13:20"  # 1700000000000 ms = 2023-11-14T22:13:20Z
+
+    def test_us_trade_size_arrives_as_v_not_q(self):
+        """EODHD's US-equity trade messages carry the share count as `v`
+        (crypto uses `q`); reading only `q` recorded every US tick at size 0
+        and left tick-derived equity bars volumeless."""
+        recorded = []
+        q = QuoteTable(on_tick=lambda s, p, sz, t: recorded.append((s, p, sz)))
+        q.apply_tick("us", {"s": "AAPL", "p": 90.0, "v": 40, "t": 1700000000000})
+        assert q.rows["AAPL"]["last_size"] == 40.0
+        assert recorded == [("AAPL", 90.0, 40.0)]
 
     def test_forex_tick_uses_mid(self):
         q = QuoteTable()
@@ -249,3 +269,69 @@ def test_seed_falls_back_to_the_vendor_when_the_cache_raises_on_write():
     rows = table.seed(["AAPL"], Client())
     assert len(calls) == 1
     assert rows[0]["price"] == 1.0
+
+
+def test_seed_carries_the_day_levels():
+    table = QuoteTable()
+    client = _client({"close": "191.0", "previousClose": "188.0",
+                      "high": "192.5", "low": "187.25", "open": "188.5"})
+    (row,) = table.seed(["AAPL"], client)
+    assert row["day_high"] == 192.5
+    assert row["day_low"] == 187.25
+    assert row["day_open"] == 188.5
+
+
+def test_seed_tolerates_missing_day_levels():
+    """EODHD answers 'NA' for forex and crypto; the row stays renderable."""
+    table = QuoteTable()
+    client = _client({"close": "1.09", "previousClose": "1.08",
+                      "high": "NA", "low": None})
+    (row,) = table.seed(["EURUSD"], client)
+    assert row["day_high"] is None
+    assert row["day_low"] is None
+    assert row["day_open"] is None
+
+
+def test_a_tick_above_the_seeded_high_widens_it():
+    table = QuoteTable()
+    table.seed(["AAPL"], _client({"close": "191.0", "previousClose": "188.0",
+                                  "high": "192.5", "low": "187.25"}))
+    table.apply_tick("us", {"s": "AAPL", "p": 193.75})
+    assert table.rows["AAPL"]["day_high"] == 193.75
+    assert table.rows["AAPL"]["day_low"] == 187.25
+
+
+def test_a_tick_below_the_seeded_low_widens_it():
+    table = QuoteTable()
+    table.seed(["AAPL"], _client({"close": "191.0", "previousClose": "188.0",
+                                  "high": "192.5", "low": "187.25"}))
+    table.apply_tick("us", {"s": "AAPL", "p": 186.0})
+    assert table.rows["AAPL"]["day_low"] == 186.0
+    assert table.rows["AAPL"]["day_high"] == 192.5
+
+
+def test_a_tick_inside_the_range_moves_neither_end():
+    table = QuoteTable()
+    table.seed(["AAPL"], _client({"close": "191.0", "previousClose": "188.0",
+                                  "high": "192.5", "low": "187.25"}))
+    table.apply_tick("us", {"s": "AAPL", "p": 190.0})
+    assert table.rows["AAPL"]["day_high"] == 192.5
+    assert table.rows["AAPL"]["day_low"] == 187.25
+
+
+def test_ticks_alone_establish_a_range_when_the_seed_had_none():
+    """An unseeded symbol still gets a usable bar from its own ticks."""
+    table = QuoteTable()
+    table.apply_tick("us", {"s": "NEW", "p": 10.0})
+    table.apply_tick("us", {"s": "NEW", "p": 12.0})
+    table.apply_tick("us", {"s": "NEW", "p": 9.0})
+    assert table.rows["NEW"]["day_high"] == 12.0
+    assert table.rows["NEW"]["day_low"] == 9.0
+
+
+def test_forex_mid_widens_the_range():
+    """Forex carries no p; the bid/ask mid is the price and must count."""
+    table = QuoteTable()
+    table.apply_tick("forex", {"s": "EURUSD", "b": 1.10, "a": 1.12})
+    assert table.rows["EURUSD"]["day_high"] == pytest.approx(1.11)
+    assert table.rows["EURUSD"]["day_low"] == pytest.approx(1.11)

@@ -22,6 +22,7 @@ from dataclasses import dataclass
 
 _DEFAULTS = {
     "port": 5000,
+    "bind_host": "127.0.0.1",
     "memory_mb": 8192,
     "watermark": 0.75,
     "upstream": "eodhd",
@@ -72,10 +73,20 @@ def has_local_q(local_qhome: str) -> bool:
 
 @dataclass(frozen=True)
 class KdbConfig:
-    """Resolved kdb+ settings."""
+    """Resolved kdb+ settings.
+
+    ``host`` and ``bind_host`` name different things: ``host`` is the
+    OPERATOR's own external kdb+ container (link 3 of the connection chain,
+    unset by default -- nothing to fall back to). ``bind_host`` is the
+    address THIS session spawns q on, and the address a non-spawning sibling
+    tries first to find a co-located q (link 1's bind, link 2's connect) --
+    "127.0.0.1" while every service shares one network namespace, something
+    else once they don't.
+    """
 
     host: str | None
     port: int
+    bind_host: str
     may_spawn: bool
     memory_mb: int
     watermark: float
@@ -131,6 +142,10 @@ def resolve_config(credentials: dict | None = None) -> KdbConfig:
     if not 1 <= port <= 65535:
         raise ValueError(f"KDB_PORT {port} out of range (1-65535).")
 
+    bind_host = (
+        _pick("bind_host", "KDB_BIND_HOST", credentials) or _DEFAULTS["bind_host"]
+    )
+
     # Where the operator mounted their own q. QHOME is accepted as a fallback
     # for anyone carrying the older variable, but it is read ONCE per process
     # (see _qhome_once) because `import pykx` rewrites QHOME in place.
@@ -179,7 +194,7 @@ def resolve_config(credentials: dict | None = None) -> KdbConfig:
     qlic = os.getenv("QLIC") or qhome
 
     return KdbConfig(
-        host=host, port=port, may_spawn=may_spawn, memory_mb=memory_mb,
-        watermark=watermark, upstream=str(upstream), qhome=qhome, qlic=qlic,
-        local_qhome=local_qhome,
+        host=host, port=port, bind_host=bind_host, may_spawn=may_spawn,
+        memory_mb=memory_mb, watermark=watermark, upstream=str(upstream),
+        qhome=qhome, qlic=qlic, local_qhome=local_qhome,
     )

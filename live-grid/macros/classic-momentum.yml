@@ -1,0 +1,20 @@
+label: Classic Momentum
+description: Price with bands and the 200-day, momentum underneath.
+panes:
+  - id: price
+    height: 3
+    indicators:
+      - {name: bbands, period: 20, k: 2.0}
+      - {name: sma, period: 200}
+  - id: rsi
+    height: 1
+    indicators:
+      - {name: rsi, period: 14}
+  - id: macd
+    height: 1
+    indicators:
+      - {name: macd, fast: 12, slow: 26, signal: 9}
+  - id: vol
+    height: 1
+    indicators:
+      - {name: volume}

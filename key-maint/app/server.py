@@ -1,6 +1,3 @@
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
-# SPDX-License-Identifier: Apache-2.0
-
 """FastAPI app factory. The role fixed at construction decides the tier
 ceiling: admin bind = tier 3 always; network bind = tier 2 for tailnet
 clients (X-Forwarded-For in CGNAT 100.64/10, as set by tailscaled), tier 1
@@ -9,6 +6,9 @@ disclosure). Funnel port note: serve proxies :10000 -> this app."""
 from __future__ import annotations
 
 import ipaddress
+import logging
+import os
+import time
 
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,6 +21,7 @@ from app.registry import PROVIDERS
 from app.rows import build_rows, build_summary
 
 _CGNAT = ipaddress.ip_network("100.64.0.0/10")
+_audit = logging.getLogger("app.audit")
 
 WIDGETS = {
     "provider_api_keys": {
@@ -80,6 +81,17 @@ WIDGETS = {
 }
 
 
+def _restart_required(cred_file: str, started_at: float) -> bool:
+    """True once credentials.env has been written since this process's
+    environ was frozen at startup -- os.environ never sees that write, so
+    GET /keys reading the live file would otherwise show a value as "set"
+    with nothing indicating the running API still has the old one."""
+    try:
+        return os.path.getmtime(cred_file) > started_at
+    except OSError:
+        return False
+
+
 def _tier(role: str, request: Request) -> int:
     if role == "admin":
         return 3
@@ -95,6 +107,7 @@ def _tier(role: str, request: Request) -> int:
 def create_app(role: str, cred_file: str, auth_file: str) -> FastAPI:
     if role not in ("network", "admin"):
         raise ValueError(f"unknown role: {role}")
+    started_at = time.time()
     app = FastAPI(
         dependencies=[Depends(make_guard(auth_file))],
         docs_url=None,
@@ -121,7 +134,12 @@ def create_app(role: str, cred_file: str, auth_file: str) -> FastAPI:
             tests = await run_probes(values)
         rows = build_rows(values, tier, tests, malformed=malformed)
         return JSONResponse(
-            {"tier": tier, "rows": rows, "summary": build_summary(rows)}
+            {
+                "tier": tier,
+                "rows": rows,
+                "summary": build_summary(rows),
+                "restart_required": _restart_required(cred_file, started_at),
+            }
         )
 
     @app.get("/keys/{env_var}/test")
@@ -189,6 +207,17 @@ def create_app(role: str, cred_file: str, auth_file: str) -> FastAPI:
             return JSONResponse(
                 {"detail": f"write failed: {type(e).__name__}"}, status_code=500
             )
+
+        # Audit trail for who/when/what changed -- never the value itself.
+        # role is always "admin" here (the tier<3 gate above already refused
+        # anything else), logged anyway so the line still says so if that
+        # gate ever changes.
+        _audit.info(
+            "credential %s: role=%s env_var=%s",
+            "set" if value else "cleared",
+            role,
+            env_var,
+        )
 
         # The running openbb-api cannot see this: OpenBB fills Credentials
         # from os.environ, a container's environ is frozen at process start,

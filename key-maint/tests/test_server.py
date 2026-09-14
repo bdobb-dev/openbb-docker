@@ -1,7 +1,6 @@
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
-# SPDX-License-Identifier: Apache-2.0
-
 import base64
+import os
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -82,6 +81,28 @@ class TestRunTests:
         )
         fmp = next(x for x in r.json()["rows"] if x["env_var"] == "FMP_API_KEY")
         assert fmp["test"]["result"] == "ok"
+
+
+class TestRestartRequired:
+    def test_false_when_file_unchanged_since_start(self, files):
+        r = keys(client(files, "admin"))
+        assert r.json()["restart_required"] is False
+
+    def test_true_once_file_is_written_after_start(self, files):
+        c = client(files, "admin")
+        cred, _ = files
+        # Comfortably after `c`'s startup timestamp regardless of the
+        # filesystem's mtime resolution (some truncate to whole seconds).
+        future = time.time() + 5
+        os.utime(cred, (future, future))
+        r = keys(c)
+        assert r.json()["restart_required"] is True
+
+    def test_false_when_cred_file_missing(self, files):
+        _, auth = files
+        c = TestClient(create_app(role="admin", cred_file="/nonexistent/x.env", auth_file=auth))
+        r = keys(c)
+        assert r.json()["restart_required"] is False
 
 
 class TestContract:
@@ -282,6 +303,21 @@ class TestWriteKey:
         assert r.status_code == 400
         assert "supersecret999" not in r.text
 
+    def test_successful_write_is_audit_logged_without_the_value(self, files, caplog):
+        c = client(files, "admin")
+        with caplog.at_level("INFO", logger="app.audit"):
+            r = c.put("/keys/FMP_API_KEY", headers=AUTH, json={"value": "supersecret999"})
+        assert r.status_code == 200
+        assert any("FMP_API_KEY" in rec.message for rec in caplog.records)
+        assert all("supersecret999" not in rec.message for rec in caplog.records)
+
+    def test_rejected_write_is_not_audit_logged(self, files, caplog):
+        c = client(files, "admin")
+        with caplog.at_level("INFO", logger="app.audit"):
+            r = c.put("/keys/NOT_A_PROVIDER", headers=AUTH, json={"value": "x"})
+        assert r.status_code == 404
+        assert caplog.records == []
+
     def test_value_starting_with_hash_round_trips_and_is_accepted(self, files):
         # Leading '#' with no preceding whitespace is part of the value per
         # parse_text's own rule, so it must NOT be rejected.
@@ -319,6 +355,7 @@ class TestPanelWidget:
         assert body["provider_api_keys_panel"]["endpoint"] == "keys"
         # Raw view would be a one-click path to every value the tier exposes.
         assert body["provider_api_keys_panel"].get("raw") is False
+
 
 class TestMarkdownSummaryWidget:
     def test_widgets_json_declares_it_as_markdown_on_the_keys_endpoint(self, files):

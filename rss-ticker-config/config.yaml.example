@@ -1,18 +1,13 @@
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
-# SPDX-License-Identifier: Apache-2.0
-
 # rss-ticker config for the openbb-docker stack (Adventures in OpenBB, Ep. 8).
 #
-# The ticker sits on this stack's private openbb-internal bridge, so it uses
-# manifest_key + per-user tokens rather than tailscale_auth.
-#
-# Why not tailscale_auth: that mode trusts the Tailscale-User-Login header
-# Serve injects, which is only sound when Serve is the ONLY thing that can
-# reach the port — so rss-ticker refuses to start under tailscale_auth unless
-# bind_host is loopback. On a shared bridge, any container attached to
-# openbb-internal could connect straight to :8088 and forge that header. The
-# manifest key gates widgets.json (it is what you paste into Workspace), and
-# each user authenticates with their own token.
+# It runs in tailscale_auth mode: Serve injects the caller's verified
+# identity on every request (including the websocket upgrade), and no
+# per-user token appears in any URL. That requires the bind below to be
+# 0.0.0.0 on the openbb-internal Docker bridge (UNVERIFIED, bridge-network
+# migration -- isolation now comes from bridge membership, not the bind
+# address; the app refuses to start on any bind it doesn't trust) and
+# TS_USERSPACE=false on the sidecar (already set in this stack's compose;
+# see Ep. 1 and this repo's README).
 #
 #   cp config.yaml.example config.yaml   # then edit the tailnet name & feeds
 
@@ -21,12 +16,7 @@ public_base_url: https://openbb.<your-tailnet>.ts.net:8088
 # Writes on /api/feeds and per-feed health detail. Comes from rss-ticker.env.
 admin_key: ${TICKER_ADMIN_KEY}
 
-# Gates widgets.json; this is the value pasted into Workspace/BDOBB as the
-# backend's API key. MUST differ from admin_key.
-manifest_key: ${TICKER_MANIFEST_KEY}
-
-# 0.0.0.0 here means the openbb-internal bridge, not the LAN: no ports are
-# published, so nothing off this Docker host can reach it.
+tailscale_auth: true
 bind_host: 0.0.0.0
 
 retention_days: 7
@@ -39,9 +29,9 @@ max_concurrent_polls: 8
 users:
   - id: art
     name: Art
-    # Per-user token, at least 32 characters. Generate with:
-    #   python -c "import secrets; print(secrets.token_urlsafe(32))"
-    token: ${TICKER_USER_TOKEN_ART}
+    # Your Tailscale login (a GitHub OIDC login here, not an email).
+    # Under tailscale_auth this replaces the per-user token entirely.
+    tailscale_login: you@github
     feeds:
       - {url: "https://feeds.bloomberg.com/markets/news.rss", name: Bloomberg Markets, group: Markets, poll_interval_s: 90}
       - {url: "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain", name: WSJ Markets, group: Markets, poll_interval_s: 90}

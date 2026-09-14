@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Thin host-side client for the OpenBB REST API running in Docker.
+
+The OpenBB *engine* (data fetching + compute) runs in the container behind
+`openbb-api`; this script is a dependency-free client that calls it over HTTP.
+Run the engine with:  docker compose --profile api up   (serves :6900)
+
+Usage:
+  ./obb <endpoint/path> [key=value ...]      # GET a data endpoint
+  ./obb equity/price/historical symbol=AAPL provider=yfinance
+  ./obb --list [filter]                      # list available endpoints
+  ./obb --open                               # open interactive API docs in browser
+
+Env:
+  OBB_API   base URL of the container API (default http://localhost:6900)
+"""
+import json
+import os
+import sys
+import urllib.parse
+import urllib.request
+import urllib.error
+
+BASE = os.environ.get("OBB_API", "http://localhost:6900")
+
+
+def _get(url):
+    try:
+        with urllib.request.urlopen(url, timeout=120) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")
+        sys.exit(f"HTTP {e.code} from {url}\n{body}")
+    except urllib.error.URLError as e:
+        sys.exit(f"Cannot reach {BASE} ({e.reason}). Is the API container up?\n"
+                 f"  cd ~/Developer/openbb-docker && docker compose --profile api up")
+
+
+def list_endpoints(flt=None):
+    spec = _get(f"{BASE}/openapi.json")
+    paths = sorted(spec.get("paths", {}))
+    for p in paths:
+        short = p.replace("/api/v1/", "")
+        if not flt or flt.lower() in short.lower():
+            print(short)
+
+
+def call(path, params):
+    path = path.strip("/")
+    if not path.startswith("api/"):
+        path = "api/v1/" + path
+    qs = urllib.parse.urlencode(params)
+    url = f"{BASE}/{path}" + (f"?{qs}" if qs else "")
+    data = _get(url)
+    results = data.get("results", data) if isinstance(data, dict) else data
+    print(json.dumps(results, indent=2, default=str))
+
+
+def main():
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help"):
+        print(__doc__)
+        return
+    if args[0] == "--list":
+        list_endpoints(args[1] if len(args) > 1 else None)
+        return
+    if args[0] == "--open":
+        os.system(f"open {BASE}/docs")
+        return
+    path = args[0]
+    params = {}
+    for a in args[1:]:
+        if "=" in a:
+            k, v = a.split("=", 1)
+            params[k] = v
+    call(path, params)
+
+
+if __name__ == "__main__":
+    main()

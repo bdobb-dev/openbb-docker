@@ -34,6 +34,9 @@ def _blank_row(symbol: str) -> dict[str, Any]:
         "ask": None,
         "last_size": None,
         "volume": None,
+        "day_high": None,
+        "day_low": None,
+        "day_open": None,
         "updated_at": None,
     }
 
@@ -87,6 +90,13 @@ class QuoteTable:
                 vol = _f(snap.get("volume"))
                 if vol is not None:
                     row["volume"] = vol
+                # EODHD names these open/high/low on the real-time snapshot.
+                # `_f` turns "NA" and "" into None, which is what forex and
+                # crypto answer -- those rows get no day bar, by design.
+                for key, field in (("high", "day_high"), ("low", "day_low"), ("open", "day_open")):
+                    level = _f(snap.get(key))
+                    if level is not None:
+                        row[field] = level
             out.append(row)
         return out
 
@@ -116,10 +126,23 @@ class QuoteTable:
             price = _f(msg.get("p"))
             if price is None:
                 return None
+            # crypto trades carry the size as `q`; US-equity trades carry it
+            # as `v` -- reading only `q` recorded every US tick with size 0,
+            # which left tick-derived equity bars volumeless (vwap/avwap NaN).
             size = _f(msg.get("q"))
+            if size is None:
+                size = _f(msg.get("v"))
             if size is not None:
                 row["last_size"] = size
         row["price"] = price
+        # The seeded high/low is a snapshot taken minutes ago; live trades
+        # routinely print outside it. Widening here is what keeps the day bar
+        # honest -- and it is also the ONLY source of a range for a symbol the
+        # REST seed never covered.
+        if row["day_high"] is None or price > row["day_high"]:
+            row["day_high"] = price
+        if row["day_low"] is None or price < row["day_low"]:
+            row["day_low"] = price
         prev = self._prev_close.get(sym)
         if prev:
             row["change"] = price - prev

@@ -1,6 +1,3 @@
-<!-- Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
 # openbb-eodhd: FMP-parity provider interface
 
 **Date:** 2026-08-29
@@ -133,11 +130,11 @@ index, government trades, insider Form-4) each hit their specific EODHD endpoint
 | OpenBB standard model | EODHD endpoint |
 |---|---|
 | EquityQuote | `/real-time/{symbol}` (live/delayed) |
-| MarketSnapshots | `/real-time` bulk / exchange snapshot *(verify shape)* |
+| MarketSnapshots | `/real-time` bulk / exchange snapshot — **deferred (verified 2026-09-01):** `/real-time` takes only an explicit symbol list; EODHD has no whole-market snapshot endpoint on the core plan, so the standard model's semantics can't be met |
 | CompanyNews | `/news?s={symbol}` |
 | WorldNews | `/news?t={topic}` (general feed, no symbol) |
 | CalendarEarnings | `/calendar/earnings` (upcoming) |
-| CalendarDividend | upcoming dividends calendar |
+| CalendarDividend | upcoming dividends calendar — **deferred (verified 2026-09-01):** `/calendar/dividends` requires `filter[symbol]` or `filter[date_eq]` (no open range sweep) and rows carry only `{date, symbol}` — no amount/pay/record dates. Revisit if EODHD enriches the rows |
 | CalendarIpo | `/calendar/ipos` |
 | CalendarSplits | `/calendar/splits` |
 | EconomicCalendar | `/economic-events` |
@@ -195,26 +192,63 @@ Low value and approximate; excluded from the default scope per design review:
 | CalendarEvents | no corporate-events calendar (earnings/div/ipo/splits are separate) | FMP |
 | RiskPremium | FMP = equity risk premium by country; EODHD only sovereign (different) | FMP |
 
+## Extension version semantics
+
+The `openbb-eodhd` package version states **what the extension covers**, not
+which chapter it shipped in:
+
+| Extension version | Meaning | Fetchers |
+|---|---|---|
+| **9.0.0** | Base integration — fundamentals and OHLCV mapped onto the OpenBB model | 16 |
+| **9.1.0 – 9.4.0** | Intermediate parity phases (ownership/insider/estimates, company core, calendars/discovery) | — |
+| **9.5.0** | **Full FMP parity** — every standard model FMP registers that EODHD can back | 52 |
+
+A tree carrying all 52 fetchers is 9.5.0 by definition. Keep `pyproject.toml`
+and this document moving together: if the fetcher set changes, the version and
+this table change in the same commit.
+
 ## Phasing
 
 Each phase: model files + tests + register in `__init__.py` + container rebuild +
 verify every new provider registers and returns non-empty for `AAPL.US`.
 
+**Release scoping (2026-09-01, final):** the whole parity set IS **episode 9**
+— "mapping EODHD to do the FMP data via API calls" — so the per-phase 9.x
+version bumps below are already chapter-matched; no rename at release.
+bdobb-v2's v3–v8 rebuild uses standard providers only (yfinance, fmp, the
+reference backend). Episode 10 is websockets/kdb/caching; episode 11 is Delta
+Lake daily storage plus the read-through cache that minimizes API calls —
+which is where this design's ArcticDB L2 tier gets rebuilt on Delta Lake.
+
 1. **Gap-fillers** — InstitutionalOwnership, EquityOwnership, InsiderTrading,
    HistoricalEps, AnalystEstimates, ForwardEpsEstimates, PriceTarget,
    PriceTargetConsensus. (Removes the FMP-402 wall immediately.)
-2. **Company core** — EquityInfo, EquityQuote, KeyMetrics, FinancialRatios,
-   ShareStatistics, KeyExecutives, CompanyNews, EsgScore(deprecated).
-3. **Calendars / discovery / market data** — CalendarEarnings/Dividend/Ipo/Splits,
+2. **Company core** — **shipped 2026-09-01 (v9.4.0)**: EquityInfo, EquityQuote,
+   KeyMetrics, FinancialRatios, ShareStatistics, KeyExecutives, CompanyNews,
+   EsgScore(deprecated). KeyMetrics/FinancialRatios are single-snapshot rows
+   (`fiscal_period: TTM`) per the point-in-time risk note.
+3. **Calendars / discovery / market data** — **shipped 2026-09-01 (v9.2.0 + v9.3.0)**
+   minus the deferrals noted in the mapping tables (CalendarDividend,
+   MarketSnapshots) and IndexConstituents (marketplace 403, build last per the
+   risk note). GovernmentTrades landed on the core `/congressional-trades`
+   endpoint via the shared `rest_json` helper — the SDK has no wrapper yet.
+   Original scope: CalendarEarnings/Dividend/Ipo/Splits,
    EconomicCalendar, HistoricalMarketCap, EquityScreener, EquitySearch,
    EtfSearch/CryptoSearch, CurrencyPairs/Snapshots, AvailableIndices,
    IndexConstituents, IndexHistorical, TreasuryRates, YieldCurve, GovernmentTrades,
    WorldNews, MarketSnapshots, EtfInfo/Holdings/Sectors/Countries,
    TrailingDividendYield. (The estimate additions — ForwardSalesEstimates,
    ForwardPeEstimates — ship with the Phase 1/2 estimates + metrics clusters.)
-4. **Beyond-FMP extras** — OptionsChains (verify marketplace subscription first;
-   document EOD/partial-greeks) and the macro cluster (EconomicIndicators,
-   CountryProfile, GdpReal, GdpNominal, ConsumerPriceIndex, Unemployment).
+4. **Beyond-FMP extras** — macro cluster **shipped 2026-09-01 (v9.5.0)**:
+   EconomicIndicators, CountryProfile (assembled, six calls/country), GdpReal
+   (= `gdp_growth_annual`, a growth-percent series), GdpNominal
+   (`gdp_current_usd`), ConsumerPriceIndex, Unemployment. Correction to the
+   macro-semantics risk note below: EODHD **does** carry the CPI index level
+   (`consumer_price_index`, 2010 = 100) alongside the inflation rate, so the
+   fetcher honors both `transform="index"` and `transform="yoy"`.
+   Still open: OptionsChains (verify marketplace subscription first; document
+   EOD/partial-greeks) and IndexConstituents — both 403 until the add-ons are
+   purchased.
 
 ## Testing
 
@@ -264,3 +298,75 @@ verify every new provider registers and returns non-empty for `AAPL.US`.
 - **Standalone github repo drift:** `github.com/artcashin/openbb-eodhd` is a stale
   0.1.0; the live source is this in-repo copy (v9.0.0). Decide whether to re-sync the
   standalone repo or leave it (out of scope here).
+
+## Addendum (2026-09-03): commodities — considered, dropped
+
+Initially recorded as an episode-9 stretch goal after confirming EODHD's
+`get_historical_commodity_prices` returns real, live data (WTI tested, full
+monthly history to 1986) and that `CommoditySpotPrices` exists as a standard
+model in `openbb_core`. Retracted on closer check, same day.
+
+**The verification was incomplete the first time.** "No installed provider
+backs it" was checked against `openbb_core`'s standard-model files, not
+against actual fetcher registrations. `openbb_fred` — already installed in
+this stack — registers `FredCommoditySpotPricesFetcher` against exactly this
+standard model. The data is available today, no build required.
+
+**And EODHD's version is that same FRED data, one hop removed.** The
+response's own metadata carries `"source": "fred"` — EODHD is reselling the
+FRED series through its marketplace endpoint, not publishing anything
+original. Building an EODHD-backed fetcher for it would mean two paths to the
+identical numbers, with the EODHD path adding its own marketplace auth and
+rate limits as a second thing that can fail for zero additional data. Get it
+from `fred` directly; there's nothing here for `openbb-eodhd` to add.
+
+## Addendum (2026-09-03): sentiment — investigated, no new fetcher needed
+
+CompanyNews and WorldNews shipped in the Company Core phase (v9.4.0, 2026-09-01) with
+an extra `sentiment` field (EODHD's polarity/pos/neu/neg dict) on every article. After
+release, EODHD's separate `/sentiment` endpoint (daily aggregated score per symbol)
+looked like a plausible follow-on widget — it wasn't in the original FMP-parity scope
+because FMP doesn't register anything like it, so it would have been a "Beyond FMP"
+addition, the same category as the macro cluster.
+
+**Sweep for precedent.** Grepped every installed OpenBB provider package plus
+`openbb_core` for a standard model shaped like "sentiment, keyed by symbol and date."
+Three hits, none a match:
+
+- `TopRetailData` (`openbb_core.provider.standard_models.top_retail`) — `date`,
+  `symbol`, `activity`, `sentiment` (-1..1). Closest shape, but it's retail order-flow
+  imbalance (`nasdaq` provider, tracking ~$30B/day of individual-investor trades), not
+  news-derived sentiment. Forcing EODHD's article-count/polarity data into `activity`/
+  `sentiment` would misrepresent what the numbers mean.
+- Intrinio's `CompanyNewsData`/`WorldNewsData` add `sentiment` (positive/neutral/
+  negative) + `sentiment_confidence` directly onto the **news** standard models —
+  no separate sentiment model or router. This is the real precedent, and
+  `openbb-eodhd` already followed it independently (the polarity dict added in
+  v9.4.0), before this sweep confirmed it was the established pattern.
+- `UofMichiganData` — macro consumer-confidence survey, unrelated.
+
+**Verified `/sentiment` adds no data over `/news`.** Pulled EODHD's raw `/news` for
+AAPL.US across the same window already sampled from `/sentiment`, and compared
+independently, per day:
+
+| Date | Articles pulled | Mean article `sentiment.polarity` | `/sentiment` count | `/sentiment` normalized |
+|---|---|---|---|---|
+| 2026-09-02 | 57 | 0.651 | 57 | 0.6511 |
+| 2026-09-01 | 66 | 0.615 | 66 | 0.6151 |
+| 2026-08-31 | 59 | 0.595 | 59 | 0.5947 |
+
+Every day where the full article count was captured matches to three decimals —
+`/sentiment`'s `count` is the day's article count and its `normalized` score is the
+plain mean of that day's `sentiment.polarity` values already returned by `/news`.
+It is a server-side convenience recomputation of data `openbb-eodhd` already exposes,
+not an independent signal.
+
+**Decision: no new fetcher, no new standard model, no fork of `openbb_core` /
+`openbb_news`.** The per-article `sentiment` field on `EODHDCompanyNewsData` /
+`EODHDWorldNewsData` (shipped v9.4.0) is the complete data. A daily aggregate, if a
+dashboard wants one, is a groupby-mean over data already in hand — a chart-side
+computation, not a new API call or provider capability. Also checked whether Intrinio
+exposes sentiment as its own widget distinct from its news widget: it does not —
+`openbb_news`'s router defines only `company` and `world` commands, no sentiment
+command, confirming sentiment-as-a-news-field (not sentiment-as-its-own-widget) is
+the pattern across the platform, not just an EODHD shortcut.

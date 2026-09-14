@@ -148,15 +148,52 @@ function hud(start, end, cache, bytes, roundTripMs) {
 // regressed -- exactly once no matter how many times draw() runs after that.
 let listenerBound = false;
 
+// 52-week levels (and name/logo) from /symbol_meta -- pure decoration, the
+// favicon pattern: fetched once per symbol switch, best-effort, and the
+// chart is complete without it. Guarded by requestGen like every other
+// async result so a slow response can't decorate the wrong symbol.
+let meta = null;
+async function loadMeta(myGen) {
+  meta = null;
+  try {
+    const rows = await (await fetch(`/symbol_meta?symbol=${symbol()}`)).json();
+    if (myGen !== requestGen) return;                            // superseded
+    meta = Array.isArray(rows) && rows[0] ? rows[0] : null;
+  } catch { return; }
+  if (bars.length) draw();
+}
+
+// Horizontal 52-week high/low lines, Plotly's documented pattern: a
+// full-width shape (xref "paper") pinned to the y value, plus a right-edge
+// annotation naming it.
+function levelDecorations() {
+  const levels = [];
+  if (meta && meta.week52_high != null) levels.push({ y: meta.week52_high, label: "52w high" });
+  if (meta && meta.week52_low != null) levels.push({ y: meta.week52_low, label: "52w low" });
+  return {
+    shapes: levels.map(l => ({
+      type: "line", xref: "paper", x0: 0, x1: 1, yref: "y", y0: l.y, y1: l.y,
+      line: { color: "#8a8a8a", width: 1, dash: "dot" },
+    })),
+    annotations: levels.map(l => ({
+      xref: "paper", x: 1, xanchor: "right", yref: "y", y: l.y, yanchor: "bottom",
+      text: `${l.label} ${l.y.toFixed(2)}`, showarrow: false,
+      font: { size: 10, color: "#8a8a8a" },
+    })),
+  };
+}
+
 function draw() {
+  const deco = levelDecorations();
   Plotly.react(chart, [{
     type: "candlestick", name: symbol(),
     x: bars.map(b => b.date), open: bars.map(b => b.open),
     high: bars.map(b => b.high), low: bars.map(b => b.low),
     close: bars.map(b => b.close),
   }], {
-    title: { text: `${symbol()} — scroll to extend` },
+    title: { text: `${(meta && meta.name) || symbol()} — scroll to extend` },
     xaxis: { rangeslider: { visible: false } },
+    shapes: deco.shapes, annotations: deco.annotations,
     template: "plotly_dark", paper_bgcolor: "#111", plot_bgcolor: "#111",
     font: { color: "#ddd" }, margin: { l: 40, r: 20, t: 40, b: 40 },
   }, { scrollZoom: true, displayModeBar: false });
@@ -220,6 +257,7 @@ async function reload() {
   const myGen = ++requestGen;
   clearTimeout(timer);
   clearTimeout(retryTimer);
+  loadMeta(myGen);                       // decoration: fire-and-forget
 
   const end = new Date();
   const start = new Date(end);

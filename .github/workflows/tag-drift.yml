@@ -1,0 +1,126 @@
+name: tag-drift
+
+# Do the PUBLISHED tags still build, and does the API still come up?
+#
+# Every tag is companion code for an article a reader may follow months after
+# it shipped. Nothing rebuilds them: ci.yml runs on push, and a tag is never
+# pushed again. So upstream drift in anything `openbb` floats is invisible
+# until a reader hits it -- which is exactly what happened with the CFTC
+# startup-crash patch. openbb-cftc 1.4.2 rewrote the lines that patch rewrites,
+# the patch silently matched nothing, `ast.parse` passed on untouched source,
+# and every image built after 2026-06-24 shipped without the guard.
+#
+# This asserts only what is true of EVERY tag: the image builds, and the API
+# answers. Version-specific behaviour (Basic auth, the PNA preflight, widget
+# counts) belongs in ci.yml, which runs against one tree that actually has it.
+#
+# The build alone catches a surprising amount: a yanked wheel, an unsatisfiable
+# pin, and the CFTC patch's own guard, which exits non-zero when it matches
+# nothing or leaves a vulnerable shape unguarded. The boot catches what a build
+# cannot -- an image that assembles fine and then dies in the COT router's
+# lifespan.
+
+on:
+  # First Saturday of the month, gated below. Cron cannot express that: when
+  # both day-of-month and day-of-week are restricted, POSIX ORs them, so
+  # "0 6 1-7 * 6" means days 1-7 OR any Saturday. Run every Saturday and gate.
+  schedule:
+    - cron: "0 6 * * 6"
+  workflow_dispatch:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - id: check
+        # Manual runs always proceed; scheduled runs only on the month's first
+        # Saturday. Ten image builds is real Actions time, so monthly.
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif [ "$(date -u +%d)" -le 07 ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Not the first Saturday of the month -- skipping."
+          fi
+
+  build:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      # One broken tag must not hide the others: the interesting signal is
+      # WHICH tags drifted, and a fail-fast run reports only the first.
+      fail-fast: false
+      matrix:
+        tag:
+          - v1.0.0
+          - v2.0.0
+          - v3.0.0
+          - v6.0.0
+          - v8.0.0
+          - v9.0.0
+          - v10.0.0
+          - v11.0.0
+          - v11.1.0
+          - v11.1.1
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ matrix.tag }}
+
+      - name: Build ${{ matrix.tag }}
+        run: docker build -t "openbb-local:drift-${{ matrix.tag }}" .
+
+      - name: The API comes up
+        run: |
+          docker run -d --name api \
+            -e OPENBB_API_AUTH=true \
+            -e OPENBB_API_USERNAME=ci \
+            -e OPENBB_API_PASSWORD=ci-secret \
+            "openbb-local:drift-${{ matrix.tag }}"
+          # Any HTTP status means uvicorn is serving. The failure this exists to
+          # catch is no response at all: the CFTC AttributeError fires in the COT
+          # router's lifespan and takes the whole server down before it listens.
+          # Do not assert a specific code -- auth behaviour differs across tags.
+          for i in $(seq 1 60); do
+            # Check liveness FIRST. A crashed container makes `docker exec` fail
+            # every time, so without this the loop spends 300s printing sixty
+            # identical "is not running" errors and buries the traceback that
+            # actually explains the failure.
+            if [ "$(docker inspect -f '{{.State.Running}}' api)" != "true" ]; then
+              echo "::error::${{ matrix.tag }}: the container exited during startup"
+              docker logs api 2>&1 | tail -80
+              exit 1
+            fi
+            code=$(docker exec api curl -s -o /dev/null -w '%{http_code}' \
+              http://127.0.0.1:6900/openapi.json || true)
+            case "$code" in 000|"") ;; *) echo "API answered ${code}"; exit 0 ;; esac
+            sleep 5
+          done
+          echo "::error::${{ matrix.tag }}: the API never answered within 300s"
+          docker logs api 2>&1 | tail -80
+          exit 1
+
+      - name: The CFTC guard is present and applied
+        run: |
+          # Belt and braces: the build would have failed if the patch matched
+          # nothing, but assert the installed source really is guarded -- that
+          # is the invariant, and it is what silently regressed before.
+          docker run --rm "openbb-local:drift-${{ matrix.tag }}" python - <<'PY'
+          import importlib.util, pathlib, re, sys
+          spec = importlib.util.find_spec("openbb_cftc")
+          if spec is None or not spec.submodule_search_locations:
+              sys.exit("openbb_cftc is not installed")
+          src = (pathlib.Path(list(spec.submodule_search_locations)[0])
+                 / "cftc_router.py").read_text()
+          bad = re.findall(r"""getattr\(d,\s*(['"])(\w+)\1,\s*(?:''|"")\)\.strip\(\)""", src)
+          bad += re.findall(r"\bd\.(\w+)\.strip\(\)", src)
+          if bad:
+              sys.exit(f"unguarded .strip() calls survive in cftc_router: {bad}")
+          print("cftc_router: no unguarded .strip() calls")
+          PY

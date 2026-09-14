@@ -111,6 +111,26 @@ store.write_snapshot("TICKCHK", {"replaced": True})
 check("write_snapshot upserts rather than duplicating",
       store.read_snapshot("TICKCHK", 3600.0) == {"replaced": True})
 
+# --- read_ticks tie-break ---------------------------------------------------
+#
+# read_ticks orders newest-first via `xdesc reverse`, relying on q's `xdesc`
+# being a STABLE sort so that ticks sharing one `time` come out in arrival
+# order. No mocked test can check this -- the test fake substring-matches
+# query text rather than actually sorting. Two ticks, one timestamp, written
+# in arrival order: the later arrival must come back first.
+tied_time = base + timedelta(minutes=20)
+tied = pd.DataFrame({
+    "time": [tied_time, tied_time],
+    "sym": ["TICKCHK", "TICKCHK"],
+    "price": [201.0, 202.0],  # 201 arrives first, 202 second
+    "size": [1.0, 1.0],
+})
+store.write_ticks(tied)
+newest_two = store.read_ticks("TICKCHK", 2)
+check("read_ticks breaks a time tie with the later arrival first",
+      bool(newest_two) and newest_two[0]["price"] == 202.0,
+      f"got {newest_two[:2] if newest_two else newest_two}")
+
 store.prune_ticks(datetime(2030, 1, 1))
 check("prune clears the window", store.tick_span("TICKCHK") is None)
 

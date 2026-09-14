@@ -1,0 +1,7 @@
+**/__pycache__/
+**/*.pyc
+**/*.egg-info/
+workspace/
+*.log
+credentials.env
+.env

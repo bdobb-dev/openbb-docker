@@ -264,7 +264,10 @@ class KdbStore:
         def write(conn):
             prototype = conn("0#trades").pd()
             conn["incoming_ticks"] = _conform_dtypes(frame, prototype)
-            conn("`trades insert incoming_ticks")
+            # A q loaded with kdb-ws/startup.q defines `upd`, which inserts AND
+            # publishes the batch to websocket subscribers; a plain q has no
+            # upd, so fall back to the bare insert.
+            conn("$[`upd in key `.; upd[`trades;incoming_ticks]; `trades insert incoming_ticks]")
             conn("delete incoming_ticks from `.")
             return len(frame)
 
@@ -317,6 +320,89 @@ class KdbStore:
             return (lo.to_pydatetime(), hi.to_pydatetime())
 
         return self._call(span)
+
+    def latest_tick(self, symbol: str):
+        """The newest tick held for a symbol, or None if there are none.
+
+        The emptiness check runs in q, before the aggregate, for the reason
+        `tick_span` spells out: an ungrouped q aggregate over zero rows yields
+        a row of q nulls, and PyKX's `.pd()` turns a null timestamp into a
+        plausible-looking 1700s `Timestamp` rather than `NaT`, so no pandas-side
+        check can catch it.
+        """
+        import pandas as pd
+
+        def newest(conn):
+            got = conn(
+                "{[qwsym] $[0 = count select from trades where sym = qwsym;"
+                " ([] time:`timestamp$(); price:`float$(); size:`float$());"
+                " select time, price, size from trades"
+                " where sym = qwsym, time = max time]}",
+                _q_symbol(symbol),
+            ).pd()
+            if got is None or got.empty:
+                return None
+            # On a `time` tie, iloc[-1] picks the last row in table order --
+            # correct because kdb preserves insertion order and TickRecorder
+            # appends ticks in arrival order, so the last row is the newest
+            # arrival, not an arbitrary one.
+            row = got.iloc[-1]
+            if pd.isna(row["time"]):
+                return None
+            return {
+                "time": row["time"].to_pydatetime(),
+                "price": float(row["price"]),
+                "size": float(row["size"]),
+            }
+
+        return self._call(newest)
+
+    def read_ticks(self, symbol: str, limit: int) -> list[dict]:
+        """The newest `limit` ticks held for a symbol, newest first.
+
+        Unlike `tick_span` and `latest_tick` this needs no in-q emptiness
+        guard: those are ungrouped AGGREGATES, which over zero rows answer one
+        row of q nulls that PyKX misreads as a 1700s timestamp. This is a plain
+        selection -- zero matching rows is an empty table, and `.pd()` gives an
+        empty frame, which iterates zero times.
+
+        `xdesc` then `sublist` sorts the symbol's whole tick history per call.
+        That is the same trade `startup.q` makes for its as-of join and is
+        cheap at cache scale; kdb is a one-day rolling window here, not a
+        historical database.
+
+        `xdesc` is a STABLE sort: ticks sharing one `time` come out in their
+        original, arrival order, not reversed. `reverse` runs first so that,
+        after the stable sort, arrival order among tied ticks reads newest
+        first -- the same tie-break `latest_tick` documents above.
+
+        A non-positive `limit` returns an empty list. q's `sublist` takes
+        from the *end* of the list for a negative left argument, which would
+        silently hand back the OLDEST ticks instead -- guarded here rather
+        than relying on the one caller (`/ticks`) that happens to reject it.
+        """
+        if limit <= 0:
+            return []
+
+        def read(conn):
+            got = conn(
+                "{[qwsym;qwlim] qwlim sublist `time xdesc reverse"
+                " select time, price, size from trades where sym = qwsym}",
+                _q_symbol(symbol),
+                limit,
+            ).pd()
+            if got is None or got.empty:
+                return []
+            return [
+                {
+                    "time": row["time"].to_pydatetime(),
+                    "price": float(row["price"]),
+                    "size": float(row["size"]),
+                }
+                for _, row in got.iterrows()
+            ]
+
+        return self._call(read)
 
     def aggregate_frame(self, symbol: str, interval: str, start, end):
         """OHLCV buckets for one symbol, aggregated in q.

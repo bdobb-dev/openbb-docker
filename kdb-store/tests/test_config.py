@@ -17,8 +17,8 @@ def _unmade_qhome_decision(monkeypatch):
 
 
 def test_defaults(monkeypatch, tmp_path):
-    for var in ("KDB_HOST", "KDB_PORT", "KDB_EMBEDDED", "KDB_MEMORY_MB",
-                "KDB_CACHE_WATERMARK", "KDB_UPSTREAM"):
+    for var in ("KDB_HOST", "KDB_PORT", "KDB_BIND_HOST", "KDB_EMBEDDED",
+                "KDB_MEMORY_MB", "KDB_CACHE_WATERMARK", "KDB_UPSTREAM"):
         monkeypatch.delenv(var, raising=False)
     # No local q at this path: isolates the default from whatever the host
     # machine happens to have sitting at /opt/kx.
@@ -26,10 +26,21 @@ def test_defaults(monkeypatch, tmp_path):
     cfg = resolve_config()
     assert cfg.host is None
     assert cfg.port == 5000
+    assert cfg.bind_host == "127.0.0.1"
     assert cfg.may_spawn is False
     assert cfg.memory_mb == 8192
     assert cfg.watermark == 0.75
     assert cfg.upstream == "eodhd"
+
+
+def test_bind_host_from_env(monkeypatch):
+    # KDB_BIND_HOST is the prerequisite for the bridge-network migration
+    # (docs/superpowers/specs/2026-08-27-bridge-network-design.md) -- it lets
+    # the q spawn bind (and a sibling's fallback connect) move off loopback
+    # without a code change.
+    monkeypatch.setenv("KDB_BIND_HOST", "0.0.0.0")
+    cfg = resolve_config()
+    assert cfg.bind_host == "0.0.0.0"
 
 
 def test_env_overrides(monkeypatch):

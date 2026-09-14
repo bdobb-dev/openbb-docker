@@ -78,12 +78,12 @@ def test_transform_data_attaches_cache_metadata():
     assert len(out.result) == 1
 
 
-def test_provider_registers_all_five_models():
+def test_provider_registers_all_six_models():
     from openbb_kdb import kdb_provider
 
     assert set(kdb_provider.fetcher_dict) == {
         "EquityHistorical", "EtfHistorical", "CryptoHistorical",
-        "CurrencyHistorical", "IndexHistorical",
+        "CurrencyHistorical", "IndexHistorical", "EquityQuote",
     }
 
 

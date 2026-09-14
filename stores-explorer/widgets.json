@@ -1,0 +1,34 @@
+{
+  "arctic_explorer": {
+    "name": "ArcticDB Explorer",
+    "description": "Browse the shared ArcticDB store: pick a library, pick a symbol, see the stored series.",
+    "category": "Data",
+    "type": "table",
+    "endpoint": "arctic/series",
+    "dataKey": "rows",
+    "gridData": { "w": 30, "h": 14 },
+    "params": [
+      { "paramName": "library", "type": "text", "label": "Library", "value": "", "optionsEndpoint": "arctic/libraries" },
+      { "paramName": "symbol", "type": "text", "label": "Symbol", "value": "", "optionsEndpoint": "arctic/symbols", "optionsParams": { "library": "$library" } },
+      { "paramName": "start", "type": "date", "label": "Start", "value": "", "show": false },
+      { "paramName": "end", "type": "date", "label": "End", "value": "", "show": false }
+    ],
+    "source": ["ArcticDB"]
+  },
+  "kdb_explorer": {
+    "name": "kdb+ Explorer",
+    "description": "Browse the kdb+ tables the tape writes to: pick a table, see the filtered rows.",
+    "category": "Data",
+    "type": "table",
+    "endpoint": "kdb/select",
+    "dataKey": "rows",
+    "gridData": { "w": 30, "h": 14 },
+    "params": [
+      { "paramName": "table", "type": "text", "label": "Table", "value": "", "optionsEndpoint": "kdb/tables" },
+      { "paramName": "symbol", "type": "text", "label": "Symbol", "value": "", "show": false },
+      { "paramName": "start_time", "type": "date", "label": "Start", "value": "", "show": false },
+      { "paramName": "end_time", "type": "date", "label": "End", "value": "", "show": false }
+    ],
+    "source": ["kdb+"]
+  }
+}

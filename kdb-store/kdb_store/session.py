@@ -3,11 +3,13 @@
 
 """Ownership of the q process, its IPC connection, and the thread that may touch it.
 
-q is a child of THIS container, bound to loopback. Everything in this stack
-shares the tailscale container's network namespace, so a loopback bind is
-reachable by every sibling service and by no tailnet peer. Binding 0.0.0.0
-would publish an unauthenticated q -- which executes arbitrary q -- to the
-whole tailnet.
+q is a child of THIS container, bound to `KdbConfig.bind_host` ("127.0.0.1"
+by default -- see config.py). Today every service in this stack shares the
+tailscale container's network namespace, so that loopback bind is reachable
+by every sibling service and by no tailnet peer; binding 0.0.0.0 would
+publish an unauthenticated q -- which executes arbitrary q -- to the whole
+tailnet. `bind_host` exists so that address can move without a code change
+once services no longer share one namespace.
 
 Crossing q's -w kills the process outright (verified against kdb-x 5.0), so a
 dead q is treated as an ordinary state: detect, respawn, carry on.
@@ -120,7 +122,7 @@ class KdbSession:
         cfg = self.config
         return [
             f"{cfg.local_qhome}/bin/q",
-            "-p", f"127.0.0.1:{cfg.port}",
+            "-p", f"{cfg.bind_host}:{cfg.port}",
             "-w", str(cfg.q_workspace_mb),
             "-q",
         ]
@@ -271,11 +273,13 @@ class KdbSession:
                     self._stop_proc()
                     spawned = False
 
-        # 2. Loopback: in this stack every service shares one network
-        #    namespace, so a q another service already spawned is right here.
+        # 2. bind_host: a q another service already spawned, co-located at
+        #    the configured bind address (today's default, "127.0.0.1", is
+        #    right here only because this stack shares one network
+        #    namespace -- see KdbConfig.bind_host).
         if self._conn is None:
             try:
-                self._conn = self._connect("127.0.0.1")
+                self._conn = self._connect(self.config.bind_host)
                 self.endpoint = "loopback"
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"loopback: {exc}")

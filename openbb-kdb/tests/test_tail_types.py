@@ -168,9 +168,9 @@ class OwnerThreadSession:
 
 
 def cfg(**kw) -> KdbConfig:
-    base = dict(host="127.0.0.1", port=5000, may_spawn=True, memory_mb=1024,
-                watermark=0.75, upstream="yfinance", qhome="/opt/kx", qlic="/opt/kx",
-                local_qhome="/opt/kx")
+    base = dict(host="127.0.0.1", port=5000, bind_host="127.0.0.1", may_spawn=True,
+                memory_mb=1024, watermark=0.75, upstream="yfinance", qhome="/opt/kx",
+                qlic="/opt/kx", local_qhome="/opt/kx")
     base.update(kw)
     return KdbConfig(**base)
 

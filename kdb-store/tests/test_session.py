@@ -15,9 +15,9 @@ from kdb_store.session import KdbSession, KdbUnavailable
 
 
 def cfg(**kw) -> KdbConfig:
-    base = dict(host="127.0.0.1", port=5000, may_spawn=True, memory_mb=1024,
-                watermark=0.75, upstream="eodhd", qhome="/opt/kx", qlic="/opt/kx",
-                local_qhome="/opt/kx")
+    base = dict(host="127.0.0.1", port=5000, bind_host="127.0.0.1", may_spawn=True,
+                memory_mb=1024, watermark=0.75, upstream="eodhd", qhome="/opt/kx",
+                qlic="/opt/kx", local_qhome="/opt/kx")
     base.update(kw)
     return KdbConfig(**base)
 
@@ -180,6 +180,13 @@ def test_q_command_binds_loopback_and_sets_workspace():
     assert argv[2] == "127.0.0.1:5000"
     assert "0.0.0.0" not in " ".join(argv)
     assert argv[argv.index("-w") + 1] == "1280"  # 1024 * 1.25
+
+
+def test_q_command_bind_follows_bind_host():
+    # KDB_BIND_HOST (config.py) is the prerequisite for the bridge-network
+    # migration -- the spawn bind must move with it, with no code change.
+    argv = KdbSession(cfg(bind_host="kdb"))._q_argv()
+    assert argv[2] == "kdb:5000"
 
 
 def test_orphaned_process_terminated_on_connect_failure(monkeypatch):
@@ -355,6 +362,22 @@ def test_chain_tries_loopback_before_the_external_host(monkeypatch):
     s.connection()
     assert tried == ["127.0.0.1"]
     assert s.endpoint == "loopback"
+
+
+def test_link_two_follows_bind_host_off_loopback(monkeypatch):
+    # Once services no longer share one network namespace, link 2 has to try
+    # wherever the spawning sibling's KDB_BIND_HOST actually put q -- not a
+    # hardcoded "127.0.0.1" that stops being reachable.
+    tried = []
+
+    def fake_connect(self, host=None):
+        tried.append(host)
+        return FakeConn()
+
+    monkeypatch.setattr(KdbSession, "_connect", fake_connect)
+    s = KdbSession(cfg(may_spawn=False, bind_host="kdb", host="host.docker.internal"))
+    s.connection()
+    assert tried == ["kdb"]
 
 
 def test_chain_falls_through_to_the_external_host(monkeypatch):

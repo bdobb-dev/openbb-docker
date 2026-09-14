@@ -12,6 +12,7 @@ from openbb_kdb.models.historical import (
     KdbEtfHistoricalFetcher,
     KdbIndexHistoricalFetcher,
 )
+from openbb_kdb.models.quote import KdbEquityQuoteFetcher
 
 __all__ = ["kdb_provider"]
 
@@ -25,6 +26,7 @@ kdb_provider = Provider(
     ),
     fetcher_dict={
         "EquityHistorical": KdbEquityHistoricalFetcher,
+        "EquityQuote": KdbEquityQuoteFetcher,
         "EtfHistorical": KdbEtfHistoricalFetcher,
         "CryptoHistorical": KdbCryptoHistoricalFetcher,
         "CurrencyHistorical": KdbCurrencyHistoricalFetcher,

@@ -54,12 +54,16 @@ target) your `openbb` node holds:
 
 ## 3. The door
 
-Swap the Serve config for the Funnel-enabled one and recreate the sidecar:
+Swap the Serve config for the Funnel-enabled one, atomically:
 
 ```bash
-cp ts-config/serve-funnel.json ts-config/serve.json
-docker compose up -d --force-recreate tailscale
+cp ts-config/serve-funnel.json ts-config/serve.json.new
+jq empty ts-config/serve.json.new
+mv ts-config/serve.json.new ts-config/serve.json
 ```
+
+containerboot live-applies the file, so no restart is needed — a
+`--force-recreate` of the sidecar would be an outage, not a config change.
 
 Only port 443 is funneled. Anything else the node ever serves stays
 tailnet-only.

@@ -19,6 +19,23 @@ _UNKNOWN = {
     "gaps_fetched": 0, "upstream_ms": 0.0, "kdb_ms": 0.0,
 }
 
+# Same shape rules the live feeds use (classify.py). Routing everything
+# through equity/price/historical sent BTC-USD upstream as BTC-USD.US,
+# which EODHD 404s -- each asset class has its own Platform route, and the
+# kdb provider registers a fetcher for all three.
+_HISTORICAL_PATH = {
+    "us": "equity/price/historical",
+    "crypto": "crypto/price/historical",
+    "forex": "currency/price/historical",
+}
+
+
+def history_endpoint(symbol: str) -> str:
+    """The Platform route for this symbol's asset class."""
+    from app.classify import classify
+
+    return _HISTORICAL_PATH[classify(symbol)]
+
 
 async def fetch_series(
     symbol: str, interval: str, start: str, end: str, provider: str = "kdb"
@@ -33,7 +50,7 @@ async def fetch_series(
     auth = (USERNAME, PASSWORD) if USERNAME else None
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.get(
-            f"{OPENBB_URL}/api/v1/equity/price/historical", params=params, auth=auth
+            f"{OPENBB_URL}/api/v1/{history_endpoint(symbol)}", params=params, auth=auth
         )
         response.raise_for_status()
         payload = response.json()

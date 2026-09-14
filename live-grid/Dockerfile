@@ -24,6 +24,11 @@ RUN pip install /srv/kdb-store
 
 COPY live-grid/pyproject.toml ./
 COPY live-grid/app/ app/
+# the kdb-ws demo chart, served at /static/live-chart.html so bdobb-v2's
+# Website widget has a durable URL (context is the repo root, so the
+# sibling kdb-ws/ is reachable -- same reasoning as the kdb-store COPY)
+COPY kdb-ws/live-chart.html app/static/live-chart.html
 COPY live-grid/widgets.json ./
+COPY live-grid/macros/ macros/
 RUN pip install . && chmod 644 app/static/plotly.min.js
 CMD ["uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "6903"]

@@ -1,0 +1,67 @@
+#!/usr/bin/env sh
+# obb-arctic — inspect the ArcticDB store from the host, no Python needed.
+#
+# Runs the generic store API inside a one-off OpenBB container (so it uses the
+# same openbb-data volume / ARCTICDB_URI from credentials.env). The generic store
+# is Python-only (not a REST endpoint), which is why this shells into the container
+# rather than using the ./obb REST client.
+#
+#   ./obb-arctic ls [library]                 # list stored symbols
+#   ./obb-arctic read <symbol> [library]      # print a stored table
+#   ./obb-arctic read <symbol> [library] --csv
+#   ./obb-arctic meta <symbol> [library]      # show stored metadata
+#   ./obb-arctic rm   <symbol> [library]      # delete a symbol
+#
+# library defaults to ARCTICDB_LIBRARY (or 'openbb'). For an S3/MinIO store, set
+# ARCTICDB_URI in credentials.env (and have MinIO running).
+set -e
+cd "$(dirname "$0")"
+
+cmd="${1:-}"
+[ -z "$cmd" ] && { sed -n '2,17p' "$0"; exit 0; }
+
+csv=""
+sym=""
+lib=""
+case "$cmd" in
+  ls)
+    lib="${2:-}"
+    ;;
+  read|meta|rm)
+    sym="${2:-}"
+    [ -z "$sym" ] && { echo "usage: ./obb-arctic $cmd <symbol> [library]" >&2; exit 1; }
+    # third arg may be the library or --csv
+    if [ "${3:-}" = "--csv" ]; then csv=1; else lib="${3:-}"; fi
+    [ "${4:-}" = "--csv" ] && csv=1
+    ;;
+  -h|--help|help)
+    sed -n '2,17p' "$0"; exit 0 ;;
+  *)
+    echo "unknown command: $cmd" >&2
+    echo "usage: ./obb-arctic [ls|read|meta|rm] ..." >&2
+    exit 1 ;;
+esac
+
+docker compose run --rm -T \
+  -e "ARCTIC_CMD=$cmd" -e "ARCTIC_SYMBOL=$sym" -e "ARCTIC_LIBRARY=$lib" -e "ARCTIC_CSV=$csv" \
+  openbb python - <<'PY'
+import os, warnings
+warnings.filterwarnings("ignore")
+from openbb_arcticdb import store
+
+cmd = os.environ["ARCTIC_CMD"]
+sym = os.environ.get("ARCTIC_SYMBOL") or ""
+lib = os.environ.get("ARCTIC_LIBRARY") or None
+s = store(library=lib)
+
+if cmd == "ls":
+    syms = s.list_symbols()
+    print("\n".join(syms) if syms else "(no symbols)")
+elif cmd == "read":
+    df = s.read(sym, output="dataframe")
+    print(df.to_csv() if os.environ.get("ARCTIC_CSV") else df.to_string())
+elif cmd == "meta":
+    print(s.read_metadata(sym))
+elif cmd == "rm":
+    print(s.delete(sym))
+PY

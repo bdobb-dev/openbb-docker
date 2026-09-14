@@ -1,19 +1,15 @@
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
-# SPDX-License-Identifier: Apache-2.0
-
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "live-grid"
-version = "0.1.0"
+version = "9.0.0"
 description = "OpenBB Workspace live_grid backend streaming EODHD websocket prices"
 requires-python = ">=3.12"
-license = { text = "Apache-2.0" }
 dependencies = [
     "fastapi>=0.110",
-    "uvicorn[standard]>=0.29",
+    "uvicorn>=0.29",
     # Official EODHD SDK, pinned to a GitHub commit: the PyPI release (1.0.32)
     # can sys.exit() on API errors, has no request timeouts, and predates the
     # SDK's typed error handling.
@@ -21,10 +17,12 @@ dependencies = [
     "kdb-store",
     "pandas",
     "httpx>=0.27",
+    "polars>=1.20",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-asyncio", "httpx", "ruff"]
+dev = ["pytest", "pytest-asyncio", "httpx", "ruff==0.15.22"]
 
 [tool.setuptools]
 packages = ["app"]
@@ -32,6 +30,11 @@ packages = ["app"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "network: hits the live EODHD API; deselected by default",
+]
+addopts = "-m 'not network'"
+asyncio_mode = "auto"
 
 [tool.ruff]
 target-version = "py312"

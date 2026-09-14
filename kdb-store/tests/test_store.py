@@ -369,6 +369,17 @@ def test_write_ticks_sends_one_batch_not_one_insert_per_row():
     assert len(inserts) == 1, f"expected one batched insert, got {len(inserts)}"
 
 
+def test_write_ticks_routes_through_upd_when_the_server_defines_it():
+    """kdb-ws/startup.q's upd inserts AND publishes to websocket subscribers;
+    the write must stay a bare insert on a q with no upd defined."""
+    s, conn = store_with()
+    s.write_ticks(_ticks_frame())
+    query = next(q for q in conn.queries if "insert" in q)
+    assert "`upd in key `." in query
+    assert "upd[`trades;incoming_ticks]" in query
+    assert "`trades insert incoming_ticks" in query
+
+
 def test_prune_ticks_deletes_below_the_cutoff_and_collects():
     s, conn = store_with({"count trades": 3})
     s.prune_ticks(D("2025-06-10T14:00:00"))
@@ -420,6 +431,135 @@ def test_lambda_parameters_in_tick_queries_never_shadow_a_column():
             for name in (p.strip() for p in params.split(";") if p.strip()):
                 assert name not in columns, f"parameter {name!r} shadows a column in: {query}"
                 assert name.startswith("qw"), f"parameter {name!r} lacks the qw prefix"
+
+
+def test_latest_tick_checks_emptiness_in_q_not_in_pandas():
+    """A q null timestamp survives .pd() as a real-looking 1700s Timestamp, so
+    `pd.isna` cannot detect "no ticks" -- the guard has to run inside q, before
+    the aggregate. Same trap tick_span documents."""
+    conn = FakeConn()
+    store = KdbStore(FakeSession(conn))
+    store.latest_tick("AAPL")
+    q = conn.queries[-1]
+    assert "0 = count select from trades where sym = " in q, q
+    assert q.index("0 = count") < q.index("max time"), "guard must precede the aggregate"
+
+
+def test_latest_tick_returns_none_when_there_are_no_ticks():
+    import pandas as pd
+
+    conn = FakeConn()
+    conn.responses["max time"] = pd.DataFrame({"time": [], "price": [], "size": []})
+    store = KdbStore(FakeSession(conn))
+    assert store.latest_tick("AAPL") is None
+
+
+def test_latest_tick_returns_the_newest_row():
+    import pandas as pd
+
+    conn = FakeConn()
+    conn.responses["max time"] = pd.DataFrame({
+        "time": [pd.Timestamp("2026-08-26T15:14:00")],
+        "price": [312.95],
+        "size": [40.0],
+    })
+    store = KdbStore(FakeSession(conn))
+    got = store.latest_tick("AAPL")
+    assert got["price"] == 312.95
+    assert got["size"] == 40.0
+    assert got["time"] == D("2026-08-26T15:14:00")
+
+
+def test_latest_tick_binds_the_symbol_as_a_parameter_not_by_interpolation():
+    """Interpolating the symbol into the q string would let a symbol containing
+    q syntax change the statement."""
+    conn = FakeConn()
+    store = KdbStore(FakeSession(conn))
+    store.latest_tick("AAPL")
+    query, args = conn.calls[-1]
+    assert "AAPL" not in query
+    assert args, "symbol must be passed as a bound argument"
+
+
+def test_read_ticks_returns_newest_first():
+    import pandas as pd
+
+    s, conn = store_with({
+        "xdesc": pd.DataFrame({
+            "time": [
+                pd.Timestamp("2026-09-03T15:00:02"),
+                pd.Timestamp("2026-09-03T15:00:01"),
+            ],
+            "price": [191.5, 191.0],
+            "size": [100.0, 50.0],
+        }),
+    })
+    got = s.read_ticks("AAPL", 10)
+    assert [r["price"] for r in got] == [191.5, 191.0]
+    assert got[0]["time"] == D("2026-09-03T15:00:02")
+    assert got[0]["size"] == 100.0
+
+
+def test_read_ticks_on_an_empty_cache_is_an_empty_list():
+    """A restarted kdb holds no ticks. That is empty, never an error."""
+    import pandas as pd
+
+    s, _ = store_with({
+        "xdesc": pd.DataFrame({"time": [], "price": [], "size": []}),
+    })
+    assert s.read_ticks("AAPL", 10) == []
+
+
+def test_read_ticks_with_a_non_positive_limit_is_an_empty_list():
+    """q's `sublist` takes from the end of the list for a negative left
+    argument, which would silently hand back the OLDEST ticks instead of the
+    newest -- guarded in Python before any query is issued."""
+    s, conn = store_with()
+    assert s.read_ticks("AAPL", -5) == []
+    assert s.read_ticks("AAPL", 0) == []
+    assert conn.calls == [], "a non-positive limit must not reach q at all"
+
+
+def test_read_ticks_binds_the_symbol_as_a_parameter_not_by_interpolation():
+    """Interpolating the symbol into the q string would let a symbol containing
+    q syntax change the statement."""
+    conn = FakeConn()
+    store = KdbStore(FakeSession(conn))
+    store.read_ticks("AAPL", 10)
+    query, args = conn.calls[-1]
+    assert "AAPL" not in query
+    assert args, "symbol must be passed as a bound argument"
+
+
+def test_read_ticks_breaks_time_ties_with_the_later_arrival_first():
+    """Two ticks sharing one `time`, recorded old-then-new: read_ticks must
+    return the later arrival first -- the same tie-break `latest_tick`
+    documents two methods above.
+
+    `xdesc` is a STABLE sort: ties keep their original (arrival) order, so a
+    bare `` `time xdesc `` would present the earlier arrival as the newer
+    one, backwards. The fix reverses the selection before that stable sort.
+
+    FakeConn can't execute q, so this pins the fix at the query-routing
+    level instead of the data level: the canned response below only matches
+    a query containing "xdesc reverse". A regression that drops `reverse`
+    sends a query this response won't match; FakeConn then falls through to
+    its default `None` reply, and read_ticks returns `[]` instead of the two
+    ticks below -- so this fails on the regression itself, not merely on the
+    query text's shape.
+    """
+    import pandas as pd
+
+    tied = pd.Timestamp("2026-09-03T15:00:00")
+    s, _ = store_with({
+        "xdesc reverse": pd.DataFrame({
+            "time": [tied, tied],
+            "price": [102.0, 101.0],  # later arrival first, as the fix produces
+            "size": [2.0, 1.0],
+        }),
+    })
+    got = s.read_ticks("AAPL", 10)
+    assert [r["price"] for r in got] == [102.0, 101.0]
 
 
 def test_write_snapshot_stores_a_fetch_time():

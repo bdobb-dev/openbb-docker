@@ -1,37 +1,97 @@
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
-# SPDX-License-Identifier: Apache-2.0
-
 name: ci
+#
+# Every pytest job runs under a hang guard. On 2026-08-23 the live-grid job on
+# main wedged for 21 minutes and was killed by hand; it printed NOTHING -- not
+# even pytest's platform header -- so there was no evidence of where it stuck,
+# and it passed on rerun with byte-identical dependencies. Three pieces, each
+# doing something the others cannot:
+#
+#   timeout-minutes         bounds the JOB. Without it a wedge burns GitHub's
+#                           6-hour default before anyone notices.
+#   timeout -s ABRT 600     bounds PYTEST and aborts it via SIGABRT, which
+#                           PYTHONFAULTHANDLER turns into a traceback of every
+#                           thread. Deliberately NOT pytest-timeout or
+#                           faulthandler_timeout: both arm per-test, so neither
+#                           fires when the wedge is during collection -- which
+#                           the silent failure above points at.
+#   --capture=sys           without it this is useless. pytest's default
+#                           capture replaces file descriptor 2, so the C-level
+#                           faulthandler dump lands in pytest's capture buffer
+#                           and dies with the process. capture=sys swaps the
+#                           Python-level objects only, leaving fd 2 alone, so
+#                           the dump reaches the real stderr and the log.
+#
+# Verified against a conftest that sleeps at import: bare pytest killed on a
+# wall clock yields zero output, the guarded form names the exact hanging line.
 on:
   push:
   pull_request:
+  # Nothing here rebuilds on its own otherwise, and that is how the CFTC patch
+  # went silent for months: `openbb` floats most of what it pulls, so a tag that
+  # built clean in June can fail -- or worse, build clean and die at startup --
+  # in August, with no signal until a reader hits it. Saturday 06:00 UTC.
+  #
+  # GitHub disables scheduled workflows after 60 days without repository
+  # activity. If these stop arriving, that is why: re-enable from the Actions
+  # tab.
+  schedule:
+    - cron: "0 6 * * 6"
+  workflow_dispatch:
 jobs:
+  # Limitation: this gate is strictly weaker here than on a workstation.
+  # scrub-check.sh's machine-specific half reads
+  # scripts/scrub-private-patterns.txt, which is gitignored and therefore
+  # always absent on a fresh checkout -- so only the generic regexes above
+  # ever fire in CI. It also greps the working tree, not history, so a
+  # leak committed and later removed would not be caught here. Not fixing
+  # this (the private-patterns file can't be committed without defeating
+  # its own purpose) -- just keeping it visible.
   scrub:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Scrub gate — no private infrastructure details
         run: bash scripts/scrub-check.sh
-      - name: Image tags match this release
-        run: bash scripts/check-image-tags.sh
-      - name: No service shares the sidecar's network namespace
-        run: bash scripts/check-no-netns.sh
+      - name: Serve configs parse and declare the Tailscale Services
+        run: bash scripts/check-serve-config.sh
+  # The blanket Basic auth guard on api_app.py's factory. Its own job on
+  # purpose: this rode inside key-maint's job when it was first added, where it
+  # ran and passed but was invisible in the checks list -- and would have
+  # vanished silently if key-maint were ever restructured or removed. What it
+  # guards is a security posture (see SECURITY.md), so it should be legible as
+  # a check in its own right. Needs no OpenBB install; the tests stub
+  # openbb_core.env.
+  api-auth-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.12" }
+      - name: Test the blanket auth guard
+        run: |
+          python -m pip install --quiet fastapi httpx pytest
+          PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest tests/test_api_app_auth.py -q --capture=sys
+
   key-maint:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - name: Test key-maint
         working-directory: key-maint
         run: |
           pip install -e .[dev]
-          pytest -q
+          PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest -q --capture=sys
   live-grid:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - name: Install kdb-store (live-grid's tick recorder depends on it)
         run: pip install -e ./kdb-store
@@ -39,23 +99,25 @@ jobs:
         working-directory: live-grid
         run: |
           pip install -e .[dev]
-          pytest -q
+          PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest -q --capture=sys
   openbb-eodhd:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - name: Test the EODHD provider extension (mocked SDK)
         working-directory: openbb-eodhd
         run: |
           pip install -e .[dev]
-          pytest -q
+          PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest -q --capture=sys
   openbb-kdb:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - name: Install kdb-store (openbb-kdb depends on it)
         run: pip install -e ./kdb-store
@@ -63,18 +125,93 @@ jobs:
         working-directory: openbb-kdb
         run: |
           pip install -e .[dev]
-          pytest -q
+          PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest -q --capture=sys
   kdb-store:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - name: Test kdb-store (fake q connection, no license, no network)
         working-directory: kdb-store
         run: |
           pip install -e .[dev]
-          pytest -q
+          PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest -q --capture=sys
+  mcp-stores:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.12" }
+      # Pulls arcticdb and pykx. Both resolve on ubuntu-latest because
+      # GitHub's hosted runners are x86_64 -- the same reason openbb-arcticdb
+      # below is amd64-only. The tests need neither a real store nor a q
+      # licence; pykx runs unlicensed and the ArcticDB store is in-process.
+      - name: Test mcp_stores (in-process store, no q licence, no network)
+        working-directory: mcp_stores
+        run: |
+          pip install -e .[dev]
+          PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest -q --capture=sys
+
+  stores-explorer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.12" }
+      # stores-explorer depends on mcp-stores, which is a sibling in this repo
+      # and is NOT published to PyPI -- `pip install -e .[dev]` alone fails to
+      # resolve it. Same shape as live-grid installing kdb-store first.
+      - name: Install mcp_stores (sibling dependency, not on PyPI)
+        run: pip install -e ./mcp_stores
+      - name: Test stores-explorer (all mocked, no store or network needed)
+        working-directory: stores-explorer
+        run: |
+          pip install -e .[dev]
+          PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest -q --capture=sys
+
+  openbb-arcticdb:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.12" }
+      # GitHub-hosted ubuntu-latest runners are x86_64, so the arcticdb
+      # wheel resolves the same way it does inside the Platform image.
+      - name: Test the ArcticDB provider extension (in-process store, no MinIO)
+        working-directory: openbb-arcticdb
+        run: |
+          pip install -e .[dev]
+          PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest -q --capture=sys
+  tick-lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.12" }
+      # Same x86_64-wheel note as openbb-arcticdb above.
+      - name: Test tick-lab (mocked reference adapters, no store, no network)
+        working-directory: tick-lab
+        run: |
+          pip install -e .[dev]
+          PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest -q --capture=sys
+  minio-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.12" }
+      - name: Test cert-sync.sh (fake tailscale + signal-catching subprocess, no real MinIO)
+        working-directory: minio
+        run: |
+          pip install pytest
+          PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest tests -q --capture=sys
   # The image ships no KX software: the Dockerfile builds from
   # python:3.12-slim and public PyPI packages only. KX's licence does not
   # permit this repo's owner to redistribute their q binary, so the operator
@@ -83,8 +220,9 @@ jobs:
   # build-smoke runs unconditionally like every other job.
   build-smoke:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build the image
         run: docker build -t openbb-local:ci .
       - name: Boot the API with Basic auth
@@ -110,14 +248,21 @@ jobs:
           # 422: credentials accepted, request reached validation (symbol is
           # required). Keeps the check free of any outbound provider call.
           test "$(probe -u ci:ci-secret "$ep")" = "422"
-      - name: Metadata is locked too, not just /api/v1
+      - name: The Private Network Access preflight is answered
         run: |
-          probe() { docker exec api curl -s -o /dev/null -w '%{http_code}' "$@"; }
-          for ep in /widgets.json /apps.json /openapi.json /agents.json; do
-            code=$(probe "http://127.0.0.1:6900$ep")
-            echo "  $ep -> $code"
-            test "$code" = "401"
-          done
+          # api_app.py exists to add allow_private_network to the CORS layer:
+          # without it, Chrome blocks pro.openbb.co -> a backend it classifies
+          # as local, and the failure is invisible server-side. Assert the
+          # response header rather than the middleware config, so this catches
+          # a regression at any layer (see the CFTC patch that went silent).
+          hdrs=$(docker exec api curl -s -D - -o /dev/null -X OPTIONS \
+            -H 'Origin: https://pro.openbb.co' \
+            -H 'Access-Control-Request-Method: GET' \
+            -H 'Access-Control-Request-Private-Network: true' \
+            http://127.0.0.1:6900/api/v1/equity/price/quote)
+          echo "$hdrs"
+          echo "$hdrs" | grep -qi '^access-control-allow-private-network: true'
+
       - name: The widget manifest is served
         run: |
           count=$(docker exec api curl -fsS -u ci:ci-secret http://127.0.0.1:6900/widgets.json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')

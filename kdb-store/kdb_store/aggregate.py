@@ -31,6 +31,8 @@ def bucket_ns(interval: str) -> int:
 
 def aggregate_ticks(store, symbol: str, interval: str, start, end) -> list[dict]:
     """OHLCV rows built from the ticks held for `symbol` within [start, end]."""
+    import math
+
     frame = store.aggregate_frame(symbol, interval, start, end)
     if frame is None or getattr(frame, "empty", True):
         return []

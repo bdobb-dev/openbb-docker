@@ -60,11 +60,18 @@ def tick_capable(interval: str, window: timedelta) -> bool:
     return width <= window
 
 
+def _row_dt(value) -> datetime:
+    """History rows carry the provider's ISO strings (passed through the
+    response untouched, on purpose); tick rows carry datetimes. Compare as
+    datetimes without rewriting either on the wire."""
+    return value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+
+
 def stitch(history: list[dict], ticks: list[dict], boundary: datetime) -> list[dict]:
     """History strictly before `boundary`, then tick-derived bars, time-ordered."""
     if not ticks:
         return list(history)
-    kept = [row for row in history if row["date"] < boundary]
+    kept = [row for row in history if _row_dt(row["date"]) < boundary]
     if not kept:
-        return sorted(ticks, key=lambda r: r["date"])
-    return sorted(kept + list(ticks), key=lambda r: r["date"])
+        return sorted(ticks, key=lambda r: _row_dt(r["date"]))
+    return sorted(kept + list(ticks), key=lambda r: _row_dt(r["date"]))

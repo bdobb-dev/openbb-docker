@@ -1,0 +1,22 @@
+label: Volatility Squeeze
+description: >
+  Bollinger inside Keltner, with %B and BandWidth below. The three Bollinger
+  indicators share one base pair -- this macro is the dedup made visible.
+panes:
+  - id: price
+    height: 3
+    indicators:
+      - {name: bbands, period: 20, k: 2.0}
+      - {name: keltner, period: 20, mult: 1.5, atr_period: 10}
+  - id: bandwidth
+    height: 1
+    indicators:
+      - {name: bandwidth, period: 20, k: 2.0}
+  - id: pct_b
+    height: 1
+    indicators:
+      - {name: pct_b, period: 20, k: 2.0}
+  - id: atr
+    height: 1
+    indicators:
+      - {name: atr, period: 14}

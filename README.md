@@ -1,6 +1,3 @@
-<!-- Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
 # openbb-docker
 
 Self-hosted **OpenBB Platform** in Docker, behind a Tailscale sidecar — the
@@ -18,28 +15,70 @@ from later chapters is.
 | v8.0.0 | Ep. 8 — All the News That Fits, We Print | rss-ticker news wire joins the stack |
 | v9.0.0 | Ep. 9 — The Tape | EODHD provider extension + live-grid streaming service |
 | v10.0.0 | Ep. 10 — The Cache | kdb+ read-through cache (`provider="kdb"`) + tick recording and a unified chart in `live-grid` |
+| v11.0.0 | Ep. 11 — The Shared Store | MinIO as its own tailnet node + ArcticDB (`provider="arcticdb"`) + `tick-lab` + the `live_chart` widget |
+| v11.1.0 | Ep. 11 — The Shared Store | `tick-lab`'s EODHD-through-the-API reference adapter — the per-minute 2023 comparison yfinance cannot serve |
+| v11.1.1 | Ep. 11 — The Shared Store | `tick-lab`'s in-process OpenBB reference adapter (`--reference eodhd-local`) — the same call made locally, and what it costs versus `eodhd-api` |
 
-## What you get (this release: v10.0.0)
+Ep. 11's three tags point at the same commit. The chapter was built and
+verified as one body of work — the rows above describe what each release
+*adds*, not three separate states of the code, and the two later reference
+adapters are `--reference` options you select at runtime.
 
-Seven containers, one tailnet node, zero exposed ports:
+## What you get (this release: v11.1.1)
 
-- a small **Tailscale sidecar** that joins your tailnet as a node named
-  `openbb` — the only one with a tailnet address;
+Eight services across two tailnet nodes, zero exposed ports. The backbone,
+unchanged since Ep. 1:
+
+- a small **Tailscale sidecar** that owns the network namespace and joins your
+  tailnet as a node named `openbb`;
 - the **OpenBB Platform REST API** (all standard providers + the technical,
-  quantitative, and econometrics extensions), the **OpenBB MCP server**,
-  **key-maint**, **live-grid**, **rss-ticker** and **kdb**, all on a private
-  `openbb-internal` bridge that the sidecar reaches them over.
+  quantitative, and econometrics extensions) sharing that namespace, bound to
+  loopback only.
+
+Everything else — `openbb-mcp`, `key-maint`, `live-grid`, `rss-ticker`, and
+`minio` as its own second tailnet node — arrived in the episodes below.
 
 **Tailscale Serve is the only way in** — real HTTPS with a Let's Encrypt
 certificate at `https://openbb.<your-tailnet>.ts.net`, reachable from every
-device on your tailnet and invisible to everything off this host.
+device on your tailnet and invisible to everything else.
 
-The services sit on a private Docker bridge, so other processes **on this
-Docker host** can reach them directly. The API and key-maint answer with Basic
-auth, rss-ticker with its manifest key and per-user tokens. **live-grid, the
-MCP server and kdb have no auth at all** — and q executes arbitrary code, so if
-you run untrusted workloads on this host, do not run the `kdb` service. Nothing
-on your LAN reaches any of them, and Serve still gates the tailnet path.
+**New in v11.0.0 (Ep. 11):** the shared store. **MinIO joins the tailnet as
+its own node**, `minio.<your-tailnet>.ts.net`, with a real Let's Encrypt
+certificate — not a Serve route on the `openbb` node, because S3's SigV4
+signing covers the `Host` header and a reverse proxy in that path is a
+failure mode this chapter doesn't need. `tailscaled` runs *inside* the MinIO
+container rather than a sidecar (a sidecar's control socket is a file, and
+`network_mode` only shares the network namespace, so a sidecar daemon is
+unreachable from another container no matter what's mounted), and certificate
+renewal lives there too, signalling its own `minio` child with `SIGHUP` —
+measured: MinIO ignores a certificate rewritten on disk, but reloads it on
+`SIGHUP` — certificate serial updated, container uptime untouched (no
+restart); connections in flight during the signal were never observed.
+Nothing is published to the host; `:9000` is reachable on the tailnet and,
+as a documented limit of the posture, from the Docker bridge — in this
+deployment, that means never from the LAN, but that depends on the reader's
+host networking, not on anything this compose file guarantees. The
+**openbb-arcticdb provider extension** (`provider="arcticdb"`) puts that
+store behind the Platform's normal historical-price interface, tick data
+included (pass `interval` to resample ticks into OHLCV on read).
+**`tick-lab`** is a new, separate CLI — install it locally, point it at the
+same store via `minio.env`'s `ARCTICDB_S3_*` values, load FirstRate Data's
+free tick sample (GOOG + MSFT, 2023-05-12 — **not committed here**, it's
+third-party licensed data you download yourself), and it rolls your stored
+ticks into 1-minute bars and checks them against a reference source —
+`eodhd-api` by default since v11.1.0, with `yfinance` and the in-process
+`eodhd-local` also available via `--reference`. **Apple Silicon readers, read
+this:** the Platform image is pinned `linux/amd64` because ArcticDB
+publishes no aarch64 Linux wheels — on an M-series Mac it runs under
+emulation, so expect a slower build and slower queries (correctness is
+unaffected). `tick-lab` itself is unaffected either way: it runs on your
+laptop, not in the image, and ArcticDB does publish native macOS arm64
+wheels. See [tick-lab/README.md](tick-lab/README.md) and
+[docs/arcticdb-minio-design.md](docs/arcticdb-minio-design.md).
+This release also ships the **`live_chart` widget** — a data-only
+`live-grid/widgets.json` declaration (Workspace type `live_chart`) over the
+existing `GET /series` + `live_grid_ws`, so the Ep. 10 chart streams in
+Workspace itself with no new server code.
 
 **New in v10.0.0 (Ep. 10):** the cache, tick recording, and one unified
 chart. The **openbb-kdb provider extension** (`provider="kdb"`) puts an
@@ -159,20 +198,22 @@ cd openbb-docker
 cp ts.env.example ts.env            # paste a tagged, reusable auth key; chmod 600 ts.env
 cp api-auth.env.example api-auth.env         # REQUIRED — set a strong password; chmod 600
 cp credentials.env.example credentials.env   # optional — keyless providers work with none
+cp minio.env.example minio.env     # REQUIRED for the store; chmod 600
+cp rss-ticker.env.example rss-ticker.env     # REQUIRED — admin key; chmod 600
 
 # 2. Build and start
 docker compose up -d --build
 
 # 3. Verify the front door (from any tailnet device)
-#    The lock covers every path, metadata included — the image patches OpenBB
-#    to enforce Basic auth as middleware, not just on the /api/v1 router.
+#    The lock is on the DATA routes. widgets.json is metadata and answers 200
+#    with or without credentials — OpenBB's Basic auth is a dependency of the
+#    /api/v1 router, and nothing else, so test it there.
 curl https://openbb.<your-tailnet>.ts.net/api/v1/equity/price/quote                        # 401
 curl -u openbb:<password> https://openbb.<your-tailnet>.ts.net/api/v1/equity/price/quote   # 422 — auth accepted, symbol required
-curl https://openbb.<your-tailnet>.ts.net/widgets.json                                     # 401 — metadata is locked too
-curl -u openbb:<password> https://openbb.<your-tailnet>.ts.net/widgets.json                # 200
+curl https://openbb.<your-tailnet>.ts.net/widgets.json                                     # 200 — metadata, by design
 
 # 4. Verify the walls (from a SECOND tailnet device)
-scripts/verify-isolation.sh openbb.<your-tailnet>.ts.net
+scripts/verify-isolation.sh openbb.<your-tailnet>.ts.net minio.<your-tailnet>.ts.net
 ```
 
 Step 4 is not optional ceremony — it is the step that catches the one
@@ -195,10 +236,16 @@ as the value).
   GUI chart backend (it cannot render headless); chart endpoints return Plotly
   figure JSON and the *client* renders it — which is exactly what Episode 2's
   browser setup and BDOBB do.
-- The image carries two small patches to upstream, each documented in the
-  Dockerfile: a CFTC router startup crash guard, and CORS
-  `allow_private_network` so browser clients can pass Chrome's Private
-  Network Access preflight.
+- **Two upstream rough edges are handled, in two different ways.** The CFTC
+  router calls `.strip()` on contract fields that can be NULL, which takes
+  the REST server down at startup; the image patches that in place, and the
+  patch now *fails the build* if it stops matching rather than going quietly
+  no-op (see the Dockerfile). CORS `allow_private_network` — needed so
+  browser clients can pass Chrome's Private Network Access preflight, and not
+  exposed as an OpenBB setting — is no longer a patch at all: `openbb-api`
+  runs [`api_app.py`](api_app.py) through its documented `--app/--factory`
+  entrypoint, so that customization is version-controlled code instead of a
+  text substitution against upstream source.
 - All hostnames in this repo are placeholders (`<your-tailnet>.ts.net`).
   CI runs `scripts/scrub-check.sh` to keep it that way.
 
@@ -211,3 +258,8 @@ OPENBB_URL=https://openbb.<your-tailnet>.ts.net scripts/smoke.sh
 # CI equivalent (no tailnet needed): build the image, boot the API, hit
 # widgets.json from inside the container — see .github/workflows/ci.yml
 ```
+
+## License
+
+AGPL-3.0-only — this repo builds and serves OpenBB Platform itself, which is
+AGPL-3.0-only upstream.

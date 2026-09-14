@@ -1,0 +1,12 @@
+# Python build artifacts
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.DS_Store
+
+# Secrets — never commit real S3 access/secret keys
+.env
+*.env
+!.env.example

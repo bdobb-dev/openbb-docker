@@ -16,7 +16,7 @@ PATTERNS=(
   'tail[0-9a-f]{6,}\.ts\.net'                                    # real (hex-style) tailnet names
   '\b100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}\b'  # CGNAT / tailnet IPs
   '\b192\.168\.[0-9]{1,3}\.[0-9]{1,3}\b'                         # RFC1918 LAN IPs
-  '/share/Container'                                             # NAS filesystem paths
+  '/share/[A-Za-z0-9_]+/'                                        # NAS filesystem paths
   'AKIA[0-9A-Z]{16}'                                             # AWS-style access keys
   'Basic [A-Za-z0-9+/]{16,}={0,2}'                               # baked basic-auth headers
 )

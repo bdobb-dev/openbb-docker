@@ -1,0 +1,255 @@
+name: Release images
+
+# Publishes this repo's first-party images to GHCR, one set per version tag, so
+# an episode's environment can be pulled back rather than rebuilt from source.
+#
+# The image set GROWS with the episodes -- key-maint arrives in Ep. 3, live-grid
+# in Ep. 9, kdb-x in Ep. 10, minio and stores-explorer in Ep. 11 -- and build
+# contexts MOVE between episodes (live-grid built from ./live-grid in Ep. 9 and
+# from the repo root in Ep. 10). Both are read from the tag being built rather
+# than hardcoded here.
+#
+# Backfilling matters as much as releasing forward: every tag before this file
+# existed has no copy of it, so `workflow_dispatch --ref v9.0.0` would 404. The
+# dispatch path therefore takes the tag as an INPUT, runs from the default
+# branch, and checks the tag out itself.
+#
+# arm64 builds on a native arm64 runner, not QEMU. Emulating a full OpenBB
+# Platform install cost 16 minutes for one image; across every version that is
+# the difference between a backfill and an afternoon. Each architecture is
+# pushed by digest and the two are stitched into one multi-arch tag at the end.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag to build (e.g. v9.0.0). Defaults to the ref this runs on."
+        required: false
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      builds: ${{ steps.set.outputs.builds }}
+      images: ${{ steps.set.outputs.images }}
+      version: ${{ steps.set.outputs.version }}
+      ref: ${{ steps.ref.outputs.ref }}
+      sha: ${{ steps.sha.outputs.sha }}
+    steps:
+      - id: ref
+        run: echo "ref=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.ref.outputs.ref }}
+
+      # github.sha is the dispatching branch's commit, not the tag's, so a
+      # backfilled image would claim the wrong provenance. Read it post-checkout.
+      - id: sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # The discovery step parses compose; don't rely on the runner image
+      # happening to ship PyYAML for the system interpreter.
+      - name: PyYAML
+        run: pip install --quiet pyyaml
+
+      - id: set
+        name: Work out which images exist at this tag
+        env:
+          TARGET_REF: ${{ steps.ref.outputs.ref }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os, pathlib, yaml
+
+          RUNNERS = {"amd64": "ubuntu-latest", "arm64": "ubuntu-24.04-arm"}
+
+          images, seen = [], set()
+
+          compose = pathlib.Path("docker-compose.yml")
+          services = {}
+          if compose.exists():
+              services = (yaml.safe_load(compose.read_text()) or {}).get("services", {}) or {}
+
+          for svc, spec in services.items():
+              build = spec.get("build")
+              image = spec.get("image")
+              if not build or not image:
+                  continue
+              context = build.get("context") if isinstance(build, dict) else build
+              dockerfile = (build.get("dockerfile") if isinstance(build, dict) else None) or "Dockerfile"
+              # rss-ticker builds from its own repo over https -- not ours to publish.
+              if not context or "://" in context:
+                  continue
+              context = context.lstrip("./") or "."
+              df_path = dockerfile if "/" in dockerfile else f"{context}/{dockerfile}".lstrip("./")
+              if not pathlib.Path(df_path).exists():
+                  continue
+              name = image.split(":")[0]
+              # openbb-api, openbb-mcp and stores-mcp are the SAME build declared
+              # three times under different tags. Build it once.
+              key = (name, context, df_path)
+              if key in seen:
+                  continue
+              seen.add(key)
+              # ArcticDB publishes manylinux x86_64 wheels only -- no aarch64 --
+              # so any image that installs it cannot produce an arm64 layer. The
+              # root Dockerfile says so itself from Ep. 11 onward.
+              text = pathlib.Path(df_path).read_text(encoding="utf-8", errors="replace").lower()
+              arches = ["amd64"] if "arcticdb" in text else ["amd64", "arm64"]
+              # Published under a reserved episode- namespace rather than the
+              # bare compose name. `openbb-local` already exists as a
+              # hand-pushed package holding OpenBB PLATFORM versions (4.6.0,
+              # 4.7.2) -- unlinked from this repo, so Actions gets 403 on it,
+              # and mixing episode versions into it would put two unrelated
+              # version schemes in one package anyway. The prefix keeps the
+              # episode set repo-owned, auto-linked, and collision-proof
+              # against anything pushed by hand later.
+              images.append({
+                  "name": f"episode-{name}", "context": context,
+                  "dockerfile": df_path, "arches": arches,
+              })
+
+          # kdb-x is deliberately NOT built here. It has its own version line
+          # (1.0, 1.1) that no episode references, it carries no compose service
+          # because the operator supplies their own q, and the image it produces
+          # contains KX's binary -- which this repo publishes privately by hand
+          # rather than pushing to a package that Actions creates public.
+
+          # One matrix entry per (image, architecture) so each lands on a runner
+          # of its own architecture.
+          builds = [
+              {
+                  "name": i["name"], "context": i["context"], "dockerfile": i["dockerfile"],
+                  "arch": arch, "platform": f"linux/{arch}", "runner": RUNNERS[arch],
+              }
+              for i in images for arch in i["arches"]
+          ]
+
+          ref = os.environ["TARGET_REF"]
+          # Compose pins bare versions (openbb-local:11.0.0), so drop the v to
+          # keep the published tag identical to what compose already asks for.
+          print(f"version={ref.lstrip('v')}")
+          print("builds=" + json.dumps({"include": builds}))
+          print("images=" + json.dumps({"include": [
+              {"name": i["name"], "arches": " ".join(i["arches"])} for i in images
+          ]}))
+          PY
+
+      - name: Report the set
+        run: |
+          echo "version: ${{ steps.set.outputs.version }}"
+          echo '${{ steps.set.outputs.images }}'
+
+  build:
+    needs: discover
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.builds) }}
+    name: ${{ matrix.name }} (${{ matrix.arch }})
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.discover.outputs.ref }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pushed by digest, not by tag: a per-arch tag would leave stray refs in
+      # the registry and briefly point the real tag at a single architecture.
+      - id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          push: true
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.name }},push-by-digest=true,name-canonical=true,push=true
+          # Restoring an episode means reading the image, so record where it came
+          # from rather than leaving an untraceable blob in the registry.
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.discover.outputs.version }}
+            org.opencontainers.image.revision=${{ needs.discover.outputs.sha }}
+          cache-from: type=gha,scope=${{ matrix.name }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}-${{ matrix.arch }}
+
+      - name: Hand the digest to the merge job
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${{ matrix.arch }}-${DIGEST#sha256:}"
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: digest-${{ matrix.name }}-${{ matrix.arch }}
+          path: /tmp/digests/*
+          retention-days: 1
+          if-no-files-found: error
+
+  # Stitches this version's per-arch digests into the single tag compose asks
+  # for. Split out so an image whose arm64 leg failed does not publish a tag
+  # that silently claims to be multi-arch.
+  merge:
+    needs: [discover, build]
+    # Without this, ONE image failing skips the merge for ALL of them --
+    # fail-fast: false keeps the other builds running but a failed `needs` still
+    # skips whatever depends on it, so images that built perfectly never get
+    # published. Each image's merge stands or falls on its own digests instead.
+    if: ${{ !cancelled() && needs.discover.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.discover.outputs.images) }}
+    name: publish ${{ matrix.name }}
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: digest-${{ matrix.name }}-*
+          path: /tmp/digests
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create the multi-arch tag
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.name }}
+          VERSION: ${{ needs.discover.outputs.version }}
+          ARCHES: ${{ matrix.arches }}
+        run: |
+          set -euo pipefail
+          refs=""
+          for arch in $ARCHES; do
+            file=$(ls /tmp/digests | grep "^${arch}-" | head -1)
+            if [ -z "$file" ]; then
+              echo "::error::no digest for $arch -- refusing to publish a partial $IMAGE:$VERSION"
+              exit 1
+            fi
+            refs="$refs ${IMAGE}@sha256:${file#${arch}-}"
+          done
+          echo "combining:$refs"
+          docker buildx imagetools create -t "${IMAGE}:${VERSION}" $refs
+          docker buildx imagetools inspect "${IMAGE}:${VERSION}"

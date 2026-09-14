@@ -16,3 +16,12 @@ OPENBB_API_AUTH=true
 OPENBB_API_USERNAME=openbb
 # A port number, not a credential (credentials.env.example, Ep. 10):
 KDB_PORT=5000
+# --- Ep. 11: ArcticDB/MinIO connection shape, none of them credentials ---
+# A port number (minio.env.example, tick-lab/.env.example):
+ARCTICDB_S3_PORT=9000
+# A bucket name, not a secret:
+ARCTICDB_S3_BUCKET=openbb
+# A boolean flag (TLS on), not a credential:
+ARCTICDB_S3_SECURE=true
+# An ArcticDB library name, not a secret:
+ARCTICDB_LIBRARY=openbb

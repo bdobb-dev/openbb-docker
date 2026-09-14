@@ -25,6 +25,24 @@ Every response carries cache telemetry in `extra["results_metadata"]`:
 `cache` is `hit` (no upstream call), `partial` (gaps fetched), `miss` (nothing
 cached) or `bypass` (kdb unavailable — served straight from upstream).
 
+## Quotes
+
+`/equity/price/quote?provider=kdb` returns the newest live tick, leasing a
+live-grid subscription for symbols that are not already being fed. During a
+session the payload carries `last_price`, `last_size`, `last_timestamp`,
+`prev_close` and `change`; today's `open`/`high`/`low`/`volume` stay empty
+because the quote deliberately takes only the previous session's close from
+the daily bar and never reads intraday OHLV from it.
+
+Environment: `LIVE_GRID_SUBSCRIBE_URL` (default
+`http://127.0.0.1:6903/subscribe`), `KDB_QUOTE_DEADLINE_S` (default 3).
+
+When no tick arrives before `KDB_QUOTE_DEADLINE_S`, the quote falls back to
+live-grid's `GET /snapshot` — EODHD's REST price, roughly 15-20 minutes
+delayed. Only when that is unavailable too does the route return no rows.
+Environment: `LIVE_GRID_SNAPSHOT_URL` (default
+`http://127.0.0.1:6903/snapshot`).
+
 ## Configuration
 
 | Env var | Default | Meaning |
@@ -98,3 +116,7 @@ Everything except `QLIC` also accepts an OpenBB credential
 ## Test
 
     pip install -e .[dev] && pytest    # no kdb license or provider key needed
+
+## License
+
+AGPL-3.0-only.
