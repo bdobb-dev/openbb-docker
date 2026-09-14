@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Tests for openbb_eodhd.models.calendar.
 
 Sample rows are trimmed live responses recorded 2026-09-01 against the

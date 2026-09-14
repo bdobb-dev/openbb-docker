@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """A durable set of subscribed symbols, backed by one JSON file.
 
 Deliberately ignorant of feeds, caps and HTTP. Those live in the route layer,

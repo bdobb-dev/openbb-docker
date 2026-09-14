@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Thin host-side client for the OpenBB REST API running in Docker.
 
 The OpenBB *engine* (data fetching + compute) runs in the container behind

@@ -1,3 +1,6 @@
+/ Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+/ SPDX-License-Identifier: Apache-2.0
+
 / gen.q -- synthetic AAPL tick generator, run as a sidecar inside the
 / container: q gen.q with stdin held open. Random-walk, one tick / 250ms
 / (live-grid's real flush cadence).

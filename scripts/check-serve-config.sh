@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 # Both serve configs must parse, and must declare the Tailscale Services.
 # containerboot applies serve.json WHOLESALE on every apply: a Service that
 # is not in this file is a Service that vanishes on the next apply (it did,

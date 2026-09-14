@@ -1,3 +1,6 @@
+<!-- Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Episode / release boundaries (restructured 2026-09-01)
 
 Art's final episode mapping ("I know it's a big change, but I think it reads

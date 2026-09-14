@@ -1,3 +1,6 @@
+/ Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+/ SPDX-License-Identifier: Apache-2.0
+
 / startup.q -- tick cache with websocket pub/sub.
 / Minimal standalone take on jonathonmcmurray's ws.q .wsu namespace
 / (https://github.com/jonathonmcmurray/ws.q, MIT) -- the library itself

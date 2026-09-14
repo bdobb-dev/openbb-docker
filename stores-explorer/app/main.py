@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """FastAPI app for stores-explorer: read-only browsing of the shared
 ArcticDB and kdb+ store, for a bdobb widget (the widget's door -- stores-mcp
 is the analyst's). Loopback-only; Tailscale Serve is the ingress (see the

@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """tick-lab: load FirstRate ticks into the shared store, and check derived bars.
 
     tick-lab load  ./FirstRate_sample.zip

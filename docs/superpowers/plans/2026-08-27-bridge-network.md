@@ -1,3 +1,6 @@
+<!-- Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 > **SUPERSEDED** by `2026-08-27-internal-network-from-ep1.md`. This plan
 > migrated the seven-service Ep. 11 stack in one cutover; the series now builds
 > on the bridge from Ep. 1. Still the reference for migrating the running NAS.

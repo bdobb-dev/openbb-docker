@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """EODHD instrument search (/search/{query}) — equity, ETF and crypto.
 
 One endpoint, three standard models, filtered by the endpoint's `type`

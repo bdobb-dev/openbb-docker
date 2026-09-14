@@ -1,3 +1,6 @@
+<!-- Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # kdb live quote provider — design
 
 `/equity/price/quote?provider=kdb` serves the newest live tick from the kdb

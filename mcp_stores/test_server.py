@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Unit tests for mcp_stores/server.py with arcticdb and pykx MOCKED.
 
 Runs on the Mac with no arcticdb/pykx/kdb installed:

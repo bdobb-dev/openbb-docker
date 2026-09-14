@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Generic read/write API for arbitrary OpenBB / DataFrame data in ArcticDB.
 
 The `provider="arcticdb"` path is bound to OpenBB's fixed OHLCV models. This

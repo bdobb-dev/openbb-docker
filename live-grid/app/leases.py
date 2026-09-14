@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Symbol-keyed TTL leases on the live feed.
 
 A feed otherwise exists only while a `/live_grid_ws` client is connected, so a

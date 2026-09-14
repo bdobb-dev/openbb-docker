@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """tick-lab's roll-up must match the committed golden bars.
 
 The same CSV is asserted against by tests/integration/test_provider_parity.py,

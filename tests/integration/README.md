@@ -1,3 +1,6 @@
+<!-- Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Integration tests
 
 These need a running store, so they are skipped unless `TICK_LAB_TEST_S3=1`.

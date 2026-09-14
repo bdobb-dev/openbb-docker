@@ -1,3 +1,6 @@
+/ Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+/ SPDX-License-Identifier: Apache-2.0
+
 / persist.q v2 (2026-09-01) -- tick-log durability. Replaces v1's 5-minute
 / full-table mirror (O(n) per timer tick) with the classic tickerplant log:
 / O(1) append per update, -11! replay on boot, so a restart loses nothing.

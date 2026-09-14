@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """credentials.env reader with docker-compose-dotenv semantics.
 
 The parse rules replicate compose v2.29 as observed on the NAS: this module is

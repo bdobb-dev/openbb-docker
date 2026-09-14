@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 from openbb_eodhd.models.insider import EODHDInsiderTradingFetcher as Fetcher
 from openbb_eodhd.models.insider import EODHDInsiderTradingQueryParams as QP
 

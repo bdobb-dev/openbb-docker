@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """EODHD ESG scores (fundamentals ESGScores section) — DEPRECATED.
 
 EODHD's ESG feed is a stale 2019 beta (the payload's own Disclaimer says it

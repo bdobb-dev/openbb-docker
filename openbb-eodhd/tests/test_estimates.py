@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 from openbb_eodhd.models.estimates import EODHDAnalystEstimatesFetcher as AeFetcher
 from openbb_eodhd.models.estimates import EODHDAnalystEstimatesQueryParams as AeQP
 from openbb_eodhd.models.estimates import EODHDForwardEpsEstimatesFetcher as FeFetcher

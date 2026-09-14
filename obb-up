@@ -1,4 +1,7 @@
 #!/usr/bin/env sh
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 # obb-up — one-command wrapper around docker compose for the OpenBB stack.
 #
 #   ./obb-up            # launch the interactive OpenBB Terminal (default)

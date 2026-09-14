@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """ArcticDB historical price models (read path).
 
 Serves OHLCV bars previously persisted to an ArcticDB library back through the

@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Compare two bar sets and render the result.
 
 Three outcomes are kept apart on purpose, because conflating them is how

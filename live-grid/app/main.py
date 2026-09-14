@@ -1,3 +1,6 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """FastAPI app tying the pieces together: widgets.json, REST seeding, the
 websocket stream, and health. One service, loopback-only; Tailscale Serve is
 the ingress (see the repo compose file)."""
