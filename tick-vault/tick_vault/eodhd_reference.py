@@ -6,10 +6,16 @@ exchange symbol lists, delisted symbol lists, symbol-change history, index
 component membership, and per-symbol fundamentals. Each is a full-refresh
 snapshot pull (not a time-ranged tick fetch), so there is no
 request_from_sec/request_to_sec bookkeeping - just the one request-scope
-column each bronze `*_capture` table already carries
-(`tick_vault.schemas._generic_capture_fields` callers:
-`exchange_code`, `index_vendor_symbol`, `request_symbol`/
-`request_exchange_code`).
+column each bronze `*_capture` table carries for the endpoints that are
+actually exchange/index/symbol-scoped on the vendor side
+(`tick_vault.schemas._generic_capture_fields` callers: `exchange_code`,
+`index_vendor_symbol`, `request_symbol`/`request_exchange_code`).
+`symbol-change-history` is the one exception: EODHD's endpoint is global
+(no `{exchange}` path/query parameter), so `eodhd_symbol_change_capture`
+carries no such column and `get_symbol_changes()` takes no `exchange`
+argument - any exchange scoping of symbol-change rows happens downstream,
+at resolution time, against the `old`/`new` codes already in the parsed
+rows, never by filtering the vendor request.
 
 URL verification caveat
 ------------------------
@@ -337,15 +343,25 @@ class ReferenceClient:
         return parse_delisted(payload), record
 
     def get_symbol_changes(
-        self, exchange: str = "US", *, observed_at: dt.datetime | None = None
+        self, *, observed_at: dt.datetime | None = None
     ) -> tuple[pd.DataFrame, Any]:
+        """Fetch the full symbol-change-history feed.
+
+        This EODHD endpoint has no `{exchange}` path/query parameter - it
+        is a single global feed covering all exchanges, unlike
+        `get_exchange_symbols`/`get_delisted`. Any exchange-scoping of the
+        returned rows happens downstream, at resolution time, against the
+        `old`/`new` codes already carried in the parsed rows - never by
+        filtering the vendor request. `request_params`/the captured bronze
+        row therefore carry no `exchange` key.
+        """
         url = _ENDPOINTS["symbol_changes"].format(token=self.api_key)
         payload_bytes, record = self._fetch(
             url=url,
             table="bronze.eodhd_symbol_change_capture",
             endpoint="symbol_change_history",
-            request_params={"exchange": exchange, "token": _REDACTED},
-            extra_cols={"exchange_code": exchange},
+            request_params={"token": _REDACTED, "fmt": "json"},
+            extra_cols=None,
             observed_at=observed_at,
         )
         payload = self._load_json(payload_bytes, [])

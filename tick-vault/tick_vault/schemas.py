@@ -112,9 +112,10 @@ _BRONZE_EODHD_DELISTED_SYMBOLS_CAPTURE = pa.schema(_generic_capture_fields(
     pa.field("exchange_code", pa.string(), nullable=False),
 ))
 
-_BRONZE_EODHD_SYMBOL_CHANGE_CAPTURE = pa.schema(_generic_capture_fields(
-    pa.field("exchange_code", pa.string(), nullable=False),
-))
+# Global feed - no `{exchange}` param on the vendor request, so (unlike
+# the exchange-scoped symbol-list tables above) this capture row carries
+# no exchange_code column; see eodhd_reference.get_symbol_changes.
+_BRONZE_EODHD_SYMBOL_CHANGE_CAPTURE = pa.schema(_generic_capture_fields())
 
 _BRONZE_EODHD_FUNDAMENTALS_CAPTURE = pa.schema(_generic_capture_fields(
     pa.field("request_symbol", pa.string(), nullable=False),

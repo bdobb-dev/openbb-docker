@@ -86,7 +86,7 @@ def test_get_symbol_changes_captures_and_parses_date(tmp_path):
     client, transport, _ = _client(
         tmp_path, [(200, _load_bytes("symbol_changes.json"))]
     )
-    df, record = client.get_symbol_changes("US", observed_at=OBS)
+    df, record = client.get_symbol_changes(observed_at=OBS)
 
     row = df.iloc[0]
     assert row["old"] == "BK"
@@ -95,6 +95,8 @@ def test_get_symbol_changes_captures_and_parses_date(tmp_path):
 
     bronze = _read_delta(tmp_path, "bronze/eodhd_symbol_change_capture")
     assert len(bronze) == 1
+    request_params = json.loads(bronze.iloc[0]["request_parameters_json"])
+    assert "exchange" not in request_params
 
 
 def test_get_index_components_merges_current_and_historical(tmp_path):
