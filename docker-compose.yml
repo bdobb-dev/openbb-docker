@@ -627,11 +627,63 @@ services:
         exit 1
     restart: "no"
 
+  # tick-vault (Plan 2, Task 11): the bitemporal S&P 500 tick lakehouse
+  # backfill engine + a read-only /status, /widgets.json backend for it
+  # (task-11-brief.md). Two services, one image (tick-vault/Dockerfile):
+  # `tick-vault` runs the historical backfill loop, `tick-vault-status`
+  # serves status over stdlib http.server (NOT FastAPI -- see
+  # tick_vault/status_app.py's module docstring for the documented
+  # divergence from stores-explorer's pattern). Both sit behind the
+  # `tick-vault` profile so `docker compose up` never starts them --
+  # the ~300k-call historical walk is deliberately opt-in
+  # (`docker compose --profile tick-vault up -d`, or `docker compose run
+  # tick-vault vault backfill --loop` for a supervised first run).
+  tick-vault:
+    build: ./tick-vault
+    image: openbb-tick-vault:latest
+    container_name: openbb-tick-vault
+    restart: unless-stopped
+    profiles: ["tick-vault"]
+    networks:
+      - openbb-internal
+    environment:
+      - EOD_API_KEY=${EOD_API_KEY:?}
+      - VAULT_ROOT=${VAULT_ROOT:-/data/vault}
+      - LEGACY_ROOT=${LEGACY_ROOT:-}
+      - CALIBRATION_REPORT=${CALIBRATION_REPORT:-docs/superpowers/verification/ep15-calibration.md}
+    volumes:
+      - tick-vault-data:${VAULT_ROOT:-/data/vault}
+    command: ["vault", "backfill", "--loop"]
+
+  # tick-vault-status: read-only widget backend for the same VAULT_ROOT,
+  # same image, no EOD_API_KEY needed (it never calls EODHD itself). Binds
+  # 0.0.0.0 inside the container -- same Bridge-migration Layer 2 override
+  # stores-explorer's command: line uses -- because openbb-internal is
+  # already the isolation boundary (see that network's own docstring above);
+  # status_app.py's own default (no HOST set) is loopback-only.
+  tick-vault-status:
+    image: openbb-tick-vault:latest
+    container_name: openbb-tick-vault-status
+    restart: unless-stopped
+    profiles: ["tick-vault"]
+    networks:
+      - openbb-internal
+    depends_on:
+      - tick-vault
+    environment:
+      - VAULT_ROOT=${VAULT_ROOT:-/data/vault}
+      - HOST=0.0.0.0
+      - PORT=8600
+    volumes:
+      - tick-vault-data:${VAULT_ROOT:-/data/vault}
+    command: ["python", "-m", "tick_vault.status_app"]
+
 volumes:
   openbb-data:
   rss-ticker-data:
   minio-data:
   minio-ts-state:
+  tick-vault-data:
   # Only used when KEY_MAINT_ADMIN names it (see key-maint's admin mount).
   # Declaring it unconditionally costs nothing on the Linux default, where the
   # admin socket stays a host bind mount.
