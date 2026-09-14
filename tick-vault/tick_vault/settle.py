@@ -269,17 +269,35 @@ def daily_pass(
     items and call `settle_pass`" (a single `now`/`span_memory`/`budget`
     are shared across every item in the sweep, exactly as a caller passing
     them once here would expect).
+    
+    Per-item exception isolation: if `settle_pass` or any of its dependencies
+    (including `existing_latest_reader`, `writer`, or `events_writer`) raises
+    an exception for a particular item, that item's result is recorded as
+    FAILED with an error message, and processing continues with the next item.
     """
     now = now if now is not None else dt.datetime.now(dt.timezone.utc)
     results = []
     for item in items:
-        results.append(
-            settle_pass(
-                transport, store, root, item,
-                existing_latest_reader=existing_latest_reader,
-                span_memory=span_memory, budget=budget, token=token,
-                writer=writer, events_writer=events_writer, now=now,
-                source_system=source_system, price_venue_type=price_venue_type,
+        try:
+            results.append(
+                settle_pass(
+                    transport, store, root, item,
+                    existing_latest_reader=existing_latest_reader,
+                    span_memory=span_memory, budget=budget, token=token,
+                    writer=writer, events_writer=events_writer, now=now,
+                    source_system=source_system, price_venue_type=price_venue_type,
+                )
             )
-        )
+        except Exception as e:
+            results.append(
+                SettleResult(
+                    status=STATUS_FAILED,
+                    new_versions=0,
+                    cancellations=0,
+                    late_adds=0,
+                    revisions=0,
+                    captures=0,
+                    error=f"{type(e).__name__}: {e}",
+                )
+            )
     return results
