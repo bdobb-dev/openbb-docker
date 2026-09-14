@@ -146,6 +146,10 @@ RUN pip install --no-cache-dir /tmp/kdb-store && rm -rf /tmp/kdb-store
 COPY openbb-kdb /tmp/openbb-kdb
 RUN pip install --no-cache-dir /tmp/openbb-kdb && rm -rf /tmp/openbb-kdb
 
+# Official OpenBB MCP server (Ep. 6): wraps the Platform FastAPI app
+# in-process and serves MCP over streamable-http. PIP_CONSTRAINT still
+# applies, so it cannot drag shared libs anywhere the stack doesn't tolerate.
+RUN pip install "openbb-mcp-server==1.4.1"
 RUN python -c "import openbb_mcp_server; print('openbb-mcp-server import OK')"
 
 # Pre-compile the static package so the first run is instant, and verify the
@@ -179,6 +183,10 @@ print('api_app factory OK:', len(layers), 'CORS layer(s), all private-network en
 
 WORKDIR /workspace
 
+# Self-provision persistent mount points so the image is drop-in on any host
+# (NAS container managers, plain Docker) with bind mounts to not-yet-created
+# paths. OPENBB_HOME persists settings/credentials; /workspace holds user data.
+ENV APP_DIRS="/root/.openbb_platform /workspace"
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
