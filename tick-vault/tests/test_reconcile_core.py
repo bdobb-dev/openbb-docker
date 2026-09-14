@@ -479,3 +479,16 @@ def test_gate_waiver_row_threads_listing_id_and_trade_date():
     details = json.loads(row["details_json"])
     assert details["work_id"] == "wrk_123"
     assert details["reason"] == "known vendor outage 2026-07-01"
+
+
+def test_flag_helpers_accept_delta_numpy_arrays():
+    # Delta hands list<string> columns back as numpy arrays; truth-testing one
+    # crashed the Phase-0 calibration on its first symbol (2026-09-14).
+    import numpy as np
+    from tick_vault.reconcile import _is_closing_print, _is_eligible_flags
+
+    assert _is_closing_print(np.array(["ODD_LOT", "CLOSING_PRINT"]))
+    assert not _is_closing_print(np.array(["ODD_LOT", "REGULAR"]))
+    assert _is_eligible_flags(np.array(["REGULAR", "ODD_LOT"]))
+    assert not _is_eligible_flags(np.array(["ODD_LOT", "SOLD_OUT_OF_SEQUENCE"]))
+    assert _is_eligible_flags(np.array([], dtype=object))
