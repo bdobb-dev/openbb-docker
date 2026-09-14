@@ -325,6 +325,58 @@ class CaptureStore:
         )
         return payload_bytes, record
 
+    def fetch_and_capture_post(
+        self,
+        transport: "Transport",
+        *,
+        url: str,
+        body: bytes,
+        headers: dict,
+        table: str,
+        endpoint: str,
+        request_params: dict,
+        observed_at: dt.datetime,
+        ingestion_run_id: str,
+        parser_version: str,
+        extra_cols: dict | None = None,
+        timeout: int = 30,
+        source_system: str = "eodhd",
+    ) -> tuple[bytes | None, CaptureRecord]:
+        """POST counterpart of `fetch_and_capture` (task-6 brief: OpenFIGI's
+        `/v3/mapping` endpoint is POST-shaped - a JSON request body plus
+        headers - unlike every GET-shaped vendor endpoint this store was
+        originally written against). `transport.post(url, body, headers,
+        timeout)`, then `record()` the result exactly like
+        `fetch_and_capture` does for GET.
+
+        `request_params` is whatever the caller wants hashed/persisted into
+        the bronze row's `request_parameters_json` - callers MUST pass only
+        the request body's own JSON-safe content (e.g. `{"jobs": [...]}`),
+        NEVER `headers`, since `headers` is where an API key (e.g.
+        `X-OPENFIGI-APIKEY`) lives; this method never inspects or forwards
+        `headers` into the captured params itself, so a caller that keeps
+        the key out of `request_params` gets an automatically key-free
+        capture row.
+        """
+        status, resp_body = transport.post(url, body, headers, timeout=timeout)
+        is_success = 200 <= status < 300
+        payload_bytes = resp_body if is_success else None
+        error_body = None if is_success else resp_body
+        record = self.record(
+            table=table,
+            endpoint=endpoint,
+            request_params=request_params,
+            http_status=status,
+            payload_bytes=payload_bytes,
+            error_body=error_body,
+            observed_at=observed_at,
+            ingestion_run_id=ingestion_run_id,
+            parser_version=parser_version,
+            extra_cols=extra_cols,
+            source_system=source_system,
+        )
+        return payload_bytes, record
+
 
 # ---------------------------------------------------------------------------
 # Transport
@@ -335,14 +387,24 @@ class Transport(Protocol):
     def get(self, url: str, timeout: int) -> tuple[int, bytes]:
         ...
 
+    def post(self, url: str, body: bytes, headers: dict, timeout: int) -> tuple[int, bytes]:
+        ...
+
 
 class FakeTransport:
     """Test double: pops canned `(status, body)` responses in order and
-    records every URL it was asked to fetch."""
+    records every URL it was asked to fetch (`get` and `post` share the
+    same canned-response queue and the same `requested_urls` log, since
+    tests generally only care about response sequencing; `post` calls are
+    additionally logged in `posted_requests` - `{"url", "body", "headers"}`
+    per call - so a test can assert on the exact request body/headers a
+    caller built, e.g. that an API key never leaked into a captured
+    params dict but DID make it onto the wire in `headers`)."""
 
     def __init__(self, responses: list[tuple[int, bytes]]):
         self._responses = list(responses)
         self.requested_urls: list[str] = []
+        self.posted_requests: list[dict] = []
 
     def get(self, url: str, timeout: int = 30) -> tuple[int, bytes]:
         self.requested_urls.append(url)
@@ -350,9 +412,20 @@ class FakeTransport:
             raise AssertionError("FakeTransport: no more canned responses")
         return self._responses.pop(0)
 
+    def post(self, url: str, body: bytes, headers: dict, timeout: int = 30) -> tuple[int, bytes]:
+        self.requested_urls.append(url)
+        self.posted_requests.append({"url": url, "body": body, "headers": headers})
+        if not self._responses:
+            raise AssertionError("FakeTransport: no more canned responses")
+        return self._responses.pop(0)
+
 
 def _urlopen(url: str, timeout: int):
     return urllib.request.urlopen(url, timeout=timeout)
+
+
+def _urlopen_request(request: "urllib.request.Request", timeout: int):
+    return urllib.request.urlopen(request, timeout=timeout)
 
 
 class UrlLibTransport:
@@ -377,10 +450,11 @@ class UrlLibTransport:
     Defaults to `urllib.request.urlopen`.
     """
 
-    def __init__(self, opener=None, sleeper=None, max_attempts: int = 3):
+    def __init__(self, opener=None, sleeper=None, max_attempts: int = 3, post_opener=None):
         self._opener = opener or _urlopen
         self._sleeper = sleeper or time.sleep
         self._max_attempts = max_attempts
+        self._post_opener = post_opener or _urlopen_request
 
     def get(self, url: str, timeout: int = 30) -> tuple[int, bytes]:
         status: int | None = None
@@ -407,3 +481,32 @@ class UrlLibTransport:
                 continue
             return status, body
         return status, body
+
+    def post(self, url: str, body: bytes, headers: dict, timeout: int = 30) -> tuple[int, bytes]:
+        """POST counterpart of `get` (task-6 brief: OpenFIGI's `/v3/mapping`
+        is POST-shaped). Same retry-on-5xx/`URLError` policy, same
+        injectable `sleeper`; the request is rebuilt fresh each attempt
+        (a `urllib.request.Request` is single-use once opened) via the
+        injectable `post_opener(request, timeout) -> response` (defaults to
+        `urllib.request.urlopen`)."""
+        status: int | None = None
+        resp_body: bytes = b""
+        for attempt in range(1, self._max_attempts + 1):
+            try:
+                req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+                resp = self._post_opener(req, timeout)
+                status = resp.status if hasattr(resp, "status") else resp.getcode()
+                resp_body = resp.read()
+            except urllib.error.HTTPError as exc:
+                status = exc.code
+                resp_body = exc.read()
+            except urllib.error.URLError:
+                if attempt < self._max_attempts:
+                    self._sleeper(5 * attempt)
+                    continue
+                raise
+            if status is not None and status >= 500 and attempt < self._max_attempts:
+                self._sleeper(5 * attempt)
+                continue
+            return status, resp_body
+        return status, resp_body
