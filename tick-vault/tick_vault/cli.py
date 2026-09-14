@@ -118,7 +118,9 @@ def _default_manifest_row_writer(root: str, updated_row: dict) -> None:
     write_deltalake(f"{root}/ops/backfill_manifest", arrow_table, mode="overwrite", partition_by=PARTITIONING.get(table))
 
 
-def _default_existing_ticks_reader(root: str, listing_id: str) -> "pd.DataFrame | None":
+def _default_existing_ticks_reader(
+    root: str, listing_id: str, week_monday: "dt.date | None" = None
+) -> "pd.DataFrame | None":
     """Real reader for `fetch_week`'s/reconciliation's `existing_ticks_
     reader(root, listing_id) -> pandas.DataFrame` seam: this listing's
     rows already written to `silver.us_trade_tick_version` (lazy
@@ -133,10 +135,18 @@ def _default_existing_ticks_reader(root: str, listing_id: str) -> "pd.DataFrame 
         table = DeltaTable(f"{root}/silver/us_trade_tick_version")
     except Exception:
         return None
-    df = table.to_pandas()
-    if df is None or df.empty:
-        return df
-    return df[df["listing_id"] == listing_id]
+    # Push the filter down. Loading the whole table and filtering in pandas
+    # grew with every symbol written and got the Phase-0 calibration killed
+    # (50M rows / 9.5 GB by symbol 138, read twice per symbol). `trade_date`
+    # is the partition column, so the week bound also skips every other
+    # day's files; Sun..Sun covers every NY session date a UTC week yields.
+    filters = [("listing_id", "=", listing_id)]
+    if week_monday is not None:
+        filters += [
+            ("trade_date", ">=", week_monday - dt.timedelta(days=1)),
+            ("trade_date", "<=", week_monday + dt.timedelta(days=6)),
+        ]
+    return table.to_pandas(filters=filters)
 
 
 def _item_get(item, key: str, default=None):
@@ -181,7 +191,7 @@ def _pandas_reconcile_step(
     if listing_id is None or symbol is None or week_monday is None:
         return None
 
-    ticks_df = ctx.existing_ticks_reader(ctx.root, listing_id)
+    ticks_df = ctx.existing_ticks_reader(ctx.root, listing_id, week_monday=week_monday)
     if ticks_df is None or len(ticks_df) == 0:
         return None
 

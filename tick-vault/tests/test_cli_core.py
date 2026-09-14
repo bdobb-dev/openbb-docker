@@ -498,7 +498,7 @@ def test_pandas_reconcile_step_calls_gate_check_with_incrementing_sequence():
         transport=object(),
         store=object(),
         api_token="real-eod-key",
-        existing_ticks_reader=lambda root, listing_id: ticks_df,
+        existing_ticks_reader=lambda root, listing_id, week_monday=None: ticks_df,
         gate=fake_gate,
     )
     item = {
