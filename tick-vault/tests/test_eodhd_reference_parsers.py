@@ -22,7 +22,9 @@ from tick_vault.eodhd_reference import (
     parse_changes,
     parse_components,
     parse_delisted,
+    parse_eod,
     parse_fundamentals,
+    parse_intraday,
     parse_symbols,
 )
 
@@ -193,3 +195,68 @@ def test_parse_fundamentals_empty_payload():
     row = df.iloc[0]
     assert row["code"] is None
     assert row["cusip"] is None
+
+
+# ---------------------------------------------------------------------------
+# parse_eod
+# ---------------------------------------------------------------------------
+
+def test_parse_eod_columns_and_values():
+    df = parse_eod(_load("eod_slice.json"))
+    assert list(df.columns) == ["date", "open", "high", "low", "close", "adjusted_close", "volume"]
+    assert len(df) == 2
+    row = df.iloc[0]
+    assert row["date"] == dt.date(2026, 7, 1)
+    assert row["open"] == 150.00
+    assert row["high"] == 151.20
+    assert row["low"] == 149.80
+    assert row["close"] == 150.90
+    assert row["adjusted_close"] == 150.90
+    assert row["volume"] == 1000000
+
+
+def test_parse_eod_is_case_insensitive_to_vendor_keys():
+    payload = [{"date": "2026-01-02", "open": 1.0, "high": 2.0, "low": 0.5, "close": 1.5,
+                "ADJUSTED_CLOSE": 1.5, "VOLUME": 42}]
+    df = parse_eod(payload)
+    row = df.iloc[0]
+    assert row["date"] == dt.date(2026, 1, 2)
+    assert row["adjusted_close"] == 1.5
+    assert row["volume"] == 42
+
+
+def test_parse_eod_empty_payload():
+    df = parse_eod([])
+    assert list(df.columns) == ["date", "open", "high", "low", "close", "adjusted_close", "volume"]
+    assert len(df) == 0
+
+
+# ---------------------------------------------------------------------------
+# parse_intraday
+# ---------------------------------------------------------------------------
+
+def test_parse_intraday_columns_and_values():
+    df = parse_intraday(_load("intraday_slice.json"))
+    assert list(df.columns) == ["ts_ms", "open", "high", "low", "close", "volume"]
+    assert len(df) == 2
+    row = df.iloc[0]
+    assert row["ts_ms"] == 1751370600 * 1000
+    assert row["open"] == 150.00
+    assert row["close"] == 150.05
+    assert row["volume"] == 10000
+    assert df.iloc[1]["ts_ms"] == 1751370660 * 1000
+
+
+def test_parse_intraday_is_case_insensitive_to_vendor_keys():
+    payload = [{"timestamp": 1700000000, "open": 1.0, "HIGH": 2.0, "Low": 0.5, "close": 1.5, "volume": 9}]
+    df = parse_intraday(payload)
+    row = df.iloc[0]
+    assert row["ts_ms"] == 1700000000 * 1000
+    assert row["high"] == 2.0
+    assert row["low"] == 0.5
+
+
+def test_parse_intraday_empty_payload():
+    df = parse_intraday([])
+    assert list(df.columns) == ["ts_ms", "open", "high", "low", "close", "volume"]
+    assert len(df) == 0

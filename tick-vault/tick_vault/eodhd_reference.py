@@ -66,6 +66,21 @@ field between sections across API versions). Any key absent from the
 payload stays `None` - this parser never invents or guesses an
 identifier.
 
+EOD / intraday getters (task-9 preflight ruling)
+--------------------------------------------------
+`get_eod`/`get_intraday` follow the exact same parse-and-capture pattern
+as the five original getters above, feeding
+`bronze.eodhd_eod_capture`/`bronze.eodhd_intraday_capture`
+(`tick_vault.schemas`) so the reconciliation gate
+(`tick_vault.reconcile`) has vendor OHLCV to compare against. `parse_eod`
+reads EODHD's `/api/eod/<SYM>` array shape (`date`/`open`/`high`/`low`/
+`close`/`adjusted_close`/`volume`, case-insensitive keys, `date` parsed to
+`datetime.date`); `parse_intraday` reads `/api/intraday/<SYM>`'s array
+shape (`timestamp` - vendor unix seconds - plus `open`/`high`/`low`/
+`close`/`volume`), producing `ts_ms`/OHLCV. Both endpoint URL templates
+carry the same Phase-0 "best-effort, unverified against a live response"
+caveat as the rest of `_ENDPOINTS` above.
+
 API-key hygiene
 ----------------
 `ReferenceClient` builds the live request URL with the real `api_key`
@@ -99,6 +114,8 @@ _ENDPOINTS = {
     "symbol_changes": "https://eodhd.com/api/symbol-change-history?api_token={token}&fmt=json",
     "index_components": "https://eodhd.com/api/fundamentals/{symbol}?api_token={token}",
     "fundamentals": "https://eodhd.com/api/fundamentals/{symbol}?api_token={token}",
+    "eod": "https://eodhd.com/api/eod/{symbol}?from={from_date}&to={to_date}&api_token={token}&fmt=json",
+    "intraday": "https://eodhd.com/api/intraday/{symbol}?interval={interval}&from={from_ts}&to={to_ts}&api_token={token}&fmt=json",
 }
 
 _REDACTED = "REDACTED"
@@ -131,6 +148,24 @@ def _parse_date(value: Any) -> dt.date | None:
     if text == "0000-00-00":
         return None
     return dt.date.fromisoformat(text)
+
+
+def _fmt_date(value: "dt.date | str") -> str:
+    """Format a `datetime.date` (or an already-ISO-ish string) as
+    `"YYYY-MM-DD"` for the `eod` endpoint's `from`/`to` query params."""
+    if isinstance(value, dt.date):
+        return value.isoformat()
+    return str(value)[:10]
+
+
+def _to_epoch_seconds(value: "dt.date | str") -> int:
+    """Convert a `from_date`/`to_date` (date or `"YYYY-MM-DD"` string) into
+    UTC-midnight unix seconds, for the `request_from_sec`/`request_to_sec`
+    bronze bookkeeping columns (shared with the other date-ranged EODHD
+    capture tables)."""
+    if isinstance(value, str):
+        value = dt.date.fromisoformat(value[:10])
+    return int(dt.datetime(value.year, value.month, value.day, tzinfo=dt.timezone.utc).timestamp())
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +285,53 @@ def parse_fundamentals(payload: dict) -> pd.DataFrame:
         "share_class": _ci_get(general, "ShareClass", default=_ci_get(shares, "ShareClass")),
     }
     return pd.DataFrame([row], columns=_FUNDAMENTALS_COLUMNS)
+
+
+_EOD_COLUMNS = ["date", "open", "high", "low", "close", "adjusted_close", "volume"]
+
+
+def parse_eod(payload: list) -> pd.DataFrame:
+    """Parse an EODHD `/api/eod/<SYM>` payload (a JSON array of daily bars,
+    case-insensitive `Date`/`Open`/`High`/`Low`/`Close`/`Adjusted_close`/
+    `Volume` keys) -> a `date, open, high, low, close, adjusted_close,
+    volume` DataFrame, `date` as `datetime.date`.
+    """
+    rows = []
+    for item in payload or []:
+        rows.append({
+            "date": _parse_date(_ci_get(item, "Date")),
+            "open": _ci_get(item, "Open"),
+            "high": _ci_get(item, "High"),
+            "low": _ci_get(item, "Low"),
+            "close": _ci_get(item, "Close"),
+            "adjusted_close": _ci_get(item, "Adjusted_close", "AdjustedClose"),
+            "volume": _ci_get(item, "Volume"),
+        })
+    return pd.DataFrame(rows, columns=_EOD_COLUMNS)
+
+
+_INTRADAY_COLUMNS = ["ts_ms", "open", "high", "low", "close", "volume"]
+
+
+def parse_intraday(payload: list) -> pd.DataFrame:
+    """Parse an EODHD `/api/intraday/<SYM>` payload (a JSON array of
+    intraday bars, case-insensitive `Timestamp` - vendor unix seconds -
+    plus `Open`/`High`/`Low`/`Close`/`Volume` keys) -> a `ts_ms, open,
+    high, low, close, volume` DataFrame, `ts_ms` as vendor-timestamp
+    milliseconds (`Timestamp * 1000`).
+    """
+    rows = []
+    for item in payload or []:
+        ts = _ci_get(item, "Timestamp")
+        rows.append({
+            "ts_ms": int(ts) * 1000 if ts is not None else None,
+            "open": _ci_get(item, "Open"),
+            "high": _ci_get(item, "High"),
+            "low": _ci_get(item, "Low"),
+            "close": _ci_get(item, "Close"),
+            "volume": _ci_get(item, "Volume"),
+        })
+    return pd.DataFrame(rows, columns=_INTRADAY_COLUMNS)
 
 
 # ---------------------------------------------------------------------------
@@ -403,3 +485,84 @@ class ReferenceClient:
         )
         payload = self._load_json(payload_bytes, {})
         return parse_fundamentals(payload), record
+
+    def get_eod(
+        self,
+        symbol: str,
+        from_date: "dt.date | str",
+        to_date: "dt.date | str",
+        *,
+        exchange: str | None = None,
+        observed_at: dt.datetime | None = None,
+    ) -> tuple[pd.DataFrame, Any]:
+        """Fetch a date-ranged daily-bar (EOD) slice for `symbol`.
+
+        Mirrors `get_fundamentals`'s `exchange` convention: purely
+        informational bookkeeping (`request_exchange_code`), never used to
+        change the vendor URL - `symbol` is assumed to already carry
+        whatever exchange suffix EODHD needs (e.g. `"AAPL.US"`).
+        """
+        from_str = _fmt_date(from_date)
+        to_str = _fmt_date(to_date)
+        url = _ENDPOINTS["eod"].format(
+            symbol=symbol, from_date=from_str, to_date=to_str, token=self.api_key
+        )
+        request_params = {"symbol": symbol, "from": from_str, "to": to_str, "token": _REDACTED}
+        if exchange is not None:
+            request_params["exchange"] = exchange
+        payload_bytes, record = self._fetch(
+            url=url,
+            table="bronze.eodhd_eod_capture",
+            endpoint="eod",
+            request_params=request_params,
+            extra_cols={
+                "request_symbol": symbol,
+                "request_exchange_code": exchange,
+                "request_from_sec": _to_epoch_seconds(from_date),
+                "request_to_sec": _to_epoch_seconds(to_date),
+            },
+            observed_at=observed_at,
+        )
+        payload = self._load_json(payload_bytes, [])
+        return parse_eod(payload), record
+
+    def get_intraday(
+        self,
+        symbol: str,
+        interval: str,
+        from_ts: int,
+        to_ts: int,
+        *,
+        exchange: str | None = None,
+        observed_at: dt.datetime | None = None,
+    ) -> tuple[pd.DataFrame, Any]:
+        """Fetch an intraday-bar slice for `symbol` at `interval`
+        (EODHD's own interval strings, e.g. `"1m"`/`"5m"`) between
+        `from_ts`/`to_ts` (unix seconds, per EODHD's intraday endpoint
+        convention - unlike `get_eod`'s date-string `from`/`to`).
+        """
+        url = _ENDPOINTS["intraday"].format(
+            symbol=symbol, interval=interval, from_ts=from_ts, to_ts=to_ts, token=self.api_key
+        )
+        request_params = {
+            "symbol": symbol, "interval": interval, "from": from_ts, "to": to_ts,
+            "token": _REDACTED,
+        }
+        if exchange is not None:
+            request_params["exchange"] = exchange
+        payload_bytes, record = self._fetch(
+            url=url,
+            table="bronze.eodhd_intraday_capture",
+            endpoint="intraday",
+            request_params=request_params,
+            extra_cols={
+                "request_symbol": symbol,
+                "request_exchange_code": exchange,
+                "request_from_sec": from_ts,
+                "request_to_sec": to_ts,
+                "interval": interval,
+            },
+            observed_at=observed_at,
+        )
+        payload = self._load_json(payload_bytes, [])
+        return parse_intraday(payload), record
