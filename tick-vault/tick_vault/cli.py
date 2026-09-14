@@ -528,6 +528,10 @@ def handle_status(args: argparse.Namespace, ctx_factory) -> int:
         dq_df = dq_reader(ctx.root)
         if dq_df is not None and not dq_df.empty:
             open_dq_count = int((dq_df["status"] == "OPEN").sum())
+    else:  # nothing injects a reader in production: read the real table
+        from tick_vault.status_app import _default_dq_open
+
+        open_dq_count = _default_dq_open(ctx.root)
 
     budget_state = {
         "consecutive_waits": ctx.budget.consecutive_waits,

@@ -206,6 +206,8 @@ def _to_date(value) -> "dt.date | None":
         return value.to_pydatetime().date()
     if isinstance(value, dt.date):
         return value
+    if isinstance(value, str):  # CLI args (`vault manifest --generate FIRST LAST`)
+        return dt.date.fromisoformat(value)
     return value
 
 
