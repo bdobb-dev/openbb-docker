@@ -125,7 +125,8 @@ def _item_get(item, key: str, default=None):
 
 
 def _is_eligible_flags(flags) -> bool:
-    if not flags:
+    # Delta returns list<string> columns as numpy arrays: never truth-test them
+    if flags is None or len(flags) == 0:
         return True
     return not any(f in INELIGIBLE_FLAGS for f in flags)
 
@@ -147,7 +148,7 @@ _CLOSING_GRACE = dt.timedelta(minutes=10)
 
 
 def _is_closing_print(flags) -> bool:
-    return bool(flags) and "CLOSING_PRINT" in flags
+    return flags is not None and "CLOSING_PRINT" in list(flags)
 
 
 def _in_session_or_closing_grace(ts: "pd.Timestamp", flags) -> bool:
