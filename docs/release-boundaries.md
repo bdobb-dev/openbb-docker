@@ -16,7 +16,7 @@ keep meaning what they meant when cut.
 | **9** | EODHD mapped onto the FMP data surface, via REST API calls — the full `openbb-eodhd` parity package (52 fetchers, extension 9.x line) | **v9.1.0** (to cut) |
 | **10** | Websockets, kdb and caching — live-grid service + `live_grid`/`live_chart` (plain streaming candles), kdb cache, `/series`, tick recorder | **v10.1.0** |
 | **11** | Delta Lake: daily storage, durable ticks, and the read-through cache that minimizes API calls (the fundamentals L2 tier rebuilt on Delta Lake) | **v11.2.0** (to cut) |
-| **12** | Charting/TA tool family + rita-proposed levels | **v12.0.0** (to cut from main once #41 lands) |
+| **12** | Charting/TA tool family + rita-proposed levels | **v12.0.0** |
 
 What moved: the eodhd extension's *expansion* was briefly slated for ep 10;
 live-grid historically shipped in the v9.0.0 tag; chart types/overlays
