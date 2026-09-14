@@ -14,9 +14,9 @@ keep meaning what they meant when cut.
 | Episode | Covers | Article pins |
 |---|---|---|
 | **9** | EODHD mapped onto the FMP data surface, via REST API calls — the full `openbb-eodhd` parity package (52 fetchers, extension 9.x line) | **v9.1.0** (to cut) |
-| **10** | Websockets, kdb and caching — live-grid service + `live_grid`/`live_chart` (plain streaming candles), kdb cache, `/series`, tick recorder | **v10.1.0** (to cut) |
+| **10** | Websockets, kdb and caching — live-grid service + `live_grid`/`live_chart` (plain streaming candles), kdb cache, `/series`, tick recorder | **v10.1.0** |
 | **11** | Delta Lake: daily storage, durable ticks, and the read-through cache that minimizes API calls (the fundamentals L2 tier rebuilt on Delta Lake) | **v11.2.0** (to cut) |
-| **12** | Charting/TA tool family + rita-proposed levels | future |
+| **12** | Charting/TA tool family + rita-proposed levels | **v12.0.0** (to cut from main once #41 lands) |
 
 What moved: the eodhd extension's *expansion* was briefly slated for ep 10;
 live-grid historically shipped in the v9.0.0 tag; chart types/overlays
@@ -30,10 +30,28 @@ as ep 9 / ep 10 / ep 12 respectively.
   fetchers) and the derived `extension-constraints.txt`. live-grid remains
   *in the tree* (it shipped in v9.0.0; removing shipped code from a release
   line is churn) — the episode-9 article simply doesn't cover it.
-- **v10.1.0**: `v10.0.0` + the kdb-line follow-ons — tick-log durability
-  (`d26effb`), the kdb-ws demo chart (`f3d14d9`), per-bar vwap. Cut after
-  that work settles; it is in flight on `eodhd-fmp-parity` today and
-  belongs on the ep-10 line, not the parity line.
+- **v10.1.0** (cut 2026-09-14, branch `release/v10.1.0`): `v10.0.0` + the
+  kdb-line follow-ons, taken as ONE three-way merge of `93fcd88` (the last
+  kdb commit before the Delta re-cut: tick-log durability, the kdb-ws demo
+  chart, per-bar vwap, the `subscriptions` and `kdb_ticks` widgets) rather
+  than 99 cherry-picks — the tag and that line had diverged since the
+  Ep. 10 merge. Every conflict took 93fcd88's side, since the retrofit
+  layers the tag got by cherry-pick originate there. The Apache headers
+  follow on top, then `/apps.json` on openbb-api and live-grid, each
+  serving its episode's example dashboard. The pre-Delta MinIO/ArcticDB
+  store services ride along in compose: already on that line, and removing
+  shipped code from a release line is churn.
+- **The example dashboards are a retrofit layer (`apps`, 2026-09-14).**
+  Each backend serves the example dashboards built on its own widgets at
+  `GET /apps.json`, read from a file its Dockerfile bakes in
+  (`workspace_apps.json` for openbb-api, `live-grid/apps.json`,
+  `stores-explorer/apps.json`). They are authored in bdobb-v2's
+  `docs/examples/` and written here by its `pnpm apps:sync`
+  (`EPISODE=N` on a tag's tree writes only that episode's), so every
+  episode image carries its own set and restore-episode shows them in
+  bdobb's Apps catalogue. `v9.6.1` and `v9.6.2` were re-pointed for it
+  (`backup/pre-apps-v9.6.1`, `backup/pre-apps-v9.6.2`); v10.1.0 and later
+  tags carry it from the cut.
 - **v11.2.0**: the Delta Lake replacement of the ArcticDB/MinIO store —
   eod-dump flushing to Delta Lake (`a061853`), daily storage, and the
   fundamentals read-through L2 rebuilt on delta-rs (design:
