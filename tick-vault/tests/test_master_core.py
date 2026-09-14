@@ -49,11 +49,20 @@ class _FakeLake:
 
     `reader` always returns the current `silver.identifier_assignment_
     version` table (creating it with the right columns if absent);
-    `writer` appends `df` onto whatever table `table` currently holds.
+    `writer` appends `df` onto whatever table `table` currently holds;
+    `system_closer` plays the role of the real `DeltaTable.update`
+    default (see `tick_vault.master._default_system_closer`) by mutating
+    the in-memory table's `system_to_ts` for each `(assignment_version_id,
+    system_to_ts)` instruction - so a re-read via `reader` sees exactly
+    the system-closed state a real Delta `UPDATE` would have left behind
+    (this is what makes the fake usable to test the controller-ruling fix
+    without deltalake installed). It also records every call it receives
+    in `closer_calls`, so tests can assert the close actually happened.
     """
 
     def __init__(self):
         self.tables: dict[str, pd.DataFrame] = {}
+        self.closer_calls: list[tuple[str, list]] = []
 
     def reader(self, root):
         return self.tables.get(
@@ -67,12 +76,28 @@ class _FakeLake:
             pd.concat([existing, df], ignore_index=True) if existing is not None else df.copy()
         )
 
+    def system_closer(self, root, table, closes):
+        self.closer_calls.append((table, list(closes)))
+        frame = self.tables.get(table)
+        if frame is None or frame.empty:
+            return
+        for assignment_version_id, system_to_ts in closes:
+            frame.loc[
+                frame["assignment_version_id"] == assignment_version_id, "system_to_ts"
+            ] = system_to_ts
+        self.tables[table] = frame
+
     def get(self, table):
         return self.tables.get(table, pd.DataFrame())
 
 
 def _builder(lake):
-    return MasterBuilder("fake_root", assignments_reader=lake.reader, writer=lake.writer)
+    return MasterBuilder(
+        "fake_root",
+        assignments_reader=lake.reader,
+        writer=lake.writer,
+        system_closer=lake.system_closer,
+    )
 
 
 def _symbols_df(rows):
@@ -173,6 +198,7 @@ def test_symbol_change_closes_old_opens_new_same_listing():
     symbols = _symbols_df([{"code": "BK", "name": "Bank of NY", "exchange": "US", "type": "Common Stock", "isin": None}])
     upsert_result = mb.upsert_from_symbols(symbols, CAP1, OBS1)
     lst = upsert_result["listing_version"].iloc[0]["listing_id"]
+    old_assignment_id = upsert_result["identifier_assignment_version"].iloc[0]["assignment_version_id"]
 
     change_date = dt.date(2026, 6, 15)
     changes = _changes_df([{"old": "BK", "new": "BNY", "date": change_date}])
@@ -182,12 +208,56 @@ def test_symbol_change_closes_old_opens_new_same_listing():
     assert len(change_result["openfigi_resolution_queue"]) == 0
     assert len(change_result["data_quality_issue"]) == 0
 
+    # controller-ruling fix: the superseded (original BK) row must come
+    # back with an explicit system-close instruction, and the injected
+    # system_closer must actually have been invoked with it.
+    assert change_result["system_closes"] == [(old_assignment_id, OBS2)]
+    assert lake.closer_calls == [
+        ("silver.identifier_assignment_version", [(old_assignment_id, OBS2)])
+    ]
+    table = lake.get("silver.identifier_assignment_version")
+    old_row = table[table["assignment_version_id"] == old_assignment_id].iloc[0]
+    assert old_row["system_to_ts"] == OBS2
+
     assert mb.resolve_symbol_at("BK", dt.date(2026, 5, 1)) == lst
     assert mb.resolve_symbol_at("BNY", dt.date(2026, 8, 1)) == lst
     assert mb.resolve_symbol_at("BK", dt.date(2026, 8, 1)) is None
     # boundary: the change date itself belongs to the new code
     assert mb.resolve_symbol_at("BNY", change_date) == lst
     assert mb.resolve_symbol_at("BK", change_date) is None
+
+
+def test_symbol_change_twice_same_code_chains_system_closes():
+    """A code changed twice (A -> B -> C) must system-close BOTH
+    superseded rows, and a second `apply_symbol_changes` call must be
+    able to find B's (not A's) currently-open row - i.e. the within-batch
+    and across-call system_to_ts bookkeeping both hold under the new
+    system_to_ts-based `_current_rows` filter (no more reliance on
+    `supersedes_assignment_version_id` for "is this current")."""
+    lake = _FakeLake()
+    mb = _builder(lake)
+    symbols = _symbols_df([{"code": "A", "name": "A Corp", "exchange": "US", "type": "Common Stock", "isin": None}])
+    mb.upsert_from_symbols(symbols, CAP1, OBS1)
+
+    d1 = dt.date(2026, 3, 1)
+    mb.apply_symbol_changes(_changes_df([{"old": "A", "new": "B", "date": d1}]), CAP2, OBS2)
+
+    OBS3 = dt.datetime(2026, 9, 1, tzinfo=dt.timezone.utc)
+    d2 = dt.date(2026, 9, 15)
+    result2 = mb.apply_symbol_changes(_changes_df([{"old": "B", "new": "C", "date": d2}]), "cap_changes2", OBS3)
+
+    assert len(result2["identifier_assignment_version"]) == 2
+    assert len(result2["openfigi_resolution_queue"]) == 0
+
+    assert mb.resolve_symbol_at("A", dt.date(2026, 2, 1)) is not None
+    assert mb.resolve_symbol_at("A", dt.date(2026, 6, 1)) is None
+    assert mb.resolve_symbol_at("B", dt.date(2026, 6, 1)) is not None
+    assert mb.resolve_symbol_at("B", dt.date(2026, 10, 1)) is None
+    assert mb.resolve_symbol_at("C", dt.date(2026, 10, 1)) is not None
+
+    table = lake.get("silver.identifier_assignment_version")
+    closed = table[table["system_to_ts"].notna()]
+    assert len(closed) == 2  # A's original row, and B's open_row-turned-superseded row
 
 
 # ---------------------------------------------------------------------------

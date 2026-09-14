@@ -27,6 +27,22 @@ CI gotchas exercised here (per earlier tasks' lessons):
     `NaT`; comparisons below go through `MasterBuilder.resolve_symbol_at`
     (which itself normalizes via `_to_utc_ts`) rather than comparing
     `Timestamp`/`datetime` directly against a `deltalake`-read frame.
+
+Fix-round addition: `test_apply_symbol_changes_system_closes_superseded_row`
+below is a DuckDB-free, `MasterBuilder`-free check of the binding
+controller ruling (module docstring's "Append-only convention, WITH ONE
+BINDING EXCEPTION" section) - it reads the raw
+`silver.identifier_assignment_version` Delta table directly via
+`deltalake.DeltaTable(...).to_pandas()` (no `resolve_symbol_at`, no SQL)
+and asserts the OLD (superseded) row now carries a non-null
+`system_to_ts`, while the new close-row/new-row pair it was superseded by
+remain `system_to_ts IS NULL`. This is the exact shape
+`tick_vault.reference_queries.pit_listing` depends on (`system_to_ts IS
+NULL OR system_to_ts > decision_ts`) to stay single-valued after a symbol
+change - CI should treat a failure here as the strongest possible signal
+that `_default_system_closer`'s `DeltaTable.update(updates=..., predicate=
+...)` call needs to be re-verified against the installed `deltalake`
+version (see that function's docstring note).
 """
 import datetime as dt
 import decimal
@@ -137,3 +153,34 @@ def test_cusip_isin_cik_attached_at_instrument_scope_in_delta(root):
     assert len(issue_rows) == 3
     assert (issue_rows["instrument_id"] == instrument_id).all()
     assert issue_rows["listing_id"].isna().all()
+
+
+
+def test_apply_symbol_changes_system_closes_superseded_row(root):
+    """DuckDB-free, deltalake-direct check of the controller-ruling fix:
+    after a symbol change, the OLD assignment row must be system-closed
+    (system_to_ts set, via a real `DeltaTable.update`) - not just
+    superseded by a new append-only version row - so that
+    `reference_queries.pit_listing` (which filters on `system_to_ts IS
+    NULL OR system_to_ts > decision_ts` and has no notion of
+    `supersedes_assignment_version_id` chains) stops matching the old
+    code forever.
+    """
+    mb = MasterBuilder(root)
+    symbols = _symbols_df([{"code": "BK", "name": "Bank of NY", "exchange": "US", "type": "Common Stock", "isin": None}])
+    upsert_result = mb.upsert_from_symbols(symbols, "cap_1", OBS1)
+    old_assignment_id = upsert_result["identifier_assignment_version"].iloc[0]["assignment_version_id"]
+
+    change_date = dt.date(2026, 6, 15)
+    changes = _changes_df([{"old": "BK", "new": "BNY", "date": change_date}])
+    change_result = mb.apply_symbol_changes(changes, "cap_2", OBS2)
+    assert change_result["system_closes"] == [(old_assignment_id, OBS2)]
+
+    assignments = _read(root, "silver.identifier_assignment_version")
+    assert len(assignments) == 3  # original BK (now system-closed) + BK close-row + BNY open-row
+
+    old_row = assignments[assignments["assignment_version_id"] == old_assignment_id].iloc[0]
+    assert pd.notna(old_row["system_to_ts"])
+
+    other_rows = assignments[assignments["assignment_version_id"] != old_assignment_id]
+    assert other_rows["system_to_ts"].isna().all()

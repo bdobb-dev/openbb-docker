@@ -28,24 +28,47 @@ reads/writes. Neither default import lives at module scope (matching
 pattern): they're lazy-imported inside `_default_assignments_reader`/
 `_default_writer`.
 
-Append-only convention (no in-place row updates)
---------------------------------------------------
+Append-only convention, WITH ONE BINDING EXCEPTION: system-time closure
+-------------------------------------------------------------------------
 Every other Delta writer in this repo (`tick_vault.capture.append_rows`,
 `tick_vault.tick_writer`, `tick_vault.diffing`) only ever appends - a
 correction is a brand-new row carrying a `supersedes_*_id` pointer back
 at the row it replaces, never an in-place update of the old row. This
-module follows the same convention for "closing" an identifier
-assignment (`apply_symbol_changes`): the old code's assignment is not
-mutated - instead the SAME id_value gets a new version row appended, with
-`effective_to_ts` set to the change date and
-`supersedes_assignment_version_id` pointing at the row it closes.
-`_current_rows` (below) is the read-side counterpart: it treats any row
-that is referenced by another row's `supersedes_assignment_version_id` as
-no longer current, so `resolve_symbol_at`/the old-code lookup in
-`apply_symbol_changes`/the idempotency check in `upsert_from_symbols` all
-only ever see the head of each assignment's version chain, not stale
-superseded rows - without ever needing a physical `system_to_ts` UPDATE
-against an existing Delta row.
+module follows that same convention for the *business* history of an
+identifier assignment (`apply_symbol_changes`): the old code's identity
+is not mutated - the SAME id_value/instrument/listing gets a new version
+row appended, with `effective_to_ts` set to the change date and
+`supersedes_assignment_version_id` pointing at the row it replaces.
+
+However (controller ruling, binding - fix-round on this module): a
+superseded assignment row's Delta-native `system_to_ts` (system/knowledge
+time, baseline design doc §4.1's bitemporal model) IS explicitly updated
+in place when it is superseded - `system_to_ts = observed_at` of the
+capture that superseded it - via a targeted `deltalake.DeltaTable.update`
+call scoped to that one row's `assignment_version_id` (see
+`_default_system_closer` below). This is a deliberate, narrow exception
+to the append-only convention, confined to silver *METADATA version*
+tables like `silver.identifier_assignment_version` (never tick/fact
+data, which stays append-only): the DuckDB point-in-time layer
+(`tick_vault.reference_queries.pit_listing`) has no notion of a
+`supersedes_assignment_version_id` chain - it filters purely on the
+row's own effective interval plus `system_to_ts IS NULL OR system_to_ts
+> decision_ts`. Without physically closing the superseded row's
+`system_to_ts`, that row's `effective_to_ts` is left untouched (open-
+ended, by design - only the *new* close-row carries the closing
+`effective_to_ts`) and so it would satisfy `pit_listing`'s effective-
+interval predicate forever, and after a ticker-reuse-shaped sequence
+`pit_listing` could return more than one listing for the same symbol.
+Setting `system_to_ts` is therefore not optional bookkeeping; it is what
+keeps the DuckDB PIT resolution layer single-valued.
+
+`_current_rows` (below) is the read-side counterpart on the Python side:
+it now filters purely on `system_to_ts IS NULL` (mirroring
+`pit_listing`), NOT on whether a row is referenced by some other row's
+`supersedes_assignment_version_id` - that pointer is retained purely as
+provenance (which row a given version replaced), never as the read-path
+signal for "is this row current". This keeps the Python-side notion of
+"current" and the DuckDB-side notion of "current" identical.
 
 Knowledge-time rule (binding, per task brief)
 -----------------------------------------------
@@ -247,17 +270,18 @@ def _row(columns: list, **overrides) -> dict:
 # ---------------------------------------------------------------------------
 
 def _current_rows(assignments_df: "pd.DataFrame | None") -> pd.DataFrame:
-    """The head of every assignment version chain: rows not referenced by
-    any other row's `supersedes_assignment_version_id`, and (defensively,
-    should a future writer ever close one) not system-closed either. See
-    the module docstring's "Append-only convention" section.
+    """The currently-open rows: `system_to_ts IS NULL`, exactly mirroring
+    `tick_vault.reference_queries.pit_listing`'s "current" predicate. See
+    the module docstring's "Append-only convention, WITH ONE BINDING
+    EXCEPTION" section - `supersedes_assignment_version_id` is provenance
+    only and plays no part in this filter.
     """
     if assignments_df is None or assignments_df.empty:
         return _empty(_ASSIGNMENT_COLUMNS)
-    superseded_ids = set(assignments_df["supersedes_assignment_version_id"].dropna())
-    mask = ~assignments_df["assignment_version_id"].isin(superseded_ids)
     if "system_to_ts" in assignments_df.columns:
-        mask &= assignments_df["system_to_ts"].isna()
+        mask = assignments_df["system_to_ts"].isna()
+    else:
+        mask = pd.Series(True, index=assignments_df.index)
     return assignments_df[mask]
 
 
@@ -362,10 +386,16 @@ def compute_symbol_upsert(
         listing_version_id = new_id("lst")
         assignment_version_id = new_id("wrk")
 
+        instrument_type = r.get("type")
+        if _is_missing(instrument_type):
+            # silver.instrument.instrument_type is non-null; default to
+            # "UNKNOWN" rather than writing a null into a non-null column
+            # (minor fix from review).
+            instrument_type = "UNKNOWN"
         instrument_rows.append(_row(
             _INSTRUMENT_COLUMNS,
             instrument_id=instrument_id,
-            instrument_type=r.get("type"),
+            instrument_type=instrument_type,
             created_at_ts=observed_at_ts,
             status="ACTIVE",
             source_system=SOURCE_SYSTEM,
@@ -432,11 +462,25 @@ def compute_symbol_changes(
     assignment for `old` is queued (`AMBIGUOUS_MATCH`) and also logged to
     `ops.data_quality_issue` - resolving which one is correct needs human
     or FIGI-backed review, not a guess either.
+
+    Also returns `"system_closes"`: a plain `list[tuple[str,
+    datetime.datetime]]` of `(assignment_version_id, system_to_ts)`
+    instructions - one per row actually superseded above - for the
+    caller (`MasterBuilder.apply_symbol_changes`) to apply as a targeted
+    Delta `UPDATE` against the superseded row (see the module docstring's
+    binding controller ruling). This function stays pure/Delta-free: it
+    only *describes* the closes, it never performs one - but it does
+    apply each close to its own local `working` copy of the assignments
+    frame (system_to_ts only, never a physical mutation of the input
+    `assignments_df`) so that a second `old -> new` row in the same
+    `changes_df` batch, chained off the first, sees the correct
+    currently-open state without needing the real Delta UPDATE to have
+    happened yet.
     """
     observed_at_ts = _to_utc_ts(observed_at)
     working = assignments_df.copy() if assignments_df is not None else _empty(_ASSIGNMENT_COLUMNS)
 
-    new_assignment_rows, queue_rows, dq_rows = [], [], []
+    new_assignment_rows, queue_rows, dq_rows, system_closes = [], [], [], []
     for _, r in changes_df.iterrows():
         old_code = r.get("old")
         new_code = r.get("new")
@@ -534,10 +578,22 @@ def compute_symbol_changes(
             ignore_index=True,
         )
 
+        # System-close the superseded row: system_to_ts = observed_at (the
+        # closing knowledge time), applied here only to this function's own
+        # local `working` copy (so later rows in this same batch see the
+        # correct currently-open state), and recorded as an explicit
+        # instruction for the caller to apply against the real Delta row.
+        old_version_id = old_row["assignment_version_id"]
+        working.loc[
+            working["assignment_version_id"] == old_version_id, "system_to_ts"
+        ] = observed_at_ts
+        system_closes.append((old_version_id, observed_at_ts))
+
     return {
         "identifier_assignment_version": pd.DataFrame(new_assignment_rows, columns=_ASSIGNMENT_COLUMNS),
         "openfigi_resolution_queue": pd.DataFrame(queue_rows, columns=_QUEUE_COLUMNS),
         "data_quality_issue": pd.DataFrame(dq_rows, columns=_DQ_COLUMNS),
+        "system_closes": system_closes,
     }
 
 
@@ -638,6 +694,43 @@ def _default_writer(root: str, table: str, df: pd.DataFrame) -> None:
     append_rows(root, table, df)
 
 
+def _quote_sql_literal(value: str) -> str:
+    """Escape a single-quoted SQL string literal (doubling embedded `'`s).
+    `assignment_version_id` values are our own `new_id("wrk")` hex ids, so
+    this is defense-in-depth, not a real injection surface."""
+    return value.replace("'", "''")
+
+
+def _default_system_closer(root: str, table: str, closes: "list[tuple[str, object]]") -> None:
+    """Real Delta implementation of the `system_closer` seam (binding
+    controller ruling - see module docstring): for each `(assignment_
+    version_id, system_to_ts)` instruction, issue a targeted
+    `DeltaTable.update` against exactly that row, setting `system_to_ts`.
+
+    Uses the `updates={"col": "<sql expr>"}` + `predicate="<sql expr>"`
+    form of `DeltaTable.update` (present in `deltalake>=0.16`; still
+    present as of `deltalake>=1.0`). NOTE (unverified in this sandbox -
+    no deltalake installed - flag for CI): if a future `deltalake`
+    version renames/changes this signature, `tests/deferred/
+    test_master.py::test_apply_symbol_changes_system_closes_superseded_row`
+    is what will catch it under `pytest`.
+    """
+    from deltalake import DeltaTable
+
+    layer, name = table.split(".", 1)
+    dt_table = DeltaTable(f"{root}/{layer}/{name}")
+    for assignment_version_id, system_to_ts in closes:
+        ts = _to_utc_ts(system_to_ts)
+        ts_literal = ts.strftime("%Y-%m-%d %H:%M:%S.%f")
+        dt_table.update(
+            updates={"system_to_ts": f"TIMESTAMP '{ts_literal}'"},
+            predicate=(
+                "assignment_version_id = "
+                f"'{_quote_sql_literal(assignment_version_id)}'"
+            ),
+        )
+
+
 # ---------------------------------------------------------------------------
 # MasterBuilder
 # ---------------------------------------------------------------------------
@@ -647,17 +740,18 @@ class MasterBuilder:
     `silver.listing_version`, and `silver.identifier_assignment_version`
     rows from Task-3's parsed EODHD reference frames.
 
-    `assignments_reader(root) -> pandas.DataFrame` and `writer(root,
-    table, df) -> None` are both injectable (see module docstring); the
-    defaults are real Delta reads/writes. The identifier-assignment table
-    IS the persistent ID registry - there is no separate side-registry
-    file.
+    `assignments_reader(root) -> pandas.DataFrame`, `writer(root, table,
+    df) -> None`, and `system_closer(root, table, closes) -> None` are all
+    injectable (see module docstring); the defaults are real Delta reads/
+    writes/targeted-updates. The identifier-assignment table IS the
+    persistent ID registry - there is no separate side-registry file.
     """
 
-    def __init__(self, root: str, *, assignments_reader=None, writer=None):
+    def __init__(self, root: str, *, assignments_reader=None, writer=None, system_closer=None):
         self.root = root
         self._assignments_reader = assignments_reader or _default_assignments_reader
         self._writer = writer or _default_writer
+        self._system_closer = system_closer or _default_system_closer
 
     def _read_assignments(self) -> pd.DataFrame:
         return self._assignments_reader(self.root)
@@ -680,6 +774,14 @@ class MasterBuilder:
         self._write("silver.identifier_assignment_version", result["identifier_assignment_version"])
         self._write("ops.openfigi_resolution_queue", result["openfigi_resolution_queue"])
         self._write("ops.data_quality_issue", result["data_quality_issue"])
+        closes = result.get("system_closes") or []
+        if closes:
+            # Binding controller ruling: system-close each superseded row
+            # (system_to_ts = observed_at) so the DuckDB PIT layer
+            # (`reference_queries.pit_listing`) - which knows nothing of
+            # `supersedes_assignment_version_id` chains - stops matching a
+            # symbol's old identity forever. See module docstring.
+            self._system_closer(self.root, "silver.identifier_assignment_version", closes)
         return result
 
     def attach_issue_ids(self, fundamentals_df: pd.DataFrame, capture_id: str, observed_at) -> "dict[str, pd.DataFrame]":
