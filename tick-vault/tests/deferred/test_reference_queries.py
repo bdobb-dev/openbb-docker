@@ -35,6 +35,7 @@ open):
                 effective 2020-03-01 -> NULL.
 """
 import datetime as dt
+import decimal
 
 import duckdb
 import pyarrow as pa
@@ -78,7 +79,7 @@ def _membership_row(**overrides) -> dict:
         "source_system": "eodhd",
         "source_capture_id": "cap_test",
         "resolution_status": "RESOLVED",
-        "confidence": "1.0000",
+        "confidence": decimal.Decimal("1.0000"),
         "supersedes_membership_version_id": None,
     }
     row.update(overrides)
@@ -104,7 +105,7 @@ def _identifier_row(**overrides) -> dict:
         "source_system": "eodhd",
         "source_capture_id": "cap_test",
         "verification_status": "VERIFIED",
-        "confidence": "1.0000",
+        "confidence": decimal.Decimal("1.0000"),
         "supersedes_assignment_version_id": None,
     }
     row.update(overrides)
