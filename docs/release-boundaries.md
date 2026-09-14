@@ -38,9 +38,10 @@ as ep 9 / ep 10 / ep 12 respectively.
   Ep. 10 merge. Every conflict took 93fcd88's side, since the retrofit
   layers the tag got by cherry-pick originate there. The Apache headers
   follow on top, then `/apps.json` on openbb-api and live-grid, each
-  serving its episode's example dashboard. The pre-Delta MinIO/ArcticDB
-  store services ride along in compose: already on that line, and removing
-  shipped code from a release line is churn.
+  serving its episode's example dashboard. The Ep. 11 store that line
+  also carried (MinIO, ArcticDB, eod-dump, stores-explorer, stores-mcp,
+  tick-lab) is removed -- no ArcticDB services in chapter 10
+  (`backup/pre-store-removal-v10.1.0` keeps the tree that had them).
 - **The example dashboards are a retrofit layer (`apps`, 2026-09-14).**
   Each backend serves the example dashboards built on its own widgets at
   `GET /apps.json`, read from a file its Dockerfile bakes in
