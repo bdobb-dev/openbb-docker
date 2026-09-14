@@ -263,7 +263,16 @@ def build_mapping_job(queue_row: dict, assignments_df: "pd.DataFrame | None" = N
       3. Ticker + exchange fallback: the row's own `id_value` (whatever
          namespace it's actually in - `EODHD_SYMBOL`/`TICKER`) as
          `idType: "TICKER"`, plus `exchCode` from `exchange_code` if set.
-      4. `None` if the row has no `id_value` at all to fall back to.
+      4. `None` if the row has no `id_value` at all to fall back to. This
+         branch is defensive-only in the current pipeline: `ops.
+         openfigi_resolution_queue`'s `id_value` column is schema NOT
+         NULL (`_OPS_OPENFIGI_RESOLUTION_QUEUE`), so no real queue row
+         reaches this function with a missing `id_value` today. It stays
+         here (rather than being asserted-impossible) because
+         `build_mapping_job` is also exercised directly in tests against
+         hand-built dicts that can omit `id_value`, and because a future
+         queue producer relaxing that NOT NULL constraint should degrade
+         to "leave the row untouched" rather than raise.
     """
     namespace = queue_row.get("id_namespace")
     id_value = queue_row.get("id_value")
@@ -310,6 +319,36 @@ def build_headers(api_key: "str | None") -> dict:
 
 def sleep_seconds_for(api_key: "str | None") -> float:
     return SLEEP_SECONDS_KEYED if api_key else SLEEP_SECONDS_KEYLESS
+
+
+def build_batch_descriptor(jobs: "list[dict]") -> "tuple[str, str]":
+    """`jobs` (the list about to be POSTed to OpenFIGI's `/v3/mapping` in
+    one batch) -> `(request_id_type, request_id_value)` for `bronze.
+    openfigi_mapping_capture`'s NOT-NULL `request_id_type`/
+    `request_id_value` columns.
+
+    That schema was written for a single-identifier capture (task-1
+    brief's generic per-vendor-fetch shape - one request, one identifier),
+    but this worker's captures are batch-shaped: one bronze row per
+    up-to-`BATCH_LIMIT`-job POST, not per job. Rather than leave those
+    NOT-NULL columns unfillable, this repurposes them at the batch level
+    (controller ruling, task-6 fix round): `request_id_type` is always the
+    literal `"BATCH"`; `request_id_value` is a deterministic descriptor -
+    `"jobs=<n>;first=<idType>:<idValue>"` - naming the batch size and its
+    first job's own `idType`/`idValue`, enough to eyeball a capture row's
+    approximate contents without opening the payload.
+    `request_exchange_code` is left `None` (nullable; a batch has no
+    single exchange code to name).
+
+    `jobs` is expected non-empty in practice (`run_batch`'s `chunk()`
+    never yields an empty sub-list for a non-empty `pairs`), but an empty
+    list still returns a well-formed value (`"jobs=0;first=NONE:NONE"`)
+    rather than raising, since a NOT-NULL column must always get
+    something.
+    """
+    first_type = jobs[0]["idType"] if jobs else "NONE"
+    first_value = jobs[0]["idValue"] if jobs else "NONE"
+    return "BATCH", f"jobs={len(jobs)};first={first_type}:{first_value}"
 
 
 # ---------------------------------------------------------------------------
@@ -533,6 +572,7 @@ class FigiWorker:
             headers = build_headers(self.api_key)
             body = json.dumps(params).encode("utf-8")
             observed_at = self._now()
+            request_id_type, request_id_value = build_batch_descriptor(jobs)
 
             payload_bytes, record = self.capture_store.fetch_and_capture_post(
                 self.transport,
@@ -546,6 +586,11 @@ class FigiWorker:
                 ingestion_run_id=self.ingestion_run_id,
                 parser_version=self.parser_version,
                 source_system=SOURCE_SYSTEM,
+                extra_cols={
+                    "request_id_type": request_id_type,
+                    "request_id_value": request_id_value,
+                    "request_exchange_code": None,
+                },
             )
 
             if payload_bytes is not None:
