@@ -336,6 +336,16 @@ def test_advanced_chart_offers_a_price_basis_distinct_from_source():
     assert [o["value"] for o in source["options"]] == ["local", "eodhd"]
 
 
+def test_advanced_chart_offers_start_and_end_dates_for_the_custom_range():
+    # bdobb's Custom range button zooms to these; ta_series_ws already reads
+    # them as the study window. Blank by default: Custom then fits everything
+    # loaded, and the studies keep their one-year default.
+    spec = make_client().get("/widgets.json").json()
+    params = {p["paramName"]: p for p in spec["advanced_chart"]["params"]}
+    assert params["start"]["type"] == "date" and params["start"]["value"] == ""
+    assert params["end"]["type"] == "date" and params["end"]["value"] == ""
+
+
 def test_advanced_chart_offers_the_full_intraday_interval_range():
     spec = make_client().get("/widgets.json").json()
     interval = next(p for p in spec["advanced_chart"]["params"]

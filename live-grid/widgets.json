@@ -571,6 +571,20 @@
       "value": "raw"
      }
     ]
+   },
+   {
+    "paramName": "start",
+    "type": "date",
+    "label": "Start",
+    "value": "",
+    "description": "First day the Custom range button zooms to, and the first day the studies are computed from. Blank: everything loaded, and a year of studies."
+   },
+   {
+    "paramName": "end",
+    "type": "date",
+    "label": "End",
+    "value": "",
+    "description": "Last day the Custom range button zooms to, inclusive. Blank: the live edge."
    }
   ],
   "source": [
