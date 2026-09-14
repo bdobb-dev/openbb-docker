@@ -909,7 +909,9 @@ def fetch_week(
 
     existing_keys: set = set()
     if existing_ticks_reader is not None:
-        existing_keys = _existing_tick_keys(existing_ticks_reader(root, listing_id))
+        # only this item's week: a listing's whole history is far too big to reread per week
+        week_start = dt.datetime.fromtimestamp(int(_item_get(item, "request_from_sec")), dt.timezone.utc).date()
+        existing_keys = _existing_tick_keys(existing_ticks_reader(root, listing_id, week_monday=week_start))
 
     combined, captures, fetch_error = _fetch_raw_week(
         transport, store, item,

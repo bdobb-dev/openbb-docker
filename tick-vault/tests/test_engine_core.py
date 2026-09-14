@@ -438,7 +438,9 @@ def test_rerun_completed_tranche_is_idempotent():
     # prior COMPLETE run.
     existing_df = pd.DataFrame([{"trade_ts_ms": ts_ms, "session_seq": seq}])
 
-    def existing_ticks_reader(root, listing_id):
+    def existing_ticks_reader(root, listing_id, week_monday=None):
+        # fetch_week must bound the read to its week, never the whole listing
+        assert week_monday is not None
         return existing_df
 
     transport = FakeTransport([(200, _tick_json(ts_ms, seq))])
