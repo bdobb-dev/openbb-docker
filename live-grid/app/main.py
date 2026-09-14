@@ -45,6 +45,7 @@ from app.ta.sources import EodhdSource
 log = logging.getLogger("live-grid")
 
 WIDGETS_PATH = Path(__file__).resolve().parent.parent / "widgets.json"
+APPS_PATH = Path(__file__).resolve().parent.parent / "apps.json"
 FLUSH_INTERVAL = 0.25  # seconds between coalesced row flushes per connection
 
 
@@ -240,6 +241,18 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
 
     def _tick_window() -> timedelta:
         return recorder.window if recorder is not None else timedelta(0)
+
+    @app.get("/apps.json")
+    def apps() -> JSONResponse:
+        """The apps built on THIS backend's widgets.
+
+        Served verbatim. bdobb discovers apps.json per backend and resolves
+        each card by widget id, so an app lives with the backend that owns its
+        widgets rather than in one central list.
+        """
+        if not APPS_PATH.exists():
+            return JSONResponse([])
+        return JSONResponse(json.loads(APPS_PATH.read_text()))
 
     @app.get("/widgets.json")
     def widgets() -> JSONResponse:

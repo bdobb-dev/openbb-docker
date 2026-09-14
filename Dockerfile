@@ -174,6 +174,12 @@ print('OpenBB Platform OK:', len(obb.coverage.providers), 'providers (incl. eodh
 # rest_api.py -- same effect, but through the documented `--app/--factory`
 # entrypoint instead of a text substitution against upstream source.
 COPY api_app.py /opt/api_app.py
+# The example dashboards built on this API's widgets (the Ep. 9 calendars),
+# served at /apps.json. Authored in bdobb-v2 (docs/examples/) and written
+# here by its `EPISODE=10 pnpm apps:sync`, which routes every example to the
+# backend that owns its widgets (live-grid/apps.json holds the Ep. 10 one);
+# baked in so this episode's image carries its own set.
+COPY workspace_apps.json /root/OpenBBUserData/workspace_apps.json
 RUN python -c "\
 from openbb_platform_api.utils.api import import_app; \
 from starlette.middleware.cors import CORSMiddleware; \
