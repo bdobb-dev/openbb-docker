@@ -15,7 +15,7 @@ from later chapters is.
 | v2.0.0 | Ep. 2 — The Borrowed Terminal | HTTP Basic auth on the API, Tailscale Funnel (port 443 only) |
 | v3.0.0 | Ep. 3 — (with BDOBB v3.0.0) | key-maint: the transport-tiered key status widget backend |
 
-## What you get (this release: v3.0.0)
+## What you get (this release: v5.3.0)
 
 Two containers, one tailnet node, zero exposed ports:
 
