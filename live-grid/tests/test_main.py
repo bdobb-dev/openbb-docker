@@ -325,3 +325,13 @@ def test_the_range_bars_flanking_columns_hug_their_bar():
     assert defs["day_high"]["align"] == "left"
     assert defs["week52_low"]["align"] == "right"
     assert defs["week52_high"]["align"] == "left"
+
+
+def test_live_grid_declares_a_width_for_every_column():
+    # bdobb only switches a table to fixed layout when every visible column
+    # has a width; one unsized column and the whole live grid re-solves its
+    # column widths from the cell text on every tick, which reads as stutter.
+    # Hidden columns get one too, so showing one cannot unfix the layout.
+    spec = make_client().get("/widgets.json").json()
+    cols = spec["live_grid"]["data"]["table"]["columnsDefs"]
+    assert [c["field"] for c in cols if not isinstance(c.get("width"), int)] == []

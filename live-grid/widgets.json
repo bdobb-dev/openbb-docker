@@ -37,11 +37,13 @@
      },
      {
       "field": "symbol",
+      "width": 72,
       "headerName": "Symbol",
       "pinned": "left"
      },
      {
       "field": "price",
+      "width": 88,
       "headerName": "Last",
       "renderFn": [
        "showCellChange"
@@ -53,6 +55,7 @@
      },
      {
       "field": "change",
+      "width": 84,
       "headerName": "Chg",
       "renderFn": [
        "greenRed"
@@ -61,6 +64,7 @@
      },
      {
       "field": "change_percent",
+      "width": 84,
       "headerName": "% Chg",
       "renderFn": [
        "greenRed"
@@ -70,12 +74,14 @@
      },
      {
       "field": "day_low",
+      "width": 84,
       "headerName": "Day Low",
       "enableCellChangeWs": false,
       "align": "right"
      },
      {
       "field": "day_range",
+      "width": 64,
       "headerName": "Day",
       "renderFn": [
        "rangeBar"
@@ -89,18 +95,21 @@
      },
      {
       "field": "day_high",
+      "width": 84,
       "headerName": "Day High",
       "enableCellChangeWs": false,
       "align": "left"
      },
      {
       "field": "week52_low",
+      "width": 84,
       "headerName": "52w Low",
       "enableCellChangeWs": false,
       "align": "right"
      },
      {
       "field": "week52_range",
+      "width": 64,
       "headerName": "52 Week",
       "renderFn": [
        "rangeBar"
@@ -114,37 +123,44 @@
      },
      {
       "field": "week52_high",
+      "width": 84,
       "headerName": "52w High",
       "enableCellChangeWs": false,
       "align": "left"
      },
      {
       "field": "volume",
+      "width": 88,
       "headerName": "Volume",
       "enableCellChangeWs": false
      },
      {
       "field": "bid",
+      "width": 84,
       "headerName": "Bid",
       "hide": true
      },
      {
       "field": "ask",
+      "width": 84,
       "headerName": "Ask",
       "hide": true
      },
      {
       "field": "last_size",
+      "width": 80,
       "headerName": "Last Size",
       "hide": true
      },
      {
       "field": "updated_at",
+      "width": 132,
       "headerName": "Updated",
       "hide": true
      },
      {
       "field": "day_open",
+      "width": 88,
       "headerName": "Open",
       "hide": true
      }
