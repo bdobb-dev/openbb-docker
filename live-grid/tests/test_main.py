@@ -336,6 +336,16 @@ def test_advanced_chart_offers_a_price_basis_distinct_from_source():
     assert [o["value"] for o in source["options"]] == ["local", "eodhd"]
 
 
+def test_advanced_chart_offers_start_and_end_dates_for_the_custom_range():
+    # bdobb's Custom range button zooms to these; ta_series_ws already reads
+    # them as the study window. Blank by default: Custom then fits everything
+    # loaded, and the studies keep their one-year default.
+    spec = make_client().get("/widgets.json").json()
+    params = {p["paramName"]: p for p in spec["advanced_chart"]["params"]}
+    assert params["start"]["type"] == "date" and params["start"]["value"] == ""
+    assert params["end"]["type"] == "date" and params["end"]["value"] == ""
+
+
 def test_advanced_chart_offers_the_full_intraday_interval_range():
     spec = make_client().get("/widgets.json").json()
     interval = next(p for p in spec["advanced_chart"]["params"]
@@ -414,3 +424,12 @@ def test_the_tick_time_column_is_declared_text():
     body = make_client().get("/widgets.json").json()
     (t,) = [c for c in body["kdb_ticks"]["data"]["table"]["columnsDefs"] if c["field"] == "time"]
     assert t["cellDataType"] == "text"
+
+
+def test_live_grid_rsi_bars_grow_outward_from_the_30_70_bands():
+    # bdobb's meter draws nothing between the bands and grows the bar from
+    # the band the RSI has crossed: 15 from 30 down, 85 from 70 up.
+    spec = make_client().get("/widgets.json").json()
+    cols = spec["live_grid"]["data"]["table"]["columnsDefs"]
+    rsi = next(c for c in cols if c["field"] == "rsi")
+    assert rsi["renderFnParams"]["bands"] == [30, 70]

@@ -80,7 +80,7 @@
       "width": 116,
       "headerName": "RSI",
       "renderFn": ["rangeBar"],
-      "renderFnParams": { "min": 0, "max": 100, "guides": [30, 50, 70] }
+      "renderFnParams": { "min": 0, "max": 100, "guides": [30, 50, 70], "bands": [30, 70] }
      },
      {
       "field": "avwap",
@@ -571,6 +571,20 @@
       "value": "raw"
      }
     ]
+   },
+   {
+    "paramName": "start",
+    "type": "date",
+    "label": "Start",
+    "value": "",
+    "description": "First day the Custom range button zooms to, and the first day the studies are computed from. Blank: everything loaded, and a year of studies."
+   },
+   {
+    "paramName": "end",
+    "type": "date",
+    "label": "End",
+    "value": "",
+    "description": "Last day the Custom range button zooms to, inclusive. Blank: the live edge."
    }
   ],
   "source": [
