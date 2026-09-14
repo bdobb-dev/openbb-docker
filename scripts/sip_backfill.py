@@ -53,8 +53,9 @@ at or before its newest failure and, while that failure is recent, in the daily
 pass (_progress/_blacklist.json). Scoped in time because a ticker rename makes
 a symbol unservable before the change only. A 5xx on a longer span only halves it.
 
-Budget: one request per symbol per window is the floor (10 API calls each;
-100k/day); the daily pass runs only on mornings after a session (Tue-Sat ET).
+Budget: one request per symbol per window is the floor. On the first-party
+endpoint a request is 1 API call of the 100k/day (it was 10 on the marketplace
+product); the daily pass runs only on mornings after a session (Tue-Sat ET).
 
 Env: EODHD_API_KEY, DELTA_S3_* (tick-lab's S3Config), SIP_WORKERS (6),
 SIP_WORK (/tmp/sip), SIP_LIBRARY (ticks_sip), SIP_SETTLE_LAG_DAYS (7),
@@ -85,7 +86,17 @@ from tick_lab.config import from_env  # noqa: E402
 from tick_lab.store import TickStore  # noqa: E402
 
 log = logging.getLogger("sip-backfill")
-TICKS = "https://eodhd.com/api/mp/unicornbay/tickdata/ticks"
+# The All-in-One package's own tick endpoint (EODHD support, 2026-09-14). Same
+# schema as the marketplace UnicornBay product it replaced: ts (ms), price,
+# shares, mkt, sub_mkt, seq, sl; from/to inclusive in seconds. Differences:
+# 1 API call per request (not 10), ~7x faster, class shares with a dot
+# (BRK.B, not BRK-B), 404 for an unknown symbol.
+TICKS = "https://eodhd.com/api/ticks/"
+
+
+def api_symbol(sym: str) -> str:
+    """Vendor spelling: the components list says BRK-B, the tick API wants BRK.B."""
+    return sym.replace("-", ".")
 FLOOR = date(2008, 1, 1)  # ticks exist back to at least 2008-03 (probed 2026-09-07)
 
 
@@ -102,6 +113,11 @@ class Budget(Exception):
     """429 for hours, or 403 for everyone: the API is not serving us right now
     (budget spent, entitlement, or a block). Not a RuntimeError on purpose --
     nothing may treat it as a failure of the symbol or the span."""
+
+
+class NotFound(RuntimeError):
+    """HTTP 404: the endpoint does not know the symbol (or serves no ticks for
+    it). A verdict on the symbol -- no halving, no SPY control."""
 
 
 class Forbidden(RuntimeError):
@@ -144,6 +160,8 @@ def _get_json(url: str, timeout: int = 1800, tries: int = 3):
                     continue
             if e.code == 403:
                 raise Forbidden(f"HTTP 403: {body!r}") from e
+            if e.code == 404:
+                raise NotFound(f"HTTP 404: unknown symbol or no coverage") from e
             raise RuntimeError(f"HTTP {e.code}: {body!r}") from e
         except (TimeoutError, OSError) as e:
             if attempt < tries:
@@ -322,7 +340,7 @@ def _api_alive(key: str) -> bool:
     day it has always served. A 403/429/5xx here means the outage is ours,
     not the symbol's."""
     frm = int(datetime(2026, 9, 4, tzinfo=timezone.utc).timestamp())
-    q = urllib.parse.urlencode({"s": "SPY", "from": frm, "to": frm + 86400 - 1, "limit": 1, "api_token": key})
+    q = urllib.parse.urlencode({"s": "SPY", "from": frm, "to": frm + 86400 - 1, "limit": 1, "api_token": key, "fmt": "json"})
     try:
         raw = _get_json(f"{TICKS}?{q}", tries=1)
     except (RuntimeError, Budget):
@@ -332,7 +350,7 @@ def _api_alive(key: str) -> bool:
 
 def _day_served(key: str, frm: int) -> bool:
     """Whether the vendor serves this UTC day at all (SPY, limit=1)."""
-    q = urllib.parse.urlencode({"s": "SPY", "from": frm, "to": frm + 86400 - 1, "limit": 1, "api_token": key})
+    q = urllib.parse.urlencode({"s": "SPY", "from": frm, "to": frm + 86400 - 1, "limit": 1, "api_token": key, "fmt": "json"})
     try:
         raw = _get_json(f"{TICKS}?{q}", tries=1)
     except Forbidden:
@@ -365,10 +383,12 @@ def fetch_span(sym: str, key: str, frm: int, ndays: int) -> list:
             # end one second early: otherwise a print stamped exactly at
             # midnight lands in the next day's partition (2-row Saturday
             # partitions were seen for many symbols) and chunks overlap.
-            q = urllib.parse.urlencode({"s": sym, "from": frm + pos * 86400, "to": frm + (pos + span) * 86400 - 1, "api_token": key})
+            q = urllib.parse.urlencode({"s": api_symbol(sym), "from": frm + pos * 86400, "to": frm + (pos + span) * 86400 - 1, "api_token": key, "fmt": "json"})
             try:
                 raw = _get_json(f"{TICKS}?{q}")
                 break
+            except NotFound as e:
+                raise Unservable(str(e)) from e
             except Forbidden as e:
                 if not _api_alive(key):
                     raise Budget(f"{sym}: 403 and the SPY control fails: the API is not serving us") from e
