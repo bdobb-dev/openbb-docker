@@ -59,3 +59,9 @@ def test_create_all_writes_every_table(tmp_path):
         # rather than round-tripping through a pyarrow schema.
         assert {f.name for f in dt.schema().fields} == \
             {f.name for f in SCHEMAS[name]}
+
+
+def test_create_all_is_idempotent(tmp_path):
+    # every CLI verb calls it (cli._real_ctx); a populated root must survive
+    create_all(str(tmp_path))
+    create_all(str(tmp_path))

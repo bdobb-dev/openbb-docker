@@ -68,11 +68,11 @@ Semantics (baseline §8.3, binding - task-5 brief + controller ruling)
   non-nullable).
 - Overlap: among ROWS THAT RESOLVED in this same call, grouped by
   `(index_id, listing_id)`, if two intervals `[membership_effective_from,
-  membership_effective_to]` overlap UNDER INCLUSIVE `effective_to`
-  SEMANTICS (per `MEMBERSHIP_BOUNDARY_V1` below, `effective_to` is the
-  LAST included session, not an exclusive/day-after boundary - so two
-  same-listing intervals that merely TOUCH at a shared boundary date DO
-  count as overlapping; a `None` bound is open on that side), BOTH rows
+  membership_effective_to)` overlap UNDER END-EXCLUSIVE `effective_to`
+  SEMANTICS (per `MEMBERSHIP_BOUNDARY_V2` below, `effective_to` is the
+  first NON-member session - so two same-listing intervals that merely
+  TOUCH at a shared boundary date are adjacent, NOT overlapping; a `None`
+  bound is open on that side), BOTH rows
   are written (never silently dropped) but the LATER-STARTING one (by
   `membership_effective_from`; a `None` start sorts first, i.e. is never
   "later") is written with `resolution_status='AMBIGUOUS'` instead of
@@ -90,7 +90,7 @@ Semantics (baseline §8.3, binding - task-5 brief + controller ruling)
 - `membership_effective_from`/`membership_effective_to` are the vendor's
   own `start_date`/`end_date`, passed through unchanged (as
   `datetime.date`, per the schema's `date32` columns) under the
-  `MEMBERSHIP_BOUNDARY_V1` policy (see the module constant below) - no
+  `MEMBERSHIP_BOUNDARY_V2` policy (see the module constant below) - no
   session-shifting or off-by-one adjustment is applied here.
 - Idempotency: a candidate row is skipped (not re-written) if
   `memberships_reader(root)` already contains a row with the same
@@ -111,22 +111,24 @@ Semantics (baseline §8.3, binding - task-5 brief + controller ruling)
   constants `INDEX_ID`/`INDEX_VENDOR_SYMBOL`), used as defaults for every
   row this module writes.
 
-`MEMBERSHIP_BOUNDARY_V1`
+`MEMBERSHIP_BOUNDARY_V2`
 ------------------------
 A named policy-version constant, NOT a column on any row (the schema has
 no such column) - it exists to be exported into backtest run manifests
 (`ops.backtest_run_manifest`, a later episode) so a future consumer can
 tell which boundary interpretation a given membership snapshot was built
 under, without polluting `silver.index_membership_version`'s rows with a
-free-text field the schema was never given. The policy it names, verbatim
-per the task brief: a constituent is included EFFECTIVE AT that session's
-OPEN on `membership_effective_from`, and its LAST included session is
-`membership_effective_to` itself (i.e. `membership_effective_to` is the
-last member session, not an exclusive/day-after boundary) - this is a
-documentation-only convention for how callers should interpret the two
-DATE columns; this module does not enforce or adjust dates to match it,
-since the vendor's `start_date`/`end_date` are passed through unchanged
-(see above).
+free-text field the schema was never given. The policy it names: a
+constituent is included EFFECTIVE AT that session's OPEN on
+`membership_effective_from`, and `membership_effective_to` is EXCLUSIVE -
+the first session it is NOT a member. Phase-0 (2026-09-14) showed EODHD
+dates a removal with the same day as its replacement's StartDate, the S&P
+effective date (docs/superpowers/verification/2026-09-14-ep15-phase0.md).
+V1 had documented `effective_to` as the last member session; no rows were
+ever written under V1. The vendor's `start_date`/`end_date` pass through
+unchanged; `reference_queries`' PIT predicate (`effective_to >
+market_date`), this module's overlap check and the manifest's week overlap
+all read them end-exclusive.
 """
 from __future__ import annotations
 
@@ -168,9 +170,9 @@ DQ_CHECK_MEMBERSHIP_START_UNKNOWN = "MEMBERSHIP_START_UNKNOWN"
 INCLUSION_REASON_START_UNKNOWN = "START_DATE_UNKNOWN_BOUNDED_AT_OBSERVATION"
 
 # Boundary policy version (see module docstring): join effective at that
-# session's open; leave date = last member session. Exported for backtest
-# manifests, never stored on a membership row.
-MEMBERSHIP_BOUNDARY_V1 = "MEMBERSHIP_BOUNDARY_V1"
+# session's open; leave date = first NON-member session (end-exclusive).
+# Exported for backtest manifests, never stored on a membership row.
+MEMBERSHIP_BOUNDARY_V2 = "MEMBERSHIP_BOUNDARY_V2"
 
 _MEMBERSHIP_COLUMNS = [
     "membership_version_id", "index_id", "index_vendor_symbol", "listing_id",
@@ -259,20 +261,14 @@ def _sort_key(value: "dt.date | None") -> dt.date:
 
 
 def _intervals_overlap(from_a, to_a, from_b, to_b) -> bool:
-    """`[from_a, to_a] overlaps [from_b, to_b]` under `MEMBERSHIP_BOUNDARY_
-    V1`'s INCLUSIVE `effective_to` semantics (controller ruling, fix-
-    round): `effective_to` is the LAST included session, not an
-    exclusive/day-after boundary (see the module docstring), so two
-    same-listing intervals that merely TOUCH at a shared boundary date
-    (`to_a == from_b`) both claim that same session and DO overlap - this
-    is a half-open-looking signature (`[from_a, to_a)`-style args) but the
-    comparison is deliberately `<` rather than `<=` to get inclusive-
-    endpoint behavior. A `None` bound is open on that side (unbounded
-    start/end). No overlap iff one interval ends (strictly) before the
-    other starts."""
-    if to_a is not None and from_b is not None and to_a < from_b:
+    """Half-open `[from_a, to_a)` overlaps `[from_b, to_b)` under
+    `MEMBERSHIP_BOUNDARY_V2`'s END-EXCLUSIVE `effective_to`: intervals that
+    merely TOUCH (`to_a == from_b`) are adjacent, not overlapping. A `None`
+    bound is open on that side. No overlap iff one interval ends at or
+    before the other starts."""
+    if to_a is not None and from_b is not None and to_a <= from_b:
         return False
-    if to_b is not None and from_a is not None and to_b < from_a:
+    if to_b is not None and from_a is not None and to_b <= from_a:
         return False
     return True
 
@@ -544,7 +540,7 @@ def build_membership(
     writer=None,
     index_id: str = INDEX_ID,
     index_vendor_symbol: str = INDEX_VENDOR_SYMBOL,
-    boundary_policy: str = MEMBERSHIP_BOUNDARY_V1,
+    boundary_policy: str = MEMBERSHIP_BOUNDARY_V2,
 ) -> MembershipReport:
     """Build and write `silver.index_membership_version` rows (+ any
     `ops.data_quality_issue` overlap rows) from `components_df` (Task-3's
@@ -560,9 +556,9 @@ def build_membership(
     DataFrame]` (see `tests/test_membership_core.py`).
 
     `boundary_policy` is accepted for forward-compatibility with backtest
-    manifest generation (see `MEMBERSHIP_BOUNDARY_V1`'s docstring) - it is
+    manifest generation (see `MEMBERSHIP_BOUNDARY_V2`'s docstring) - it is
     not currently interpreted here (this module always uses
-    MEMBERSHIP_BOUNDARY_V1 semantics; passing a different value is not
+    MEMBERSHIP_BOUNDARY_V2 semantics; passing a different value is not
     validated, since there is no second policy implemented yet).
     """
     reader = memberships_reader or _default_memberships_reader

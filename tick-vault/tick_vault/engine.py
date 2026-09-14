@@ -321,12 +321,13 @@ def _week_bounds_utc(week_monday: dt.date) -> "tuple[int, int]":
 
 
 def _intervals_overlap(from_a, to_a, from_b, to_b) -> bool:
-    """`[from_a, to_a] overlaps [from_b, to_b]`, inclusive on both ends, a
-    `None` bound open on that side. Mirrors `tick_vault.membership.
-    _intervals_overlap`'s inclusive-`effective_to` semantics."""
-    if to_a is not None and from_b is not None and to_a < from_b:
+    """Half-open `[from_a, to_a)` overlaps `[from_b, to_b)`, a `None` bound
+    open on that side. `to` is EXCLUSIVE, matching `tick_vault.membership.
+    MEMBERSHIP_BOUNDARY_V2` (the vendor's EndDate is the first non-member
+    session) and `reference_queries`' PIT predicate."""
+    if to_a is not None and from_b is not None and to_a <= from_b:
         return False
-    if to_b is not None and from_a is not None and to_b < from_a:
+    if to_b is not None and from_a is not None and to_b <= from_a:
         return False
     return True
 
@@ -406,7 +407,7 @@ def generate_manifest(
     rows = []
     week_monday = first
     while week_monday <= last:
-        week_end = week_monday + dt.timedelta(days=6)
+        week_end = week_monday + dt.timedelta(days=7)  # exclusive: next Monday
         from_sec, to_sec = _week_bounds_utc(week_monday)
 
         listing_instrument: "dict[str, object]" = {}

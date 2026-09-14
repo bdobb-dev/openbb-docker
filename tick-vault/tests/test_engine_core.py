@@ -133,6 +133,29 @@ def test_manifest_week_overlap_includes_midweek_add():
     assert row["vendor_symbol_at_date"] == "AAA.US"
 
 
+def test_manifest_membership_end_is_exclusive():
+    # MEMBERSHIP_BOUNDARY_V2: EndDate is the first NON-member session, so a
+    # removal effective Monday 2024-01-08 gets no row for that week.
+    membership_df = pd.DataFrame([{
+        "listing_id": "lst_a", "instrument_id": "ins_a", "resolution_status": "RESOLVED",
+        "membership_effective_from": dt.date(2020, 1, 1),
+        "membership_effective_to": dt.date(2024, 1, 8),
+    }])
+    assignments_df = pd.DataFrame([{
+        "listing_id": "lst_a", "id_namespace": "EODHD_SYMBOL", "id_value": "AAA.US",
+        "effective_from_ts": dt.datetime(2020, 1, 1, tzinfo=UTC), "effective_to_ts": None,
+        "system_from_ts": dt.datetime(2020, 1, 1, tzinfo=UTC), "system_to_ts": None,
+        "observed_at_ts": dt.datetime(2020, 1, 1, tzinfo=UTC),
+    }])
+
+    out = generate_manifest(
+        membership_df, assignments_df, dt.date(2024, 1, 1), dt.date(2024, 1, 8),
+        existing_manifest_df=None, created_at=NOW,
+    )
+
+    assert list(out["week_monday"]) == [dt.date(2024, 1, 1)]
+
+
 # ---------------------------------------------------------------------------
 # 2. blocked identity when unresolvable
 # ---------------------------------------------------------------------------

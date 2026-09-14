@@ -713,13 +713,16 @@ def create_all(root: str) -> None:
 
     Each table is written to `<root>/<schema>/<table>` (e.g.
     `<root>/silver/us_trade_tick_version`), partitioned per `PARTITIONING`
-    when declared there.
+    when declared there. Idempotent: a table that already exists is left
+    untouched, so every CLI verb can call this on a fresh or populated root.
     """
     import deltalake
 
     for name, schema in SCHEMAS.items():
         layer, table = name.split(".", 1)
         path = f"{root}/{layer}/{table}"
+        if deltalake.DeltaTable.is_deltatable(path):
+            continue
         empty_table = pa.Table.from_pylist([], schema=schema)
         deltalake.write_deltalake(
             path, empty_table, partition_by=PARTITIONING.get(name)
