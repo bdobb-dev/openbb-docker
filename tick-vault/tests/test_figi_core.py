@@ -45,6 +45,7 @@ from tick_vault.figi import (
     FigiWorker,
     _ASSIGNMENT_LOOKUP_COLUMNS,
     _QUEUE_COLUMNS,
+    build_batch_descriptor,
     build_figi_rows,
     build_headers,
     build_mapping_job,
@@ -235,6 +236,30 @@ def test_sleep_seconds_for_keyless_and_keyed():
     assert SLEEP_SECONDS_KEYED == 60 / 250
 
 
+def test_build_batch_descriptor_names_size_and_first_job():
+    jobs = [
+        {"idType": "ID_CUSIP", "idValue": "037833100"},
+        {"idType": "TICKER", "idValue": "ZZZZ", "exchCode": "US"},
+    ]
+    id_type, id_value = build_batch_descriptor(jobs)
+    assert id_type == "BATCH"
+    assert id_value == "jobs=2;first=ID_CUSIP:037833100"
+
+
+def test_build_batch_descriptor_single_job():
+    id_type, id_value = build_batch_descriptor([{"idType": "TICKER", "idValue": "AAPL"}])
+    assert id_type == "BATCH"
+    assert id_value == "jobs=1;first=TICKER:AAPL"
+
+
+def test_build_batch_descriptor_empty_is_well_formed():
+    # Defensive-only: run_batch's chunk() never produces an empty
+    # sub-list for a non-empty pairs list, but the NOT-NULL bronze
+    # columns still need something well-formed if this is ever called
+    # directly with an empty batch.
+    assert build_batch_descriptor([]) == ("BATCH", "jobs=0;first=NONE:NONE")
+
+
 # ---------------------------------------------------------------------------
 # FigiWorker.run_batch, fully in-memory (fake queue/assignments/writer/
 # sleeper + FakeTransport + CaptureStore over a tmp dir for the payload
@@ -263,6 +288,7 @@ class _FakeCaptureStore:
         self.calls.append({
             "url": url, "table": table, "request_params": request_params,
             "observed_at": observed_at, "capture_id": capture_id,
+            "extra_cols": extra_cols,
         })
 
         class _Rec:
@@ -346,6 +372,14 @@ def test_run_batch_matched_and_no_match_end_to_end():
         {"idType": "TICKER", "idValue": "AAPL"},
         {"idType": "TICKER", "idValue": "ZZZZ"},
     ]}
+    # request_id_type/request_id_value are batch-shaped (see
+    # build_batch_descriptor) - NOT the per-job identifier - since
+    # bronze.openfigi_mapping_capture gets one row per batch, not per job.
+    assert call["extra_cols"] == {
+        "request_id_type": "BATCH",
+        "request_id_value": "jobs=2;first=TICKER:AAPL",
+        "request_exchange_code": None,
+    }
 
 
 def test_run_batch_sleeps_between_batches_keyless():
@@ -420,3 +454,67 @@ def test_run_batch_no_needs_figi_rows_is_a_noop():
     )
     summary = worker.run_batch()
     assert summary == {"considered": 0, "jobs_built": 0, "matched": 0, "no_match": 0, "batches": 0}
+
+
+def test_run_batch_short_response_leaves_tail_rows_untouched_no_misalignment():
+    """A response array shorter than the batch's jobs (a malformed/
+    truncated vendor response - OpenFIGI's contract is one entry per job,
+    positionally aligned, but nothing stops a truncated array from coming
+    back) must not misalign `zip(batch_pairs, response_list)`: rows with
+    a response entry are updated correctly and in the right order, rows
+    past the end of the short response are left untouched (still
+    NEEDS_FIGI, not fabricated as NO_MATCH, not matched against the
+    wrong entry)."""
+    rows = [
+        _queue_row(queue_id="wrk_q1", instrument_id="ins_1", listing_id="lst_1",
+                   id_namespace="EODHD_SYMBOL", id_value="AAPL"),
+        _queue_row(queue_id="wrk_q2", instrument_id="ins_2", listing_id="lst_2",
+                   id_namespace="EODHD_SYMBOL", id_value="MSFT"),
+        _queue_row(queue_id="wrk_q3", instrument_id="ins_3", listing_id="lst_3",
+                   id_namespace="EODHD_SYMBOL", id_value="ZZZZ"),
+    ]
+    queue_df = _make_queue_df(rows)
+    lake = _FakeLake(queue_df)
+    # Only one entry for three jobs - a truncated/malformed response.
+    short_response = json.dumps([FIXTURE[0]]).encode()
+    transport = FakeTransport([(200, short_response)])
+    capture_store = _FakeCaptureStore()
+
+    worker = FigiWorker(
+        transport, capture_store, "unused-root", api_key=None,
+        assignments_reader=lake.assignments_reader,
+        queue_reader=lake.queue_reader,
+        queue_writer=lake.queue_writer,
+        writer=lake.writer,
+        sleeper=lambda s: None,
+        now=lambda: OBS,
+    )
+
+    summary = worker.run_batch(limit=100)
+
+    # Only the first job (wrk_q1) has a response entry to process.
+    assert summary["considered"] == 3
+    assert summary["jobs_built"] == 3
+    assert summary["matched"] == 1
+    assert summary["no_match"] == 0
+
+    assert len(lake.queue_writes) == 1
+    _, updated_queue = lake.queue_writes[0]
+    by_id = {r["queue_id"]: r for r in updated_queue.to_dict("records")}
+
+    # First row matched correctly against FIXTURE[0] - no misalignment.
+    assert by_id["wrk_q1"]["status"] == QUEUE_STATUS_RESOLVED
+    assert by_id["wrk_q1"]["resolved_figi_assignment_version_id"]
+
+    # The tail rows past the short response's length are left completely
+    # untouched: still NEEDS_FIGI, attempts unchanged, no last_error.
+    assert by_id["wrk_q2"]["status"] == QUEUE_STATUS_NEEDS_FIGI
+    assert by_id["wrk_q2"]["attempts"] == 0
+    assert by_id["wrk_q2"]["last_error"] is None
+    assert by_id["wrk_q3"]["status"] == QUEUE_STATUS_NEEDS_FIGI
+    assert by_id["wrk_q3"]["attempts"] == 0
+    assert by_id["wrk_q3"]["last_error"] is None
+
+    silver_table, silver_df = lake.silver_writes[0]
+    assert len(silver_df) == 3  # FIXTURE[0]'s three levels, only for wrk_q1
+    assert (silver_df["instrument_id"] == "ins_1").all()

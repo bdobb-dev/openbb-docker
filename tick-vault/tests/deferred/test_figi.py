@@ -115,6 +115,14 @@ def test_run_batch_writes_bronze_capture_silver_rows_and_resolves_queue(tmp_path
     assert bronze.iloc[0]["endpoint"] == "/v3/mapping"
     params = json.loads(bronze.iloc[0]["request_parameters_json"])
     assert params == {"jobs": [{"idType": "TICKER", "idValue": "AAPL"}]}
+    # request_id_type/request_id_value are NOT NULL on this table but
+    # this worker's captures are batch-shaped, not single-identifier -
+    # see tick_vault.figi.build_batch_descriptor's docstring for why
+    # these are the batch-level "BATCH"/"jobs=<n>;first=<idType>:
+    # <idValue>" descriptor rather than a per-job identifier.
+    assert bronze.iloc[0]["request_id_type"] == "BATCH"
+    assert bronze.iloc[0]["request_id_value"] == "jobs=1;first=TICKER:AAPL"
+    assert pd.isna(bronze.iloc[0]["request_exchange_code"])
 
     silver = _read(root, "silver.figi_assignment_version")
     assert len(silver) == 3
