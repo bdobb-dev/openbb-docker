@@ -225,6 +225,26 @@ RUN python -c "import openbb; openbb.build(); from openbb import obb; \
 assert 'eodhd' in obb.coverage.providers, 'eodhd provider not registered'; \
 print('OpenBB Platform OK:', len(obb.coverage.providers), 'providers (incl. eodhd)')"
 
+# The FastAPI app factory `openbb-api --factory` serves (see api_app.py):
+# the stock Platform app with Chrome's Private Network Access preflight
+# answered. Replaces an earlier build-time rewrite of openbb_core's
+# rest_api.py -- same effect, but through the documented `--app/--factory`
+# entrypoint instead of a text substitution against upstream source.
+COPY api_app.py /opt/api_app.py
+# The Ep. 9 example dashboard api_app.py serves at /apps.json. Authored in
+# bdobb-v2 (docs/examples/) and written here by its `EPISODE=9 pnpm apps:sync`;
+# baked in so this episode's image carries its own example.
+COPY workspace_apps.json /root/OpenBBUserData/workspace_apps.json
+RUN python -c "\
+from openbb_platform_api.utils.api import import_app; \
+from starlette.middleware.cors import CORSMiddleware; \
+app = import_app('/opt/api_app.py', 'main', True); \
+layers = [mw for mw in app.user_middleware if mw.cls is CORSMiddleware]; \
+assert layers, 'api_app: no CORS middleware on the built app'; \
+assert all(mw.kwargs.get('allow_private_network') is True for mw in layers), \
+    'api_app: a CORS layer is missing allow_private_network'; \
+print('api_app factory OK:', len(layers), 'CORS layer(s), all private-network enabled')"
+
 WORKDIR /workspace
 
 # Self-provision persistent mount points so the image is drop-in on any host
