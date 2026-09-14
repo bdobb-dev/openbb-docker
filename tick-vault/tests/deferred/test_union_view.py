@@ -268,7 +268,9 @@ def test_pit_as_ingested_excludes_legacy(lake):
         legacy_root=legacy_root,
         watermarks={"AAPL": _W2_DATE},
     )
-    trade_dates = set(result.df["trade_date"].tolist())
+    # duckdb .df() returns DATE columns as datetime64 (pandas Timestamp);
+    # normalize to python dates so comparisons with dt.date constants work.
+    trade_dates = set(result.df["trade_date"].dt.date.tolist())
     assert _W1_DATE not in trade_dates  # honest empty: legacy has no real capture time
     assert _W2_DATE in trade_dates
 
@@ -286,7 +288,9 @@ def test_pit_simulated_includes_legacy(lake):
         legacy_root=legacy_root,
         watermarks={"AAPL": _W2_DATE},
     )
-    trade_dates = set(result.df["trade_date"].tolist())
+    # duckdb .df() returns DATE columns as datetime64 (pandas Timestamp);
+    # normalize to python dates so comparisons with dt.date constants work.
+    trade_dates = set(result.df["trade_date"].dt.date.tolist())
     # simulated floor for W1 (2021-11-01 + 1 day @ 08:00 = 2021-11-02 08:00)
     # is well before as_of (2021-11-10), so legacy W1 is visible.
     assert _W1_DATE in trade_dates
