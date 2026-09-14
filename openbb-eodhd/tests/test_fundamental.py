@@ -12,6 +12,8 @@ from openbb_eodhd.models.fundamental import (
     _snake,
     _num,
     _transform,
+    _fy_end_month,
+    _fiscal,
     INCOME_MAP,
     BALANCE_MAP,
     CASHFLOW_MAP,
@@ -167,6 +169,68 @@ class TestTransform:
         }
         rows = _transform(section_data, "annual", None, {})
         assert rows[0]["extra_field"] == 123.0
+
+
+# ============================================================
+# Fiscal year-end (9.6.2)
+# ============================================================
+
+class TestFiscalYearEnd:
+    def test_month_name_to_number(self):
+        assert _fy_end_month("September") == 9
+        assert _fy_end_month(" december ") == 12
+        assert _fy_end_month(None) is None
+        assert _fy_end_month("n/a") is None
+        assert _fy_end_month(9) is None
+
+    def test_fiscal_counts_from_the_year_end_month(self):
+        # Apple: fiscal year ends in September.
+        assert _fiscal(date(2025, 12, 31), "quarter", 9) == (2026, "Q1")
+        assert _fiscal(date(2026, 3, 31), "quarter", 9) == (2026, "Q2")
+        assert _fiscal(date(2026, 6, 30), "quarter", 9) == (2026, "Q3")
+        assert _fiscal(date(2025, 9, 30), "quarter", 9) == (2025, "Q4")
+        assert _fiscal(date(2025, 9, 30), "annual", 9) == (2025, "FY")
+        # A January year-end: the fiscal year is named for the calendar year it ends in.
+        assert _fiscal(date(2026, 1, 31), "annual", 1) == (2026, "FY")
+        assert _fiscal(date(2025, 4, 30), "quarter", 1) == (2026, "Q1")
+
+    def test_december_and_unknown_keep_the_calendar_quarter(self):
+        for m in (12, None):
+            assert _fiscal(date(2026, 6, 30), "quarter", m) == (2026, "Q2")
+            assert _fiscal(date(2026, 12, 31), "annual", m) == (2026, "FY")
+
+    def test_transform_takes_the_year_end(self):
+        section = {"quarterly": {
+            "2026-06-30": {"date": "2026-06-30", "totalRevenue": "1"},
+            "2025-12-31": {"date": "2025-12-31", "totalRevenue": "2"},
+        }}
+        rows = _transform(section, "quarter", None, INCOME_MAP, 9)
+        assert [(r["period_ending"], r["fiscal_year"], r["fiscal_period"]) for r in rows] == [
+            (date(2026, 6, 30), 2026, "Q3"),
+            (date(2025, 12, 31), 2026, "Q1"),
+        ]
+        # Default: unchanged behaviour for every caller that passes nothing.
+        assert _transform(section, "quarter", None, INCOME_MAP)[0]["fiscal_period"] == "Q2"
+
+
+def test_extract_reads_fiscal_year_end_from_general(monkeypatch):
+    """The statement fetchers label periods by General.FiscalYearEnd, from the same bundle."""
+    from openbb_eodhd.models import _fundamentals as F
+
+    F._reset_cache_for_tests()
+    bundle = {
+        "General": {"FiscalYearEnd": "September"},
+        "Financials": {"Income_Statement": {
+            "yearly": {},
+            "quarterly": {"2026-06-30": {"date": "2026-06-30", "totalRevenue": "1"}},
+        }},
+    }
+    monkeypatch.setattr(F, "_fetch_sync", lambda s, c: bundle)
+    monkeypatch.setattr(F, "_l2_get", lambda sym: None)
+    monkeypatch.setattr(F, "_l2_put", lambda sym, b: None)
+    q = EODHDIncomeStatementQueryParams(symbol="AAPL", period="quarter")
+    rows = asyncio.run(EODHDIncomeStatementFetcher.aextract_data(q, {"eodhd_api_key": "k"}))
+    assert (rows[0]["fiscal_year"], rows[0]["fiscal_period"]) == (2026, "Q3")
 
 
 # ============================================================
