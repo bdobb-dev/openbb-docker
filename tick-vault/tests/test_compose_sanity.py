@@ -14,7 +14,7 @@ import os
 
 import yaml
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 COMPOSE_PATH = os.path.join(REPO_ROOT, "docker-compose.yml")
 
 

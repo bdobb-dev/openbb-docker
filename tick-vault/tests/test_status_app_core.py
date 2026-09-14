@@ -25,8 +25,7 @@ import threading
 import urllib.error
 import urllib.request
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TICK_VAULT_ROOT = os.path.join(REPO_ROOT, "tick-vault")
+TICK_VAULT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if TICK_VAULT_ROOT not in sys.path:
     sys.path.insert(0, TICK_VAULT_ROOT)
 
