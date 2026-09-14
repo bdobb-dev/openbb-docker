@@ -11,3 +11,19 @@ uvicorn<0.41.0,>=0.40.0  # from openbb-core
 # shapes AND fails the build if it matches nothing; this pin makes the rebuild
 # deterministic so it cannot drift a third time.
 openbb-cftc==1.4.2
+
+# The trading-calendar extension's one dependency (v5.3.0, Ep. 5). Pinned here,
+# not in its pyproject, so this file stays the single place the image's pins
+# live. 5.4.0 is the version whose output the extension's tests were written
+# against: named holiday rules, early closes, XTKS/XHKG lunch-break columns.
+pandas_market_calendars==5.4.0
+
+# pandas_market_calendars' own transitive dependencies, unpinned by it. Pinned
+# here at the versions ghcr.io/artcashin/episode-openbb-local:3.0.0 resolves
+# (confirmed via `pip install --dry-run --report -` on 2026-09-14) so a
+# rebuild cannot silently drift onto a newer release of any of them.
+exchange_calendars==4.13.2
+pyluach==2.3.0
+toolz==1.1.0
+tzdata==2026.4
+korean_lunar_calendar==0.4.0
