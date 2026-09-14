@@ -575,7 +575,9 @@ def build_tick_url(symbol: str, frm: int, to: int, token: str) -> str:
     there instead), matching `tick_vault.eodhd_reference`'s API-key-
     hygiene convention.
     """
-    return TICK_ENDPOINT_TEMPLATE.format(symbol=symbol, frm=frm, to=to, token=token)
+    # The tick endpoint spells class shares with a dot (BRK.B, BF.B); the
+    # dash form the exchange symbol list uses 404s (Phase-0, 2026-09-14).
+    return TICK_ENDPOINT_TEMPLATE.format(symbol=symbol.replace("-", "."), frm=frm, to=to, token=token)
 
 
 def _window_span_seconds(span_days: float) -> int:

@@ -502,6 +502,8 @@ def test_request_windows_covers_range_exactly():
 def test_build_tick_url_shape():
     url = build_tick_url("AAPL.US", 100, 200, "TOKEN123")
     assert url == "https://eodhd.com/api/ticks?s=AAPL.US&from=100&to=200&api_token=TOKEN123"
+    # class shares: the master stores EODHD's dash code, the tick endpoint wants a dot
+    assert build_tick_url("BRK-B", 100, 200, "T").startswith("https://eodhd.com/api/ticks?s=BRK.B&")
 
 
 def test_dedup_ticks_empty_frames():
