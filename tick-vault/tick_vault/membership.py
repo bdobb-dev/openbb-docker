@@ -35,8 +35,23 @@ Semantics (baseline §8.3, binding - task-5 brief + controller ruling)
 -----------------------------------------------------------------------
 - Each vendor code is resolved via `resolver(code, start_date)` - i.e.
   at the constituent's OWN start date, not "today" or the capture's
-  `observed_at`. A `None`/missing `start_date` cannot be resolved (there
-  is no date to resolve at) and is written UNRESOLVED.
+  `observed_at` - EXCEPT when `start_date` is missing (a Components-only
+  row with no known join date): `membership_effective_from` is a
+  non-nullable `date32` column, so it can never be written as bare
+  `None`. Per controller ruling (fix-round), such a row is instead
+  resolved via `resolver(code, observed_at.date())` (the capture's OWN
+  knowledge time standing in for the unknown start), and
+  `membership_effective_from` is likewise bounded at `observed_at.date()`
+  - whether or not that resolution attempt succeeds. Either way the row
+  is tagged `inclusion_reason='START_DATE_UNKNOWN_BOUNDED_AT_OBSERVATION'`
+  (`INCLUSION_REASON_START_UNKNOWN`) and exactly one
+  `ops.data_quality_issue` row (`check_name='MEMBERSHIP_START_UNKNOWN'`)
+  is appended, so a later Phase-0 episode (with access to real
+  constituent-history data) can refine the bound. If that
+  observation-date resolution attempt itself returns `None`, the row is
+  UNRESOLVED (same as the ordinary "unknown code" case below) but STILL
+  carries `membership_effective_from=observed_at.date()` and the same
+  `inclusion_reason` - never a bare `None` into the column.
 - RESOLVED: `listing_id`/`instrument_id` set from the resolver,
   `resolution_status='RESOLVED'`, `confidence=AUTO_CONFIDENCE`
   (`Decimal("0.9000")`, same fixed auto-resolution confidence
@@ -53,16 +68,25 @@ Semantics (baseline §8.3, binding - task-5 brief + controller ruling)
   non-nullable).
 - Overlap: among ROWS THAT RESOLVED in this same call, grouped by
   `(index_id, listing_id)`, if two intervals `[membership_effective_from,
-  membership_effective_to)` overlap (a `None` bound is open on that
-  side), BOTH rows are written (never silently dropped) but the
-  LATER-STARTING one (by `membership_effective_from`; a `None` start
-  sorts first, i.e. is never "later") is written with
-  `resolution_status='AMBIGUOUS'` instead of `'RESOLVED'`, and exactly
-  one `ops.data_quality_issue` row (`check_name='MEMBERSHIP_OVERLAP'`)
-  is appended describing the conflicting pair. Detection is scoped to
-  the current `components_df` batch only - it does not re-read
-  previously-written membership rows (those are assumed already
-  reconciled when they were written).
+  membership_effective_to]` overlap UNDER INCLUSIVE `effective_to`
+  SEMANTICS (per `MEMBERSHIP_BOUNDARY_V1` below, `effective_to` is the
+  LAST included session, not an exclusive/day-after boundary - so two
+  same-listing intervals that merely TOUCH at a shared boundary date DO
+  count as overlapping; a `None` bound is open on that side), BOTH rows
+  are written (never silently dropped) but the LATER-STARTING one (by
+  `membership_effective_from`; a `None` start sorts first, i.e. is never
+  "later") is written with `resolution_status='AMBIGUOUS'` instead of
+  `'RESOLVED'`. Exactly one `ops.data_quality_issue` row
+  (`check_name='MEMBERSHIP_OVERLAP'`) is appended describing the
+  conflicting pair, UNLESS both participating rows already existed
+  (matched an already-written row's dedup key) BEFORE this call - i.e.
+  the issue is only (re-)emitted when at least one of the two rows is
+  newly written in THIS run, so an idempotent re-run over the same
+  `components_df` does not keep re-appending the same issue row forever
+  (controller ruling, fix-round). Detection is scoped to the current
+  `components_df` batch only - it does not re-read previously-written
+  membership rows (those are assumed already reconciled when they were
+  written).
 - `membership_effective_from`/`membership_effective_to` are the vendor's
   own `start_date`/`end_date`, passed through unchanged (as
   `datetime.date`, per the schema's `date32` columns) under the
@@ -131,6 +155,17 @@ RESOLUTION_UNRESOLVED = "UNRESOLVED"
 RESOLUTION_AMBIGUOUS = "AMBIGUOUS"
 
 DQ_CHECK_MEMBERSHIP_OVERLAP = "MEMBERSHIP_OVERLAP"
+DQ_CHECK_MEMBERSHIP_START_UNKNOWN = "MEMBERSHIP_START_UNKNOWN"
+
+# Controller ruling (fix-round): `membership_effective_from` is a
+# non-nullable date32 column, so a Components-only row with no vendor
+# `start_date` can never get a bare `None` written into it. Instead its
+# interval is bounded at the capture's OWN knowledge time
+# (`observed_at.date()`), regardless of whether the code goes on to
+# resolve or not, and the row is tagged with this `inclusion_reason` so a
+# later Phase-0 episode (which has access to real corporate-action/
+# constituent-history data) can refine the bound. See `compute_membership`.
+INCLUSION_REASON_START_UNKNOWN = "START_DATE_UNKNOWN_BOUNDED_AT_OBSERVATION"
 
 # Boundary policy version (see module docstring): join effective at that
 # session's open; leave date = last member session. Exported for backtest
@@ -224,11 +259,20 @@ def _sort_key(value: "dt.date | None") -> dt.date:
 
 
 def _intervals_overlap(from_a, to_a, from_b, to_b) -> bool:
-    """`[from_a, to_a) overlaps [from_b, to_b)`, where a `None` bound is
-    open on that side (unbounded start/end)."""
-    if to_a is not None and from_b is not None and to_a <= from_b:
+    """`[from_a, to_a] overlaps [from_b, to_b]` under `MEMBERSHIP_BOUNDARY_
+    V1`'s INCLUSIVE `effective_to` semantics (controller ruling, fix-
+    round): `effective_to` is the LAST included session, not an
+    exclusive/day-after boundary (see the module docstring), so two
+    same-listing intervals that merely TOUCH at a shared boundary date
+    (`to_a == from_b`) both claim that same session and DO overlap - this
+    is a half-open-looking signature (`[from_a, to_a)`-style args) but the
+    comparison is deliberately `<` rather than `<=` to get inclusive-
+    endpoint behavior. A `None` bound is open on that side (unbounded
+    start/end). No overlap iff one interval ends (strictly) before the
+    other starts."""
+    if to_a is not None and from_b is not None and to_a < from_b:
         return False
-    if to_b is not None and from_a is not None and to_b <= from_a:
+    if to_b is not None and from_a is not None and to_b < from_a:
         return False
     return True
 
@@ -282,8 +326,21 @@ def compute_membership(
     """
     observed_ts = _to_utc_ts(observed_at)
     existing_keys = _existing_keys(existing_df)
+    # Snapshot BEFORE this run mutates `existing_keys` (the write loop
+    # below adds each newly-written row's key as it goes) - used to tell
+    # whether a candidate participating in an overlap was already written
+    # on some prior run (see the overlap dq-dedup fix below).
+    existing_keys_snapshot = set(existing_keys)
+
+    # The capture's own knowledge-time date - the bound used for
+    # Components-only rows with no vendor `start_date` (controller ruling,
+    # see `INCLUSION_REASON_START_UNKNOWN`'s docstring above), since
+    # `membership_effective_from` is a non-nullable column and can never
+    # be written as bare `None`.
+    observed_date = observed_ts.date() if observed_ts is not None else _to_date(observed_at)
 
     candidates = []
+    start_unknown_dq_rows = []
     for _, r in components_df.iterrows():
         code = r.get("code")
         if _is_missing(code):
@@ -291,7 +348,9 @@ def compute_membership(
         start_date = _to_date(r.get("start_date"))
         end_date = _to_date(r.get("end_date"))
 
-        resolved = resolver(code, start_date) if start_date is not None else None
+        start_unknown = start_date is None
+        resolve_at_date = observed_date if start_unknown else start_date
+        resolved = resolver(code, resolve_at_date) if resolve_at_date is not None else None
         if resolved is not None:
             listing_id, instrument_id = resolved
             status = RESOLUTION_RESOLVED
@@ -301,17 +360,40 @@ def compute_membership(
             status = RESOLUTION_UNRESOLVED
             confidence = UNRESOLVED_CONFIDENCE
 
+        effective_from = observed_date if start_unknown else start_date
+        inclusion_reason = INCLUSION_REASON_START_UNKNOWN if start_unknown else None
+
         candidates.append({
             "code": code,
             "exchange_code": r.get("exchange_code") if "exchange_code" in components_df.columns else None,
             "name": r.get("name"),
-            "start_date": start_date,
+            "start_date": effective_from,
             "end_date": end_date,
             "listing_id": listing_id,
             "instrument_id": instrument_id,
             "status": status,
             "confidence": confidence,
+            "inclusion_reason": inclusion_reason,
         })
+
+        if start_unknown:
+            start_unknown_dq_rows.append(_row(
+                _DQ_COLUMNS,
+                issue_id=new_id("wrk"),
+                check_name=DQ_CHECK_MEMBERSHIP_START_UNKNOWN,
+                severity="WARN",
+                listing_id=listing_id,
+                instrument_id=instrument_id,
+                source_capture_id=capture_id,
+                details_json=json.dumps({
+                    "index_id": index_id,
+                    "code": code,
+                    "bounded_effective_from": effective_from.isoformat() if effective_from else None,
+                    "resolution_status": status,
+                }),
+                status="OPEN",
+                detected_at_ts=observed_ts,
+            ))
 
     # Overlap detection: scoped to resolved candidates in THIS batch,
     # grouped by (index_id, listing_id) - index_id is fixed per call, so
@@ -321,6 +403,9 @@ def compute_membership(
         if c["status"] != RESOLUTION_RESOLVED:
             continue
         by_listing.setdefault(c["listing_id"], []).append(i)
+
+    def _candidate_key(c) -> tuple:
+        return (index_id, c["code"], c["start_date"], c["end_date"], c["listing_id"])
 
     dq_rows = []
     for listing_id, idxs in by_listing.items():
@@ -339,27 +424,41 @@ def compute_membership(
                     break
             if conflict is not None:
                 candidates[i]["status"] = RESOLUTION_AMBIGUOUS
-                dq_rows.append(_row(
-                    _DQ_COLUMNS,
-                    issue_id=new_id("wrk"),
-                    check_name=DQ_CHECK_MEMBERSHIP_OVERLAP,
-                    severity="WARN",
-                    listing_id=listing_id,
-                    instrument_id=cur["instrument_id"],
-                    source_capture_id=capture_id,
-                    details_json=json.dumps({
-                        "index_id": index_id,
-                        "listing_id": listing_id,
-                        "code_a": conflict["code"],
-                        "start_a": conflict["start_date"].isoformat() if conflict["start_date"] else None,
-                        "end_a": conflict["end_date"].isoformat() if conflict["end_date"] else None,
-                        "code_b": cur["code"],
-                        "start_b": cur["start_date"].isoformat() if cur["start_date"] else None,
-                        "end_b": cur["end_date"].isoformat() if cur["end_date"] else None,
-                    }),
-                    status="OPEN",
-                    detected_at_ts=observed_ts,
-                ))
+                # Controller ruling (fix-round): only emit the overlap
+                # quality-issue row if at least one of the two
+                # participating candidates is a row NEWLY WRITTEN in
+                # THIS run (i.e. its dedup key wasn't already present in
+                # `memberships_reader`'s snapshot before this call) - an
+                # idempotent re-run over the exact same `components_df`
+                # re-derives the identical AMBIGUOUS/RESOLVED
+                # classification (see below) but must not re-append a
+                # duplicate issue row for a conflict that was already
+                # reported and written on a prior run.
+                if (
+                    _candidate_key(cur) not in existing_keys_snapshot
+                    or _candidate_key(conflict) not in existing_keys_snapshot
+                ):
+                    dq_rows.append(_row(
+                        _DQ_COLUMNS,
+                        issue_id=new_id("wrk"),
+                        check_name=DQ_CHECK_MEMBERSHIP_OVERLAP,
+                        severity="WARN",
+                        listing_id=listing_id,
+                        instrument_id=cur["instrument_id"],
+                        source_capture_id=capture_id,
+                        details_json=json.dumps({
+                            "index_id": index_id,
+                            "listing_id": listing_id,
+                            "code_a": conflict["code"],
+                            "start_a": conflict["start_date"].isoformat() if conflict["start_date"] else None,
+                            "end_a": conflict["end_date"].isoformat() if conflict["end_date"] else None,
+                            "code_b": cur["code"],
+                            "start_b": cur["start_date"].isoformat() if cur["start_date"] else None,
+                            "end_b": cur["end_date"].isoformat() if cur["end_date"] else None,
+                        }),
+                        status="OPEN",
+                        detected_at_ts=observed_ts,
+                    ))
             else:
                 accepted.append(i)
 
@@ -385,6 +484,7 @@ def compute_membership(
             source_name=c["name"],
             membership_effective_from=c["start_date"],
             membership_effective_to=c["end_date"],
+            inclusion_reason=c["inclusion_reason"],
             observed_at_ts=observed_ts,
             available_at_ts=observed_ts,
             system_from_ts=observed_ts,
@@ -399,9 +499,11 @@ def compute_membership(
         # components's per-code dedup, but defensive) doesn't double-write.
         existing_keys.add(key)
 
+    all_dq_rows = start_unknown_dq_rows + dq_rows
+
     return {
         "index_membership_version": pd.DataFrame(membership_rows, columns=_MEMBERSHIP_COLUMNS),
-        "data_quality_issue": pd.DataFrame(dq_rows, columns=_DQ_COLUMNS),
+        "data_quality_issue": pd.DataFrame(all_dq_rows, columns=_DQ_COLUMNS),
         "report": MembershipReport(
             resolved=resolved_count,
             ambiguous=ambiguous_count,
