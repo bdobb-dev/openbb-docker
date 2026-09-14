@@ -1,0 +1,183 @@
+[
+  {
+    "name": "Example Dashboard - V9.6.2",
+    "description": "The v9 vendor episode with its calendars. Markets: two EODHD price histories, an income statement as a twelve-quarter pivot, and a candlestick chart, sharing one symbol and one interval. Calendars: the EODHD economic calendar as a paged month, Treasury auctions as an endless week grid, and the EODHD earnings calendar as a horizontal day ribbon filtered to seven names, each with its stock logo — each a Calendar view over the table the backend already serves. Needs the OpenBB backend with the eodhd provider configured.",
+    "img": "",
+    "img_dark": "",
+    "img_light": "",
+    "allowCustomization": true,
+    "tabs": {
+      "markets": {
+        "id": "markets",
+        "name": "Markets",
+        "layout": [
+          {
+            "i": "equity_price_historical_eodhd_obb",
+            "x": 0,
+            "y": 0,
+            "w": 20,
+            "h": 12,
+            "groups": [
+              "Symbol",
+              "Interval"
+            ],
+            "state": {
+              "params": {
+                "symbol": "AAPL",
+                "interval": "1d",
+                "provider": "eodhd"
+              },
+              "chartView": {
+                "enabled": false,
+                "chartType": "line"
+              }
+            }
+          },
+          {
+            "i": "equity_price_historical_eodhd_obb",
+            "x": 20,
+            "y": 0,
+            "w": 20,
+            "h": 12,
+            "groups": [
+              "Symbol",
+              "Interval"
+            ],
+            "state": {
+              "params": {
+                "symbol": "AAPL",
+                "interval": "1d",
+                "provider": "eodhd"
+              },
+              "chartView": {
+                "enabled": true,
+                "chartType": "candlestick"
+              }
+            }
+          },
+          {
+            "i": "equity_fundamental_income_eodhd_obb",
+            "x": 0,
+            "y": 12,
+            "w": 40,
+            "h": 12,
+            "groups": [
+              "Symbol"
+            ],
+            "state": {
+              "params": {
+                "symbol": "AAPL",
+                "period": "quarter",
+                "limit": "12",
+                "provider": "eodhd"
+              },
+              "chartView": {
+                "enabled": false,
+                "chartType": "line"
+              },
+              "pivotView": {
+                "enabled": true
+              }
+            }
+          }
+        ]
+      },
+      "calendars": {
+        "id": "calendars",
+        "name": "Calendars",
+        "layout": [
+          {
+            "i": "economy_calendar_eodhd_obb",
+            "x": 0,
+            "y": 0,
+            "w": 40,
+            "h": 24,
+            "state": {
+              "params": {
+                "country": "US",
+                "provider": "eodhd"
+              },
+              "chartView": {
+                "enabled": false,
+                "chartType": "line"
+              },
+              "calendarView": {
+                "enabled": true,
+                "mode": "paged",
+                "unit": "month",
+                "evenRows": true
+              }
+            }
+          },
+          {
+            "i": "fixedincome_government_treasury_auctions_government_us_obb",
+            "x": 0,
+            "y": 24,
+            "w": 20,
+            "h": 18,
+            "state": {
+              "params": {
+                "provider": "government_us"
+              },
+              "chartView": {
+                "enabled": false,
+                "chartType": "line"
+              },
+              "calendarView": {
+                "enabled": true,
+                "mode": "vertical",
+                "rowUnit": "week"
+              }
+            }
+          },
+          {
+            "i": "equity_calendar_earnings_eodhd_obb",
+            "x": 20,
+            "y": 24,
+            "w": 20,
+            "h": 18,
+            "state": {
+              "params": {
+                "provider": "eodhd"
+              },
+              "chartView": {
+                "enabled": false,
+                "chartType": "line"
+              },
+              "calendarView": {
+                "enabled": true,
+                "mode": "horizontal",
+                "cellMode": "list",
+                "seriesField": "symbol",
+                "series": [
+                  "AAPL.US",
+                  "MSFT.US",
+                  "NVDA.US",
+                  "AMZN.US",
+                  "GOOGL.US",
+                  "META.US",
+                  "TSLA.US"
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    "groups": [
+      {
+        "name": "Symbol",
+        "type": "param",
+        "paramName": "symbol",
+        "defaultValue": "AAPL"
+      },
+      {
+        "name": "Interval",
+        "type": "param",
+        "paramName": "interval",
+        "defaultValue": "1d"
+      }
+    ],
+    "prompts": []
+  }
+]

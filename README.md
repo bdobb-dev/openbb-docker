@@ -242,6 +242,7 @@ docker compose up -d --build
 curl https://openbb.<your-tailnet>.ts.net/api/v1/equity/price/quote                        # 401
 curl -u openbb:<password> https://openbb.<your-tailnet>.ts.net/api/v1/equity/price/quote   # 422 — auth accepted, symbol required
 curl https://openbb.<your-tailnet>.ts.net/widgets.json                                     # 200 — metadata, by design
+curl -u openbb:<password> https://openbb.<your-tailnet>.ts.net/apps.json                   # 200 — the example dashboards built on this API's widgets (workspace_apps.json, written by bdobb-v2's pnpm apps:sync; live-grid serves its own)
 
 # 4. Verify the walls (from a SECOND tailnet device)
 scripts/verify-isolation.sh openbb.<your-tailnet>.ts.net minio.<your-tailnet>.ts.net

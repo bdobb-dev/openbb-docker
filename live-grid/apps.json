@@ -1,121 +1,108 @@
 [
- {
-  "name": "Example - Version 10.0.0",
-  "description": "",
-  "img": "",
-  "img_dark": "",
-  "img_light": "",
-  "allowCustomization": true,
-  "tabs": {
-   "01429724-fa23-42fa-8a7c-41abe8c091d0": {
-    "id": "01429724-fa23-42fa-8a7c-41abe8c091d0",
-    "name": "Live",
-    "layout": [
-     {
-      "i": "live_grid",
-      "x": 0,
-      "y": 0,
-      "w": 40,
-      "h": 12,
-      "state": {
-       "params": {
-        "symbol": "AAPL,MSFT,NVDA,TSLA,BTC-USD,ETH-USD,EURUSD"
-       },
-       "chartView": {
-        "enabled": false,
-        "chartType": "line"
-       }
+  {
+    "name": "Example Dashboard - V10.0.0",
+    "description": "The v10.0.0 live grid: real-time quotes over a websocket, the subscription list that feeds it, and the kdb+ tick history behind one symbol. Needs the live-grid backend configured; every widget here is served by it.",
+    "img": "",
+    "img_dark": "",
+    "img_light": "",
+    "allowCustomization": true,
+    "tabs": {
+      "live": {
+        "id": "live",
+        "name": "Live",
+        "layout": [
+          {
+            "i": "live_grid",
+            "x": 0,
+            "y": 0,
+            "w": 40,
+            "h": 12,
+            "state": {
+              "params": {
+                "symbol": "AAPL,MSFT,NVDA,TSLA,BTC-USD,ETH-USD,EURUSD"
+              }
+            }
+          },
+          {
+            "i": "subscriptions",
+            "x": 0,
+            "y": 12,
+            "w": 20,
+            "h": 14,
+            "state": {
+              "params": {}
+            }
+          },
+          {
+            "i": "kdb_ticks",
+            "x": 20,
+            "y": 12,
+            "w": 20,
+            "h": 14,
+            "state": {
+              "params": {
+                "symbol": "AAPL",
+                "limit": "200"
+              }
+            }
+          }
+        ]
       }
-     },
-     {
-      "i": "subscriptions",
-      "x": 0,
-      "y": 12,
-      "w": 20,
-      "h": 14
-     },
-     {
-      "i": "kdb_ticks",
-      "x": 20,
-      "y": 12,
-      "w": 20,
-      "h": 14,
-      "state": {
-       "params": {
-        "symbol": "AAPL",
-        "limit": "200"
-       },
-       "chartView": {
-        "enabled": false,
-        "chartType": "line"
-       }
-      }
-     }
-    ]
-   }
+    },
+    "groups": [],
+    "prompts": []
   },
-  "groups": [],
-  "prompts": []
- },
- {
-  "name": "Example - Version 12.0.0",
-  "description": "",
-  "img": "",
-  "img_dark": "",
-  "img_light": "",
-  "allowCustomization": true,
-  "tabs": {
-   "2922d395-6f1e-435d-8440-c1dfa9458889": {
-    "id": "2922d395-6f1e-435d-8440-c1dfa9458889",
-    "name": "Advanced chart",
-    "layout": [
-     {
-      "i": "advanced_chart",
-      "x": 0,
-      "y": 0,
-      "w": 40,
-      "h": 24,
-      "state": {
-       "params": {
-        "symbol": "BTC-USD",
-        "interval": "1m",
-        "macro": "classic-momentum",
-        "indicators": "supertrend:period=10,ichimoku",
-        "source": "local",
-        "basis": "adjusted"
-       },
-       "chartView": {
-        "enabled": false,
-        "chartType": "line"
-       }
+  {
+    "name": "Example Dashboard - Version 12.0.0",
+    "description": "The v12.0.0 advanced chart: NVIDIA on live kdb+ candles with server-computed studies, six drawing tools and a trade-true anchored VWAP. Underneath it, the v10 Live quotes grid carrying v12's two new columns for the same symbols — RSI as a 0-100 heat-bar with guides at 30/50/70, and vs VWAP as a signed bar showing each symbol's deviation from its anchored VWAP. Both are computed server-side by the same polars engine the chart uses, so the grid's RSI is the same Wilder RSI(14) the chart plots and its VWAP is the same trade-true value — one convention, not two. IMPORTANT: this dashboard needs openbb-docker running on THIS machine. The advanced chart reads the kdb+ tick cache on a loopback websocket — q IPC shares that port and executes arbitrary code with no auth, so it is never served or funnelled — which means the backend it points at must have a tick cache URL set in Connections. Against a remote stack the chart card explains why it cannot draw rather than showing an empty plot; the grid and its two columns still work, since they come over ordinary HTTP.",
+    "img": "",
+    "img_dark": "",
+    "img_light": "",
+    "allowCustomization": true,
+    "tabs": {
+      "chart": {
+        "id": "chart",
+        "name": "Advanced chart",
+        "layout": [
+          {
+            "i": "advanced_chart",
+            "x": 0,
+            "y": 0,
+            "w": 40,
+            "h": 24,
+            "state": {
+              "params": {
+                "symbol": "NVDA",
+                "interval": "1m",
+                "macro": "classic-momentum",
+                "indicators": "supertrend:period=10,ichimoku",
+                "source": "local",
+                "basis": "adjusted"
+              }
+            }
+          }
+        ]
+      },
+      "quotes": {
+        "id": "quotes",
+        "name": "Live quotes",
+        "layout": [
+          {
+            "i": "live_grid",
+            "x": 0,
+            "y": 0,
+            "w": 40,
+            "h": 24,
+            "state": {
+              "params": {
+                "symbol": "NVDA,AAPL,MSFT,TSLA,BTC-USD"
+              }
+            }
+          }
+        ]
       }
-     }
-    ]
-   },
-   "1b2ecb35-3ffd-4f6d-adde-3cdd2f82c2b0": {
-    "id": "1b2ecb35-3ffd-4f6d-adde-3cdd2f82c2b0",
-    "name": "Live quotes",
-    "layout": [
-     {
-      "i": "live_grid",
-      "x": 0,
-      "y": 0,
-      "w": 40,
-      "h": 24,
-      "state": {
-       "params": {
-        "symbol": "NVDA,AAPL,MSFT,TSLA,BTC-USD"
-       },
-       "chartView": {
-        "enabled": false,
-        "chartType": "line"
-       }
-      }
-     }
-    ]
-   }
-  },
-  "groups": [],
-  "prompts": []
- }
+    },
+    "groups": [],
+    "prompts": []
+  }
 ]
