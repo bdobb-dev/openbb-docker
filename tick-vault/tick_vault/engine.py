@@ -652,63 +652,41 @@ def _default_verify(root: str, listing_id: str, written_df: pd.DataFrame) -> "tu
     return (not dup), len(written_df)
 
 
-def fetch_week(
+def _fetch_raw_week(
     transport,
     store,
-    root: str,
     item,
     *,
     span_memory: SpanMemory,
     budget: Budget,
+    token: str,
     now: dt.datetime,
-    api_token: str = _REDACTED,
     ingestion_run_id: "str | None" = None,
-    writer=None,
-    existing_ticks_reader=None,
-    verifier=None,
-    monotonic=None,
     source_system: str = "EODHD",
-    price_venue_type: str = "CONSOLIDATED_US",
+    monotonic=None,
     max_window_retries: int = 3,
-) -> FetchResult:
-    """Fetch, capture, parse, dedup, and write one manifest item's tick
-    week - the sip_backfill core re-hosted on the medallion path.
+) -> "tuple[pd.DataFrame, int, str | None]":
+    """The shared raw-fetch path (task-8 preflight ruling): fetch, capture,
+    and parse+dedup one manifest item's window - and NOTHING else (no
+    write, no already-written-key dedup, no verification). Extracted
+    verbatim out of `fetch_week`'s own window loop (same span-halving,
+    429-budget, boundary-second-dedup semantics) so `tick_vault.settle.
+    settle_pass` can re-fetch an item's real bronze captures identically
+    to `fetch_week`, without duplicating that loop.
 
-    `item` is one `ops.backfill_manifest`-shaped row (`dict` or `pandas.
-    Series`): `listing_id`, `instrument_id`, `vendor_symbol_at_date`,
-    `request_from_sec`, `request_to_sec` are read from it.
+    Returns `(parsed_df, captures, error)`: `parsed_df` is `dedup_ticks`'s
+    output (empty-but-`tick_parser.COLUMNS`-shaped on total failure or a
+    missing `vendor_symbol_at_date`); `captures` is the number of bronze
+    capture rows written (one per HTTP attempt, including 5xx retries -
+    NOT 429s, which don't call `store.record`... actually they do, since
+    every `transport.get` call - 429 included - is captured); `error` is
+    the same joined `"[start, end]: msg"` failed-windows message
+    `fetch_week` surfaces on its own `FetchResult.error`, or `None`.
 
-    `store` is duck-typed to `tick_vault.capture.CaptureStore`'s
-    `.record(...)` method (NOT `.fetch_and_capture` - see the inline note
-    below for why); production callers pass a real `CaptureStore(root)`,
-    tests pass a fake with a compatible `.record(...)`.
-
-    `writer(root, df, *, vendor_request_symbol, committed_at,
-    source_system, price_venue_type) -> int` defaults to `tick_vault.
-    tick_writer.write_tick_versions`; injectable so runnable (pyarrow/
-    deltalake-less) tests can supply a fake that appends into an in-memory
-    list instead of a real Delta table.
-
-    `existing_ticks_reader(root, listing_id) -> pandas.DataFrame | None`
-    - when given, its rows' `(trade_ts_ms, session_seq)` keys are treated
-    as already-written and any freshly-parsed tick with the same key is
-    dropped before `writer` is called (append-only re-run idempotency -
-    see module docstring). `None` (the default) means "assume nothing
-    already written" - the ordinary first-run path.
-
-    `verifier(root, listing_id, written_df) -> (ok: bool, row_count: int)`
-    defaults to `_default_verify` (an in-memory-only uniqueness check);
-    inject a real read-back-and-count check against Delta for production/
-    deferred-pytest use.
-
-    Returns a `FetchResult`; never raises for ordinary HTTP failures (5xx,
-    unexpected statuses) - those are reported as `PARTIAL`/`FAILED` with
-    `error` set. A `Budget.wait()` -> `BudgetExhausted` (12 consecutive
-    429s with no success) IS caught here too and reported as `FAILED`,
-    since it is still just "this item didn't complete", not a
-    caller-fatal condition - callers processing a manifest queue,
-    presumably one item at a time, generally want to move on to the next
-    item rather than crash the whole batch on one stuck symbol.
+    A `Budget.wait()` -> `BudgetExhausted` (12 consecutive 429s) is caught
+    here (not re-raised) and reported via the `error` string, same as
+    `fetch_week` - a caller (settle or backfill alike) generally wants
+    "this item didn't complete" rather than a crashed batch.
     """
     listing_id = _item_get(item, "listing_id")
     instrument_id = _item_get(item, "instrument_id")
@@ -716,24 +694,16 @@ def fetch_week(
     from_sec = int(_item_get(item, "request_from_sec"))
     to_sec = int(_item_get(item, "request_to_sec"))
     ingestion_run_id = ingestion_run_id or new_id("run")
-    writer = writer or write_tick_versions
-    verifier = verifier or _default_verify
     monotonic_fn = monotonic or time.monotonic
 
     if _is_missing(symbol):
-        return FetchResult(
-            status=STATUS_FAILED,
-            rows_written=0,
-            captures=0,
-            wall_minutes=0.0,
-            error="no vendor_symbol_at_date on this item (BLOCKED_IDENTITY, cannot fetch)",
+        from tick_vault.tick_parser import COLUMNS as _TICK_COLUMNS
+
+        return (
+            _empty(_TICK_COLUMNS),
+            0,
+            "no vendor_symbol_at_date on this item (BLOCKED_IDENTITY, cannot fetch)",
         )
-
-    started_monotonic = monotonic_fn()
-
-    existing_keys: set = set()
-    if existing_ticks_reader is not None:
-        existing_keys = _existing_tick_keys(existing_ticks_reader(root, listing_id))
 
     frames: "list[pd.DataFrame]" = []
     captures = 0
@@ -749,7 +719,7 @@ def fetch_week(
             window_attempts = 0
 
             while True:
-                url = build_tick_url(symbol, window_start, window_end, api_token)
+                url = build_tick_url(symbol, window_start, window_end, token)
                 # NOTE: this calls transport.get directly (not `store.
                 # fetch_and_capture`, which ALSO calls transport.get
                 # internally) so we can branch on the raw HTTP status
@@ -828,16 +798,128 @@ def fetch_week(
 
             window_start = window_end + 1
     except BudgetExhausted as exc:
+        from tick_vault.tick_parser import COLUMNS as _TICK_COLUMNS
+
+        return _empty(_TICK_COLUMNS), captures, str(exc)
+
+    combined = dedup_ticks(frames)
+
+    error = None
+    if failed_windows:
+        error = "; ".join(f"[{s}, {e}]: {msg}" for s, e, msg in failed_windows)
+
+    return combined, captures, error
+
+
+def fetch_week(
+    transport,
+    store,
+    root: str,
+    item,
+    *,
+    span_memory: SpanMemory,
+    budget: Budget,
+    now: dt.datetime,
+    api_token: str = _REDACTED,
+    ingestion_run_id: "str | None" = None,
+    writer=None,
+    existing_ticks_reader=None,
+    verifier=None,
+    monotonic=None,
+    source_system: str = "EODHD",
+    price_venue_type: str = "CONSOLIDATED_US",
+    max_window_retries: int = 3,
+) -> FetchResult:
+    """Fetch, capture, parse, dedup, and write one manifest item's tick
+    week - the sip_backfill core re-hosted on the medallion path.
+
+    `item` is one `ops.backfill_manifest`-shaped row (`dict` or `pandas.
+    Series`): `listing_id`, `instrument_id`, `vendor_symbol_at_date`,
+    `request_from_sec`, `request_to_sec` are read from it.
+
+    `store` is duck-typed to `tick_vault.capture.CaptureStore`'s
+    `.record(...)` method (NOT `.fetch_and_capture` - see `_fetch_raw_
+    week`'s inline note for why).
+
+    `writer(root, df, *, vendor_request_symbol, committed_at,
+    source_system, price_venue_type) -> int` defaults to `tick_vault.
+    tick_writer.write_tick_versions`; injectable so runnable (pyarrow/
+    deltalake-less) tests can supply a fake that appends into an in-memory
+    list instead of a real Delta table.
+
+    `existing_ticks_reader(root, listing_id) -> pandas.DataFrame | None`
+    - when given, its rows' `(trade_ts_ms, session_seq)` keys are treated
+    as already-written and any freshly-parsed tick with the same key is
+    dropped before `writer` is called (append-only re-run idempotency -
+    see module docstring). `None` (the default) means "assume nothing
+    already written" - the ordinary first-run path.
+
+    `verifier(root, listing_id, written_df) -> (ok: bool, row_count: int)`
+    defaults to `_default_verify` (an in-memory-only uniqueness check);
+    inject a real read-back-and-count check against Delta for production/
+    deferred-pytest use.
+
+    Returns a `FetchResult`; never raises for ordinary HTTP failures (5xx,
+    unexpected statuses) - those are reported as `PARTIAL`/`FAILED` with
+    `error` set. A `Budget.wait()` -> `BudgetExhausted` (12 consecutive
+    429s with no success) IS caught here too (inside `_fetch_raw_week`,
+    which this delegates the whole window loop to) and reported as
+    `FAILED`, since it is still just "this item didn't complete", not a
+    caller-fatal condition - callers processing a manifest queue,
+    presumably one item at a time, generally want to move on to the next
+    item rather than crash the whole batch on one stuck symbol.
+
+    The window-loop internals (span-halving, 429-budget waits, boundary-
+    second dedup, bronze capture rows) live in `_fetch_raw_week`, shared
+    verbatim with `tick_vault.settle.settle_pass`'s re-fetch step (task-8
+    preflight ruling) - this function's own job is everything AROUND that
+    shared core: the BLOCKED_IDENTITY short-circuit's wall-clock
+    accounting, already-written-key dedup, the actual `writer` call, and
+    `verifier`.
+    """
+    listing_id = _item_get(item, "listing_id")
+    symbol = _item_get(item, "vendor_symbol_at_date")
+    writer = writer or write_tick_versions
+    verifier = verifier or _default_verify
+    monotonic_fn = monotonic or time.monotonic
+
+    if _is_missing(symbol):
+        return FetchResult(
+            status=STATUS_FAILED,
+            rows_written=0,
+            captures=0,
+            wall_minutes=0.0,
+            error="no vendor_symbol_at_date on this item (BLOCKED_IDENTITY, cannot fetch)",
+        )
+
+    started_monotonic = monotonic_fn()
+
+    existing_keys: set = set()
+    if existing_ticks_reader is not None:
+        existing_keys = _existing_tick_keys(existing_ticks_reader(root, listing_id))
+
+    combined, captures, fetch_error = _fetch_raw_week(
+        transport, store, item,
+        span_memory=span_memory, budget=budget, token=api_token, now=now,
+        ingestion_run_id=ingestion_run_id, source_system=source_system,
+        monotonic=monotonic, max_window_retries=max_window_retries,
+    )
+
+    if fetch_error is not None and fetch_error.startswith("budget exhausted:"):
+        # BudgetExhausted path (`Budget.wait()` raised inside `_fetch_raw_
+        # week`) - mirror fetch_week's prior behavior of returning FAILED
+        # immediately with no write, discarding whatever partial frames
+        # were parsed before the exhaustion (`_fetch_raw_week` already
+        # returns an empty frame for this case).
         wall_minutes = (monotonic_fn() - started_monotonic) / 60.0
         return FetchResult(
             status=STATUS_FAILED,
             rows_written=0,
             captures=captures,
             wall_minutes=wall_minutes,
-            error=str(exc),
+            error=fetch_error,
         )
 
-    combined = dedup_ticks(frames)
     combined = _drop_already_written(combined, existing_keys)
 
     rows_written = 0
@@ -855,8 +937,8 @@ def fetch_week(
 
     wall_minutes = (monotonic_fn() - started_monotonic) / 60.0
     error = None
-    if failed_windows:
-        error = "; ".join(f"[{s}, {e}]: {msg}" for s, e, msg in failed_windows)
+    if fetch_error:
+        error = fetch_error
         status = STATUS_FAILED if combined.empty and rows_written == 0 else STATUS_PARTIAL
     elif not verify_ok:
         status = STATUS_PARTIAL
