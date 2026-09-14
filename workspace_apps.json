@@ -1,0 +1,285 @@
+[
+  {
+    "name": "Example Dashboard - V9.6.1",
+    "description": "The v9 vendor episode with its calendars. Markets: two EODHD price histories, an income statement and a candlestick chart, sharing one symbol and one interval. Calendars: the EODHD economic calendar as a paged month, Treasury auctions as an endless week grid, and the EODHD earnings calendar as a horizontal day ribbon filtered to seven names, each with its stock logo — each a Calendar view over the table the backend already serves. Needs the OpenBB backend with the eodhd provider configured.",
+    "img": "",
+    "img_dark": "",
+    "img_light": "",
+    "allowCustomization": true,
+    "tabs": {
+      "markets": {
+        "id": "markets",
+        "name": "Markets",
+        "layout": [
+          {
+            "i": "equity_price_historical_eodhd_obb",
+            "x": 0,
+            "y": 0,
+            "w": 20,
+            "h": 12,
+            "groups": [
+              "Symbol",
+              "Interval"
+            ],
+            "state": {
+              "params": {
+                "symbol": "AAPL",
+                "interval": "1d",
+                "provider": "eodhd"
+              },
+              "chartView": {
+                "enabled": false,
+                "chartType": "line"
+              }
+            }
+          },
+          {
+            "i": "equity_price_historical_eodhd_obb",
+            "x": 20,
+            "y": 0,
+            "w": 20,
+            "h": 12,
+            "groups": [
+              "Symbol",
+              "Interval"
+            ],
+            "state": {
+              "params": {
+                "symbol": "AAPL",
+                "interval": "1d",
+                "provider": "eodhd"
+              },
+              "chartView": {
+                "enabled": true,
+                "chartType": "candlestick"
+              }
+            }
+          },
+          {
+            "i": "equity_fundamental_income_eodhd_obb",
+            "x": 0,
+            "y": 12,
+            "w": 40,
+            "h": 12,
+            "groups": [
+              "Symbol"
+            ],
+            "state": {
+              "params": {
+                "symbol": "AAPL",
+                "period": "annual",
+                "provider": "eodhd"
+              },
+              "chartView": {
+                "enabled": false,
+                "chartType": "line"
+              }
+            }
+          }
+        ]
+      },
+      "calendars": {
+        "id": "calendars",
+        "name": "Calendars",
+        "layout": [
+          {
+            "i": "economy_calendar_eodhd_obb",
+            "x": 0,
+            "y": 0,
+            "w": 40,
+            "h": 24,
+            "state": {
+              "params": {
+                "country": "US",
+                "provider": "eodhd"
+              },
+              "chartView": {
+                "enabled": false,
+                "chartType": "line"
+              },
+              "calendarView": {
+                "enabled": true,
+                "mode": "paged",
+                "unit": "month",
+                "evenRows": true
+              }
+            }
+          },
+          {
+            "i": "fixedincome_government_treasury_auctions_government_us_obb",
+            "x": 0,
+            "y": 24,
+            "w": 20,
+            "h": 18,
+            "state": {
+              "params": {
+                "provider": "government_us"
+              },
+              "chartView": {
+                "enabled": false,
+                "chartType": "line"
+              },
+              "calendarView": {
+                "enabled": true,
+                "mode": "vertical",
+                "rowUnit": "week"
+              }
+            }
+          },
+          {
+            "i": "equity_calendar_earnings_eodhd_obb",
+            "x": 20,
+            "y": 24,
+            "w": 20,
+            "h": 18,
+            "state": {
+              "params": {
+                "provider": "eodhd"
+              },
+              "chartView": {
+                "enabled": false,
+                "chartType": "line"
+              },
+              "calendarView": {
+                "enabled": true,
+                "mode": "horizontal",
+                "cellMode": "list",
+                "seriesField": "symbol",
+                "series": [
+                  "AAPL.US",
+                  "MSFT.US",
+                  "NVDA.US",
+                  "AMZN.US",
+                  "GOOGL.US",
+                  "META.US",
+                  "TSLA.US"
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    "groups": [
+      {
+        "name": "Symbol",
+        "type": "param",
+        "paramName": "symbol",
+        "defaultValue": "AAPL"
+      },
+      {
+        "name": "Interval",
+        "type": "param",
+        "paramName": "interval",
+        "defaultValue": "1d"
+      }
+    ],
+    "prompts": []
+  },
+  {
+    "name": "Example Dashboard - V10.0.0",
+    "description": "The v10.0.0 live grid: real-time quotes over a websocket, the subscription list that feeds it, and the kdb+ tick history behind one symbol. Needs the live-grid backend configured; every widget here is served by it.",
+    "img": "",
+    "img_dark": "",
+    "img_light": "",
+    "allowCustomization": true,
+    "tabs": {
+      "live": {
+        "id": "live",
+        "name": "Live",
+        "layout": [
+          {
+            "i": "live_grid",
+            "x": 0,
+            "y": 0,
+            "w": 40,
+            "h": 12,
+            "state": {
+              "params": {
+                "symbol": "AAPL,MSFT,NVDA,TSLA,BTC-USD,ETH-USD,EURUSD"
+              }
+            }
+          },
+          {
+            "i": "subscriptions",
+            "x": 0,
+            "y": 12,
+            "w": 20,
+            "h": 14,
+            "state": {
+              "params": {}
+            }
+          },
+          {
+            "i": "kdb_ticks",
+            "x": 20,
+            "y": 12,
+            "w": 20,
+            "h": 14,
+            "state": {
+              "params": {
+                "symbol": "AAPL",
+                "limit": "200"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "groups": [],
+    "prompts": []
+  },
+  {
+    "name": "Example Dashboard - Version 12.0.0",
+    "description": "The v12.0.0 advanced chart: NVIDIA on live kdb+ candles with server-computed studies, six drawing tools and a trade-true anchored VWAP. Underneath it, the v10 Live quotes grid carrying v12's two new columns for the same symbols — RSI as a 0-100 heat-bar with guides at 30/50/70, and vs VWAP as a signed bar showing each symbol's deviation from its anchored VWAP. Both are computed server-side by the same polars engine the chart uses, so the grid's RSI is the same Wilder RSI(14) the chart plots and its VWAP is the same trade-true value — one convention, not two. IMPORTANT: this dashboard needs openbb-docker running on THIS machine. The advanced chart reads the kdb+ tick cache on a loopback websocket — q IPC shares that port and executes arbitrary code with no auth, so it is never served or funnelled — which means the backend it points at must have a tick cache URL set in Connections. Against a remote stack the chart card explains why it cannot draw rather than showing an empty plot; the grid and its two columns still work, since they come over ordinary HTTP.",
+    "img": "",
+    "img_dark": "",
+    "img_light": "",
+    "allowCustomization": true,
+    "tabs": {
+      "chart": {
+        "id": "chart",
+        "name": "Advanced chart",
+        "layout": [
+          {
+            "i": "advanced_chart",
+            "x": 0,
+            "y": 0,
+            "w": 40,
+            "h": 24,
+            "state": {
+              "params": {
+                "symbol": "NVDA",
+                "interval": "1m",
+                "macro": "classic-momentum",
+                "indicators": "supertrend:period=10,ichimoku",
+                "source": "local",
+                "basis": "adjusted"
+              }
+            }
+          }
+        ]
+      },
+      "quotes": {
+        "id": "quotes",
+        "name": "Live quotes",
+        "layout": [
+          {
+            "i": "live_grid",
+            "x": 0,
+            "y": 0,
+            "w": 40,
+            "h": 24,
+            "state": {
+              "params": {
+                "symbol": "NVDA,AAPL,MSFT,TSLA,BTC-USD"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "groups": [],
+    "prompts": []
+  }
+]
