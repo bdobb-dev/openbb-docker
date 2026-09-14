@@ -11,6 +11,17 @@ def _parse():
                                instrument_id="ins_a", observed_at=OBS)
 
 
+def test_columnar_payload_parses_like_records():
+    # the live tick endpoint's real shape: one dict of equal-length arrays, no "ex"
+    fields = ["ts", "price", "shares", "seq", "sl", "mkt", "sub_mkt"]
+    columnar = {f: [r[f] for r in PAYLOAD] for f in fields}
+    got = parse_tick_payload(columnar, capture_id="cap_x", listing_id="lst_a",
+                             instrument_id="ins_a", observed_at=OBS)
+    want = _parse()
+    cols = ["logical_tick_id", "source_row_ordinal", "price", "size", "sale_condition_raw", "venue_code_raw"]
+    assert got[cols].to_dict("records") == want[cols].to_dict("records")
+
+
 def test_dedup_on_ts_seq():
     assert len(_parse()) == 3  # 4 rows, one boundary duplicate
 

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 
-DECODE_VERSION = "SL_DECODE_V1"
+DECODE_VERSION = "SL_DECODE_V2"
 
 
 # Internal decode table: (position, char) -> (flag_name, bars_eligible, out_of_sequence)
@@ -57,6 +57,24 @@ _TABLE = {
     (1, 'W'): ('AVERAGE_PRICE', False, False),
     (2, 'W'): ('AVERAGE_PRICE', False, False),
     (3, 'W'): ('AVERAGE_PRICE', False, False),
+    # Phase-0 (2026-09-14, SL_DECODE_V2): codes seen live on SPY, absent from V1.
+    # CTA byte map: '7' is byte 2 (trade-through reason), 'B'/'V' are byte 4
+    # (SRO detail); none update consolidated last or high/low -> not eligible.
+    # 'B' = AVERAGE_PRICE (CTA's code for what UTP sends as 'W')
+    (0, 'B'): ('AVERAGE_PRICE', False, False),
+    (1, 'B'): ('AVERAGE_PRICE', False, False),
+    (2, 'B'): ('AVERAGE_PRICE', False, False),
+    (3, 'B'): ('AVERAGE_PRICE', False, False),
+    # '7' = QUALIFIED_CONTINGENT_TRADE (not eligible)
+    (0, '7'): ('QUALIFIED_CONTINGENT_TRADE', False, False),
+    (1, '7'): ('QUALIFIED_CONTINGENT_TRADE', False, False),
+    (2, '7'): ('QUALIFIED_CONTINGENT_TRADE', False, False),
+    (3, '7'): ('QUALIFIED_CONTINGENT_TRADE', False, False),
+    # 'V' = CONTINGENT_TRADE (not eligible)
+    (0, 'V'): ('CONTINGENT_TRADE', False, False),
+    (1, 'V'): ('CONTINGENT_TRADE', False, False),
+    (2, 'V'): ('CONTINGENT_TRADE', False, False),
+    (3, 'V'): ('CONTINGENT_TRADE', False, False),
     # 'C' = CASH_SALE (not eligible)
     (0, 'C'): ('CASH_SALE', False, False),
     (1, 'C'): ('CASH_SALE', False, False),

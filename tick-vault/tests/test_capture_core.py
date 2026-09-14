@@ -176,6 +176,10 @@ def test_row_count_hint_counts_json_array():
     assert row_count_hint(b'[{"a": 1}, {"a": 2}, {"a": 3}]') == 3
 
 
+def test_row_count_hint_counts_columnar_tick_payload():
+    assert row_count_hint(b'{"ts": [1, 2], "seq": [7, 8]}') == 2
+
+
 def test_row_count_hint_none_for_non_list_or_missing():
     assert row_count_hint(b'{"a": 1}') is None
     assert row_count_hint(None) is None
