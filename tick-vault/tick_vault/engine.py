@@ -177,6 +177,9 @@ MIN_SPAN_DAYS = 0.5
 # `_ENDPOINTS`). `{token}` is the raw api key, substituted at call time by
 # the caller of `build_tick_url`, never stored.
 TICK_ENDPOINT_TEMPLATE = "https://eodhd.com/api/ticks?s={symbol}&from={frm}&to={to}&api_token={token}"
+# sip_backfill's proven per-call timeout: EODHD assembles a multi-day tick
+# window server-side before the first byte, far past 30 s for heavy names.
+TICK_FETCH_TIMEOUT_SECONDS = 1800
 _REDACTED = "REDACTED"
 
 
@@ -733,7 +736,14 @@ def _fetch_raw_week(
                 # produces (via `store.record(...)`) is byte-identical to
                 # what `fetch_and_capture` would have written for the same
                 # transport response.
-                status, body = transport.get(url, timeout=30)
+                try:
+                    status, body = transport.get(url, timeout=TICK_FETCH_TIMEOUT_SECONDS)
+                except OSError as exc:
+                    # The transport's own retries are spent: treat it like a
+                    # 5xx so the halving / failed-window rule below applies
+                    # instead of one timeout crashing the whole run
+                    # (Phase-0 calibration, 2026-09-14).
+                    status, body = 599, f"{type(exc).__name__}: {exc}".encode()
                 is_success = 200 <= status < 300
                 request_params = {
                     "s": symbol, "from": window_start, "to": window_end,

@@ -19,6 +19,7 @@ import pandas as pd
 from tick_vault.membership import (
     AUTO_CONFIDENCE,
     INCLUSION_REASON_START_UNKNOWN,
+    MEMBERSHIP_START_FLOOR,
     INDEX_ID,
     INDEX_VENDOR_SYMBOL,
     MEMBERSHIP_BOUNDARY_V2,
@@ -330,10 +331,10 @@ def test_touching_endpoints_same_listing_are_adjacent_not_overlap():
 
 
 # ---------------------------------------------------------------------------
-# 8. missing start_date -> bounded at observed_at, never a bare None
+# 8. missing start_date -> floored at index inception, never a bare None
 # ---------------------------------------------------------------------------
 
-def test_missing_start_date_resolves_bounds_effective_from_at_observation():
+def test_missing_start_date_resolves_and_floors_effective_from():
     lake = _FakeLake()
     # The resolver only knows AAPL as of observed_at's date (2026-01-10),
     # not any earlier - matching a Components-only row with no start_date.
@@ -352,7 +353,7 @@ def test_missing_start_date_resolves_bounds_effective_from_at_observation():
     assert report.unresolved == 0
 
     row = lake.get("silver.index_membership_version").iloc[0]
-    assert row["membership_effective_from"] == OBS1.date()
+    assert row["membership_effective_from"] == MEMBERSHIP_START_FLOOR
     assert row["membership_effective_from"] is not None
     assert row["resolution_status"] == RESOLUTION_RESOLVED
     assert row["inclusion_reason"] == INCLUSION_REASON_START_UNKNOWN
@@ -380,7 +381,7 @@ def test_missing_start_date_unresolved_still_bounds_effective_from():
 
     row = lake.get("silver.index_membership_version").iloc[0]
     # Never a bare None into the non-nullable column, even when unresolved.
-    assert row["membership_effective_from"] == OBS1.date()
+    assert row["membership_effective_from"] == MEMBERSHIP_START_FLOOR
     assert row["membership_effective_from"] is not None
     assert row["resolution_status"] == RESOLUTION_UNRESOLVED
     assert row["listing_id"] is None
@@ -426,3 +427,24 @@ def test_overlap_issue_not_reemitted_on_idempotent_rerun():
     assert second.ambiguous == 1  # still classified as ambiguous
     assert len(lake.get("silver.index_membership_version")) == 2
     assert len(lake.get("ops.data_quality_issue")) == 1
+
+
+def test_missing_start_date_ex_member_interval_not_inverted():
+    # Phase-0 (2026-09-14): bounding at observation gave every ex-member with
+    # no StartDate from > to, so its member weeks never reached the manifest.
+    lake = _FakeLake()
+    resolver = _fake_resolver({"CELG": [("lst_celg", "ins_celg", dt.date(1990, 1, 1))]})
+    components = _components_df([
+        {"code": "CELG", "name": "Celgene", "start_date": None,
+         "end_date": dt.date(2019, 11, 21), "is_active": False, "sector": "Healthcare"},
+    ])
+
+    build_membership(
+        "fake_root", components, resolver=resolver, capture_id=CAP1, observed_at=OBS1,
+        memberships_reader=lake.reader, writer=lake.writer,
+    )
+
+    row = lake.get("silver.index_membership_version").iloc[0]
+    assert row["membership_effective_from"] == MEMBERSHIP_START_FLOOR
+    assert row["membership_effective_from"] < row["membership_effective_to"]
+    assert row["resolution_status"] == RESOLUTION_RESOLVED

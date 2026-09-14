@@ -38,20 +38,20 @@ Semantics (baseline §8.3, binding - task-5 brief + controller ruling)
   `observed_at` - EXCEPT when `start_date` is missing (a Components-only
   row with no known join date): `membership_effective_from` is a
   non-nullable `date32` column, so it can never be written as bare
-  `None`. Per controller ruling (fix-round), such a row is instead
-  resolved via `resolver(code, observed_at.date())` (the capture's OWN
-  knowledge time standing in for the unknown start), and
-  `membership_effective_from` is likewise bounded at `observed_at.date()`
-  - whether or not that resolution attempt succeeds. Either way the row
-  is tagged `inclusion_reason='START_DATE_UNKNOWN_BOUNDED_AT_OBSERVATION'`
+  `None`. Such a row is resolved via `resolver(code, observed_at.date())`
+  (the code's identity as of the capture), and `membership_effective_from`
+  is FLOORED at `MEMBERSHIP_START_FLOOR` (1957-03-04, the index's
+  inception) - Art's Phase-0 ruling (2026-09-14): the earlier
+  bound-at-observation rule inverted every ex-member's interval (from >
+  to), dropping it from the backfill; the floor over-fetches instead and
+  widens PIT membership for these rows. The row is tagged
+  `inclusion_reason='START_DATE_UNKNOWN_FLOORED'`
   (`INCLUSION_REASON_START_UNKNOWN`) and exactly one
   `ops.data_quality_issue` row (`check_name='MEMBERSHIP_START_UNKNOWN'`)
-  is appended, so a later Phase-0 episode (with access to real
-  constituent-history data) can refine the bound. If that
-  observation-date resolution attempt itself returns `None`, the row is
-  UNRESOLVED (same as the ordinary "unknown code" case below) but STILL
-  carries `membership_effective_from=observed_at.date()` and the same
-  `inclusion_reason` - never a bare `None` into the column.
+  is appended, so the floor stays visible and refinable. If the
+  resolution attempt returns `None`, the row is UNRESOLVED (same as the
+  ordinary "unknown code" case below) but STILL carries the floored
+  `membership_effective_from` and the same `inclusion_reason`.
 - RESOLVED: `listing_id`/`instrument_id` set from the resolver,
   `resolution_status='RESOLVED'`, `confidence=AUTO_CONFIDENCE`
   (`Decimal("0.9000")`, same fixed auto-resolution confidence
@@ -159,15 +159,14 @@ RESOLUTION_AMBIGUOUS = "AMBIGUOUS"
 DQ_CHECK_MEMBERSHIP_OVERLAP = "MEMBERSHIP_OVERLAP"
 DQ_CHECK_MEMBERSHIP_START_UNKNOWN = "MEMBERSHIP_START_UNKNOWN"
 
-# Controller ruling (fix-round): `membership_effective_from` is a
-# non-nullable date32 column, so a Components-only row with no vendor
-# `start_date` can never get a bare `None` written into it. Instead its
-# interval is bounded at the capture's OWN knowledge time
-# (`observed_at.date()`), regardless of whether the code goes on to
-# resolve or not, and the row is tagged with this `inclusion_reason` so a
-# later Phase-0 episode (which has access to real corporate-action/
-# constituent-history data) can refine the bound. See `compute_membership`.
-INCLUSION_REASON_START_UNKNOWN = "START_DATE_UNKNOWN_BOUNDED_AT_OBSERVATION"
+# `membership_effective_from` is a non-nullable date32 column, so a row
+# with no vendor `start_date` is floored at the index's inception (the
+# earliest date any S&P 500 membership can start; EODHD itself dates CPB's
+# join to it) and tagged with this `inclusion_reason`. Art's Phase-0 ruling
+# (2026-09-14) replaced bound-at-observation, which inverted ex-members'
+# intervals. See `compute_membership`.
+MEMBERSHIP_START_FLOOR = dt.date(1957, 3, 4)
+INCLUSION_REASON_START_UNKNOWN = "START_DATE_UNKNOWN_FLOORED"
 
 # Boundary policy version (see module docstring): join effective at that
 # session's open; leave date = first NON-member session (end-exclusive).
@@ -328,11 +327,9 @@ def compute_membership(
     # on some prior run (see the overlap dq-dedup fix below).
     existing_keys_snapshot = set(existing_keys)
 
-    # The capture's own knowledge-time date - the bound used for
-    # Components-only rows with no vendor `start_date` (controller ruling,
-    # see `INCLUSION_REASON_START_UNKNOWN`'s docstring above), since
-    # `membership_effective_from` is a non-nullable column and can never
-    # be written as bare `None`.
+    # The capture's own knowledge-time date: where a row with no vendor
+    # `start_date` resolves its identity (its start is floored at
+    # `MEMBERSHIP_START_FLOOR`, see above).
     observed_date = observed_ts.date() if observed_ts is not None else _to_date(observed_at)
 
     candidates = []
@@ -356,7 +353,7 @@ def compute_membership(
             status = RESOLUTION_UNRESOLVED
             confidence = UNRESOLVED_CONFIDENCE
 
-        effective_from = observed_date if start_unknown else start_date
+        effective_from = MEMBERSHIP_START_FLOOR if start_unknown else start_date
         inclusion_reason = INCLUSION_REASON_START_UNKNOWN if start_unknown else None
 
         candidates.append({

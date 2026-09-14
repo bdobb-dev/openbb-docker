@@ -470,11 +470,12 @@ class UrlLibTransport:
             except urllib.error.HTTPError as exc:
                 status = exc.code
                 body = exc.read()
-            except urllib.error.URLError:
-                # Connection-level failure (including a socket timeout,
-                # which urlopen surfaces as a URLError whose `.reason` is
-                # the timeout): no status/body to return, so retry with
-                # the same backoff as a 5xx, or re-raise on the last try.
+            except OSError:
+                # Connection-level failure: URLError (an OSError), or a bare
+                # TimeoutError/ConnectionResetError raised while reading the
+                # response - urllib only wraps errors from sending the
+                # request. No status/body to return, so retry with the same
+                # backoff as a 5xx, or re-raise on the last try.
                 if attempt < self._max_attempts:
                     self._sleeper(5 * attempt)
                     continue
@@ -503,7 +504,7 @@ class UrlLibTransport:
             except urllib.error.HTTPError as exc:
                 status = exc.code
                 resp_body = exc.read()
-            except urllib.error.URLError:
+            except OSError:
                 if attempt < self._max_attempts:
                     self._sleeper(5 * attempt)
                     continue
