@@ -37,6 +37,10 @@ as ep 9 / ep 10 / ep 12 respectively.
   episode 9, cut beside bdobb-v2's calendar card view at the same label.
   Nothing else moves: the fundamentals L2 cache on Delta is episode 11 and
   stays out.
+- **v9.6.2 — branch `release/v9.6`** (cut 2026-09-14): v9.6.1 plus one fix
+  — statement rows carry the issuer's fiscal year and quarter, derived from
+  `General.FiscalYearEnd` (extension 9.6.2). Cut beside bdobb-v2's statement
+  pivot view at the same label.
 - **v10.1.0**: `v10.0.0` + the kdb-line follow-ons — tick-log durability
   (`d26effb`), the kdb-ws demo chart (`f3d14d9`), per-bar vwap. Cut after
   that work settles; it is in flight on `eodhd-fmp-parity` today and
