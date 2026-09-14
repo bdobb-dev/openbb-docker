@@ -91,7 +91,7 @@ def _record_hash(logical_tick_id: str, price, size, sale_condition_raw, venue_co
 
 
 def parse_tick_payload(
-    payload: list[dict],
+    payload: "list[dict] | dict[str, list]",
     *,
     capture_id: str,
     listing_id: str,
@@ -105,7 +105,14 @@ def parse_tick_payload(
     occurrence (boundary-second duplicates per sip_backfill's convention).
     `source_row_ordinal` is the index of the kept row in the ORIGINAL
     (pre-dedup) payload.
+
+    The live EODHD tick endpoint returns COLUMNAR JSON - one dict of
+    equal-length arrays, `{"ts": [...], "price": [...], ...}` (Phase-0,
+    2026-09-14) - so a dict payload is zipped into records first; a
+    list of record dicts is accepted unchanged.
     """
+    if isinstance(payload, dict):
+        payload = [dict(zip(payload, row)) for row in zip(*payload.values())]
     seen: set[tuple[int, int]] = set()
     rows = []
 

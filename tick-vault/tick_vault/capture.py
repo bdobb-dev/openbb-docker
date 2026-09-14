@@ -106,8 +106,9 @@ def resolve_capture_body(
 
 
 def row_count_hint(payload_bytes: bytes | None) -> int | None:
-    """Best-effort row count for a JSON-array payload; `None` if the
-    payload is missing, not valid JSON, or not a top-level list."""
+    """Best-effort row count for a JSON-array payload, or for a columnar
+    tick payload (`{"ts": [...], ...}`, the live tick endpoint's shape);
+    `None` if the payload is missing, not valid JSON, or neither shape."""
     if not payload_bytes:
         return None
     try:
@@ -116,6 +117,8 @@ def row_count_hint(payload_bytes: bytes | None) -> int | None:
         return None
     if isinstance(parsed, list):
         return len(parsed)
+    if isinstance(parsed, dict) and isinstance(parsed.get("ts"), list):
+        return len(parsed["ts"])
     return None
 
 
