@@ -200,7 +200,15 @@ def append_rows(root: str, table: str, df: "pd.DataFrame") -> None:
     layer, name = table.split(".", 1)
     path = f"{root}/{layer}/{name}"
     schema = SCHEMAS[table]
-    arrow_table = pa.Table.from_pandas(df, schema=schema, preserve_index=False)
+    # Direct typed construction from records rather than `from_pandas`:
+    # pandas has no native nullable-scalar representation for a lone `None`
+    # in an otherwise-numeric column (it upcasts to float NaN), which
+    # `from_pandas` would then fail to cast into an int/decimal/list schema
+    # column. Coerce NaN -> None first, then build rows as plain dicts so
+    # every value round-trips through Python objects straight into the
+    # target arrow types.
+    clean = df.astype(object).where(df.notna(), None)
+    arrow_table = pa.Table.from_pylist(clean.to_dict("records"), schema=schema)
     write_deltalake(path, arrow_table, mode="append")
 
 
@@ -350,18 +358,23 @@ def _urlopen(url: str, timeout: int):
 class UrlLibTransport:
     """Live `Transport` over `urllib.request`.
 
-    Retries up to `max_attempts` (default 3) total tries, only on 5xx
-    responses, sleeping `5 * attempt` seconds between attempts (`attempt`
-    is 1-based, so 5s then 10s by default) via an injectable `sleeper`
-    (defaults to `time.sleep`) so tests never actually sleep. Any other
-    status - including 429 - is returned immediately on the first attempt:
-    429/backoff pacing across *many* calls is Task 7's `Budget` class's
-    job, layered on top of a `Transport`, not this per-call retry loop's.
+    Retries up to `max_attempts` (default 3) total tries, on 5xx responses
+    and on network-level failures (`urllib.error.URLError`, including
+    connection resets and socket timeouts), sleeping `5 * attempt` seconds
+    between attempts (`attempt` is 1-based, so 5s then 10s by default) via
+    an injectable `sleeper` (defaults to `time.sleep`) so tests never
+    actually sleep. Any other status - including 429 - is returned
+    immediately on the first attempt: 429/backoff pacing across *many*
+    calls is Task 7's `Budget` class's job, layered on top of a
+    `Transport`, not this per-call retry loop's.
 
     `opener(url, timeout) -> response` is injectable for tests; it must
     return an object with `.read()` and either `.status` or `.getcode()`,
     or raise `urllib.error.HTTPError` (whose `.code`/`.read()` are used as
-    the status/body instead). Defaults to `urllib.request.urlopen`.
+    the status/body instead), or raise `urllib.error.URLError` (no status
+    code - a connection-level failure, including a socket timeout - which
+    is retried like a 5xx and re-raised if the last attempt also fails).
+    Defaults to `urllib.request.urlopen`.
     """
 
     def __init__(self, opener=None, sleeper=None, max_attempts: int = 3):
@@ -380,6 +393,15 @@ class UrlLibTransport:
             except urllib.error.HTTPError as exc:
                 status = exc.code
                 body = exc.read()
+            except urllib.error.URLError:
+                # Connection-level failure (including a socket timeout,
+                # which urlopen surfaces as a URLError whose `.reason` is
+                # the timeout): no status/body to return, so retry with
+                # the same backoff as a 5xx, or re-raise on the last try.
+                if attempt < self._max_attempts:
+                    self._sleeper(5 * attempt)
+                    continue
+                raise
             if status is not None and status >= 500 and attempt < self._max_attempts:
                 self._sleeper(5 * attempt)
                 continue

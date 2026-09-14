@@ -49,7 +49,11 @@ _BRONZE_EODHD_TICK_CAPTURE = pa.schema([
     pa.field("request_parameters_json", pa.string(), nullable=False),
     pa.field("http_status", pa.int32(), nullable=False),
     pa.field("response_headers_json", pa.string()),
-    pa.field("raw_payload_uri", pa.string(), nullable=False),
+    # Baseline §10.2: failed/error captures are still recorded as a row
+    # (no payload object exists for them), so this must be nullable;
+    # raw_payload_sha256 stays NOT NULL because failures still hash the
+    # error response body into it.
+    pa.field("raw_payload_uri", pa.string()),
     pa.field("raw_payload_sha256", pa.string(), nullable=False),
     pa.field("raw_row_count", pa.int64()),
     pa.field("first_source_ts_ms", pa.int64()),
@@ -80,7 +84,11 @@ def _generic_capture_fields(*extra) -> list:
     base.extend([
         pa.field("request_parameters_json", pa.string(), nullable=False),
         pa.field("http_status", pa.int32(), nullable=False),
-        pa.field("raw_payload_uri", pa.string(), nullable=False),
+        # Baseline §10.2: failed/error captures are still recorded as a row
+        # (no payload object exists for them), so this must be nullable;
+        # raw_payload_sha256 stays NOT NULL because failures still hash the
+        # error response body into it.
+        pa.field("raw_payload_uri", pa.string()),
         pa.field("raw_payload_sha256", pa.string(), nullable=False),
         pa.field("raw_row_count", pa.int64()),
         pa.field("observed_at_ts", _TS, nullable=False),
