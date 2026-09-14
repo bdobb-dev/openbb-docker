@@ -11,6 +11,7 @@ import tempfile
 from tick_vault.calibrate import (
     CalibrationMeasurements,
     calibration_projection,
+    dir_bytes,
     read_legacy_wall_minutes,
     write_calibration_report,
 )
@@ -18,6 +19,49 @@ from tick_vault.calibrate import (
 
 def _tmpdir():
     return tempfile.mkdtemp(prefix="tick_vault_calibrate_test_")
+
+
+# ---------------------------------------------------------------------------
+# dir_bytes
+# ---------------------------------------------------------------------------
+
+def test_dir_bytes_sums_files_recursively():
+    d = _tmpdir()
+    try:
+        with open(os.path.join(d, "a.txt"), "wb") as f:
+            f.write(b"x" * 10)
+        nested = os.path.join(d, "nested")
+        os.makedirs(nested)
+        with open(os.path.join(nested, "b.txt"), "wb") as f:
+            f.write(b"y" * 25)
+        assert dir_bytes(d) == 35
+    finally:
+        shutil.rmtree(d)
+
+
+def test_dir_bytes_empty_dir_is_zero():
+    d = _tmpdir()
+    try:
+        assert dir_bytes(d) == 0
+    finally:
+        shutil.rmtree(d)
+
+
+def test_dir_bytes_missing_path_is_zero():
+    assert dir_bytes("/no/such/directory/at/all") == 0
+    assert dir_bytes(None) == 0
+
+
+def test_dir_bytes_measures_delta_across_a_write():
+    d = _tmpdir()
+    try:
+        before = dir_bytes(d)
+        with open(os.path.join(d, "new.bin"), "wb") as f:
+            f.write(b"z" * 4096)
+        after = dir_bytes(d)
+        assert after - before == 4096
+    finally:
+        shutil.rmtree(d)
 
 
 # ---------------------------------------------------------------------------

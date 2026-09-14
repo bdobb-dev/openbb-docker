@@ -74,6 +74,38 @@ _LEGACY_COLUMNS = ["week", "wall_minutes", "finished", "settled"]
 
 
 # ---------------------------------------------------------------------------
+# dir_bytes
+# ---------------------------------------------------------------------------
+
+def dir_bytes(path: "str | None") -> int:
+    """Sum the on-disk byte size of every regular file found by a
+    recursive `os.walk` under `path`. Pure filesystem measurement, no
+    Delta/pyarrow involved - `tick_vault.cli`'s `handle_calibrate` calls
+    this once before and once after running a calibration week's real
+    fetches (over `VAULT_ROOT`) and uses the delta as the calibration's
+    `bytes_written` measurement (previously hardcoded to 0, which made
+    every calibration report's projected storage-TB figure always read
+    zero - see task-10 fix-round brief).
+
+    Missing/non-directory `path` returns 0 rather than raising (mirrors
+    `read_legacy_wall_minutes`'s best-effort-on-bad-input convention);
+    a file that disappears between `os.walk` listing it and `os.path.
+    getsize` (benign race, e.g. a concurrent writer) is skipped rather
+    than raising."""
+    if not path or not os.path.isdir(path):
+        return 0
+    total = 0
+    for dirpath, _dirnames, filenames in os.walk(path):
+        for name in filenames:
+            file_path = os.path.join(dirpath, name)
+            try:
+                total += os.path.getsize(file_path)
+            except OSError:
+                continue
+    return total
+
+
+# ---------------------------------------------------------------------------
 # read_legacy_wall_minutes
 # ---------------------------------------------------------------------------
 

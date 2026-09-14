@@ -127,9 +127,10 @@ def test_run_cycle_incomplete_week_not_selected_by_priority_1():
         _row(work_id="wrk_current", week_monday=dt.date(2024, 1, 15), status=STATUS_PENDING),
     ])
     action = run_cycle(ctx, manifest, state)
-    # Falls through to priority 4 (backward walk), not priority 1.
-    assert action.kind == CYCLE_FETCH
-    assert action.reason == "backward historical walk"
+    # Priority 4 is ALSO gated by T+1 completeness (fix, task-10
+    # fix-round) - an incomplete week is never selected by priority 1
+    # OR priority 4, so this falls all the way through to SLEEP.
+    assert action.kind == CYCLE_SLEEP
 
 
 # ---------------------------------------------------------------------------
@@ -217,8 +218,9 @@ def test_run_cycle_does_not_retry_failed_row_before_24h():
 def test_run_cycle_backward_walk_falls_through_priority_1_when_all_incomplete():
     # Both weeks fail the T+1 completeness gate at `now` (the older one
     # is the current week's Monday itself, the newer is next week) -
-    # priority 1 finds nothing, so priority 4's unconditional backward
-    # walk picks the newest PENDING week anyway.
+    # priority 1 finds nothing, and priority 4 (also T+1-gated as of the
+    # task-10 fix-round) finds nothing either, so this sleeps rather
+    # than fetching an incomplete week.
     now = dt.datetime(2024, 1, 15, 12, 0, tzinfo=UTC)  # Monday, current week
     ctx = _ctx(now)
     state: dict = {}
@@ -228,9 +230,7 @@ def test_run_cycle_backward_walk_falls_through_priority_1_when_all_incomplete():
         _row(work_id="wrk_next_week", week_monday=dt.date(2024, 1, 22), status=STATUS_PENDING),
     ])
     action = run_cycle(ctx, manifest, state)
-    assert action.kind == CYCLE_FETCH
-    assert action.reason == "backward historical walk"
-    assert action.item["work_id"] == "wrk_next_week"
+    assert action.kind == CYCLE_SLEEP
 
 
 def test_run_cycle_backward_walk_only_incomplete_pending():
@@ -242,9 +242,29 @@ def test_run_cycle_backward_walk_only_incomplete_pending():
         _row(work_id="wrk_only", week_monday=dt.date(2024, 1, 15), status=STATUS_PENDING),
     ])
     action = run_cycle(ctx, manifest, state)
+    # The only PENDING row is incomplete - neither priority 1 nor
+    # priority 4 may select it, so this sleeps.
+    assert action.kind == CYCLE_SLEEP
+
+
+def test_run_cycle_backward_walk_mix_of_incomplete_new_and_complete_old_picks_old():
+    # A newer PENDING week that is still incomplete (T+1 not yet
+    # satisfied) alongside an older PENDING week that IS complete: the
+    # complete-old week must be picked (via priority 1's own
+    # completeness filter, which does not depend on sort order finding
+    # the newest row overall - only the newest COMPLETE row), never the
+    # incomplete-new one.
+    now = dt.datetime(2024, 1, 15, 12, 0, tzinfo=UTC)  # Monday, current week
+    ctx = _ctx(now)
+    state: dict = {}
+    _already_ran_daily_today(ctx, state)
+    manifest = pd.DataFrame([
+        _row(work_id="wrk_new_incomplete", week_monday=dt.date(2024, 1, 15), status=STATUS_PENDING),
+        _row(work_id="wrk_old_complete", week_monday=dt.date(2023, 12, 4), status=STATUS_PENDING),
+    ])
+    action = run_cycle(ctx, manifest, state)
     assert action.kind == CYCLE_FETCH
-    assert action.reason == "backward historical walk"
-    assert action.item["work_id"] == "wrk_only"
+    assert action.item["work_id"] == "wrk_old_complete"
 
 
 # ---------------------------------------------------------------------------
