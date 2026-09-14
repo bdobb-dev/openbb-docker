@@ -48,6 +48,16 @@ GATE_REFUSAL_MESSAGE = (
     "(the override is logged to ops.ingestion_run)."
 )
 
+RECONCILE_REFUSAL_MESSAGE = (
+    "backfill --loop refused: reconciliation Phase-A is not configured "
+    "on this LoopContext (ctx.reconcile_step is None - typically because "
+    "no EOD_API_KEY reference credential is set, see "
+    "tick_vault.cli.build_ctx_from_env). Set EOD_API_KEY so the OHLCV "
+    "reconciliation gate (tick_vault.reconcile.Gate) can actually run, or "
+    "pass --i-know-what-im-doing to override (the override is logged to "
+    "ops.ingestion_run)."
+)
+
 
 def calibration_report_path() -> str:
     return os.environ.get("CALIBRATION_REPORT", DEFAULT_CALIBRATION_REPORT)
@@ -108,15 +118,112 @@ def _default_manifest_row_writer(root: str, updated_row: dict) -> None:
     write_deltalake(f"{root}/ops/backfill_manifest", arrow_table, mode="overwrite", partition_by=PARTITIONING.get(table))
 
 
+def _default_existing_ticks_reader(root: str, listing_id: str) -> "pd.DataFrame | None":
+    """Real reader for `fetch_week`'s/reconciliation's `existing_ticks_
+    reader(root, listing_id) -> pandas.DataFrame` seam: this listing's
+    rows already written to `silver.us_trade_tick_version` (lazy
+    deltalake import, matching this module's own convention). Returns
+    `None` if the table does not exist yet (first run on a fresh
+    `VAULT_ROOT`) rather than raising - `fetch_week`/`_pandas_reconcile_
+    step` both already treat a `None`/empty return as "nothing written
+    yet"."""
+    from deltalake import DeltaTable
+
+    try:
+        table = DeltaTable(f"{root}/silver/us_trade_tick_version")
+    except Exception:
+        return None
+    df = table.to_pandas()
+    if df is None or df.empty:
+        return df
+    return df[df["listing_id"] == listing_id]
+
+
+def _item_get(item, key: str, default=None):
+    if item is None:
+        return default
+    if isinstance(item, dict):
+        return item.get(key, default)
+    return getattr(item, key, default)
+
+
+def _pandas_reconcile_step(
+    ctx: loop_mod.LoopContext, item, fetch_result, sequence_number: int
+):
+    """Minimal pandas Phase-A reconciliation hook (C2 wiring - Plan-2's
+    reconciliation gate, previously defined in `tick_vault.reconcile` but
+    never actually called from anywhere in production).
+
+    Reads back this tranche's just-written daily ticks via `ctx.
+    existing_ticks_reader` (real wiring: `_default_existing_ticks_
+    reader` above), aggregates them to daily OHLCV bars (`tick_vault.
+    reconcile.aggregate_bars`), fetches the vendor's EOD reference bars
+    for the same ISO week (`ReferenceClient.get_eod`), compares the two
+    (`tick_vault.reconcile.reconcile_tranche`), and rules on the tranche
+    via `ctx.gate.check(sequence_number, report)`.
+
+    Returns `None` ("no reconciliation performed for this tranche", per
+    `LoopContext.reconcile_step`'s own contract - the gate sequence is
+    NOT advanced for a `None` return, see `loop._execute_fetch_like`)
+    when `ctx.existing_ticks_reader` is unwired, the item is missing a
+    vendor symbol/week, or nothing has actually been written for this
+    listing yet - all "can't reconcile, not a divergence" cases, never
+    silently treated as a HOLD."""
+    from tick_vault import reconcile as reconcile_mod
+    from tick_vault.eodhd_reference import ReferenceClient
+
+    if ctx.existing_ticks_reader is None:
+        return None
+
+    listing_id = _item_get(item, "listing_id")
+    symbol = _item_get(item, "vendor_symbol_at_date")
+    week_monday = _item_get(item, "week_monday")
+    if listing_id is None or symbol is None or week_monday is None:
+        return None
+
+    ticks_df = ctx.existing_ticks_reader(ctx.root, listing_id)
+    if ticks_df is None or len(ticks_df) == 0:
+        return None
+
+    our_daily_df, our_daily_stats = reconcile_mod.aggregate_bars(
+        ticks_df, interval="1d", return_stats=True
+    )
+    if our_daily_df.empty:
+        return None
+
+    from_date = week_monday
+    to_date = week_monday + dt.timedelta(days=6)
+    client = ReferenceClient(ctx.transport, ctx.store, ctx.api_token)
+    ref_eod_df, _record = client.get_eod(
+        symbol, from_date, to_date, exchange=_item_get(item, "eodhd_exchange_code")
+    )
+
+    report = reconcile_mod.reconcile_tranche(
+        item, our_daily_df, ref_eod_df, our_daily_stats=our_daily_stats
+    )
+    return ctx.gate.check(sequence_number, report)
+
+
 def build_ctx_from_env() -> loop_mod.LoopContext:
     """Build a real, Delta-backed `LoopContext` from `EOD_API_KEY`/
     `VAULT_ROOT`/`LEGACY_ROOT`, read fresh on every call (never cached at
-    import time)."""
+    import time).
+
+    Reconciliation Phase-A wiring (C2 fix-round): `ctx.reconcile_step` is
+    wired to `_pandas_reconcile_step` whenever a reference config is
+    available - operationally, whenever a real `EOD_API_KEY` is set (the
+    same credential `ReferenceClient.get_eod` needs; without it there is
+    no reference data to reconcile against, so wiring the hook would only
+    ever return `None`). `ctx.existing_ticks_reader` is wired to
+    `_default_existing_ticks_reader` unconditionally - it is also the
+    read-back seam `fetch_week` itself uses for idempotent re-runs, not
+    only a reconciliation concern."""
     from tick_vault.capture import CaptureStore, UrlLibTransport
 
     root = os.environ.get("VAULT_ROOT", "./vault_data")
     api_key = os.environ.get("EOD_API_KEY", _REDACTED)
     legacy_root = os.environ.get("LEGACY_ROOT")
+    reference_configured = bool(api_key) and api_key != _REDACTED
 
     return loop_mod.LoopContext(
         transport=UrlLibTransport(),
@@ -125,6 +232,8 @@ def build_ctx_from_env() -> loop_mod.LoopContext:
         legacy_progress_root=legacy_root,
         manifest_reader=_default_manifest_reader,
         manifest_row_writer=_default_manifest_row_writer,
+        existing_ticks_reader=_default_existing_ticks_reader,
+        reconcile_step=_pandas_reconcile_step if reference_configured else None,
         api_token=api_key,
         span_memory=SpanMemory(),
         budget=Budget(),
@@ -191,15 +300,29 @@ def handle_backfill(args: argparse.Namespace, ctx_factory) -> int:
         report_exists = os.path.isfile(report_path)
         if not report_exists and not args.override:
             raise SystemExit(GATE_REFUSAL_MESSAGE.format(path=report_path))
+
         ctx = ctx_factory()
-        if args.override and not report_exists:
-            run_id = loop_mod.open_run(
-                ctx, "GATE_OVERRIDE",
-                note=(
-                    f"--i-know-what-im-doing override: no calibration report "
-                    f"found at {report_path}"
-                ),
-            )
+
+        # Second gate (C2 fix-round): `--loop` also refuses when
+        # reconciliation Phase-A isn't wired on this ctx - running the
+        # ~300k-call historical walk with no reconciliation gate at all
+        # means every divergence goes completely unnoticed, which is the
+        # exact risk `--i-know-what-im-doing` exists to make an operator
+        # consciously accept, same as the calibration-report gate above.
+        reconcile_configured = getattr(ctx, "reconcile_step", None) is not None
+        if not reconcile_configured and not args.override:
+            raise SystemExit(RECONCILE_REFUSAL_MESSAGE)
+
+        missing_calibration = not report_exists
+        missing_reconcile = not reconcile_configured
+        if args.override and (missing_calibration or missing_reconcile):
+            notes = []
+            if missing_calibration:
+                notes.append(f"no calibration report found at {report_path}")
+            if missing_reconcile:
+                notes.append("reconciliation Phase-A (ctx.reconcile_step) is not configured")
+            note = "--i-know-what-im-doing override: " + "; ".join(notes)
+            run_id = loop_mod.open_run(ctx, "GATE_OVERRIDE", note=note)
             loop_mod.close_run(ctx, run_id, status=loop_mod.RUN_STATUS_COMPLETED, run_type="GATE_OVERRIDE")
         return run_backfill_loop(ctx)
     if args.week:
@@ -238,11 +361,21 @@ def handle_manifest(args: argparse.Namespace, ctx_factory) -> int:
     ctx = ctx_factory()
     if args.generate:
         first, last = args.generate
-        builder = ManifestBuilder(
-            ctx.root,
-            manifest_reader=ctx.manifest_reader,
-        )
-        new_rows = builder.generate(first, last)
+        run_id = loop_mod.open_run(ctx, "manifest_generate")
+        status = loop_mod.RUN_STATUS_COMPLETED
+        error_summary = None
+        try:
+            builder = ManifestBuilder(
+                ctx.root,
+                manifest_reader=ctx.manifest_reader,
+            )
+            new_rows = builder.generate(first, last)
+        except Exception as exc:
+            status = loop_mod.RUN_STATUS_FAILED
+            error_summary = f"{type(exc).__name__}: {exc}"
+            raise
+        finally:
+            loop_mod.close_run(ctx, run_id, status=status, error_summary=error_summary, run_type="manifest_generate")
         print(f"manifest --generate {first} {last}: {len(new_rows)} new rows")
         return 0
     raise SystemExit("manifest requires --generate FIRST LAST")
@@ -253,11 +386,21 @@ def handle_reference(args: argparse.Namespace, ctx_factory) -> int:
 
     ctx = ctx_factory()
     if args.sync:
-        client = ReferenceClient(ctx.transport, ctx.store, ctx.api_token)
-        client.get_exchange_symbols()
-        client.get_delisted()
-        client.get_symbol_changes()
-        client.get_index_components()
+        run_id = loop_mod.open_run(ctx, "reference_sync")
+        status = loop_mod.RUN_STATUS_COMPLETED
+        error_summary = None
+        try:
+            client = ReferenceClient(ctx.transport, ctx.store, ctx.api_token)
+            client.get_exchange_symbols()
+            client.get_delisted()
+            client.get_symbol_changes()
+            client.get_index_components()
+        except Exception as exc:
+            status = loop_mod.RUN_STATUS_FAILED
+            error_summary = f"{type(exc).__name__}: {exc}"
+            raise
+        finally:
+            loop_mod.close_run(ctx, run_id, status=status, error_summary=error_summary, run_type="reference_sync")
         print("reference --sync: symbols, delisted, changes, components synced")
         return 0
     raise SystemExit("reference requires --sync")
@@ -268,8 +411,19 @@ def handle_figi(args: argparse.Namespace, ctx_factory) -> int:
 
     ctx = ctx_factory()
     if args.drain:
-        worker = FigiWorker(ctx.transport, ctx.store, ctx.root, ctx.api_token)
-        summary = worker.run_batch()
+        run_id = loop_mod.open_run(ctx, "figi_drain")
+        status = loop_mod.RUN_STATUS_COMPLETED
+        error_summary = None
+        summary = None
+        try:
+            worker = FigiWorker(ctx.transport, ctx.store, ctx.root, ctx.api_token)
+            summary = worker.run_batch()
+        except Exception as exc:
+            status = loop_mod.RUN_STATUS_FAILED
+            error_summary = f"{type(exc).__name__}: {exc}"
+            raise
+        finally:
+            loop_mod.close_run(ctx, run_id, status=status, error_summary=error_summary, run_type="figi_drain")
         print(f"figi --drain: {summary}")
         return 0
     raise SystemExit("figi requires --drain")
@@ -331,7 +485,7 @@ def handle_status(args: argparse.Namespace, ctx_factory) -> int:
 
 
 def handle_calibrate(args: argparse.Namespace, ctx_factory) -> int:
-    from tick_vault.engine import fetch_week
+    from tick_vault.engine import STATUS_COMPLETE, STATUS_PARTIAL, fetch_week
 
     ctx = ctx_factory()
     week_date = dt.date.fromisoformat(args.week)
@@ -343,50 +497,91 @@ def handle_calibrate(args: argparse.Namespace, ctx_factory) -> int:
         return 1
 
     rows = manifest_df[manifest_df["week_monday"] == week_date]
-    total_calls = 0
-    total_wall_minutes = 0.0
-    total_rows = 0
-    symbols = 0
-    # Measured, not hardcoded: bytes_written is the real filesystem delta
-    # under VAULT_ROOT across this calibration week's fetches (task-10
-    # fix-round - a hardcoded 0 here made every report's projected
-    # storage-TB figure always read zero). Pure `calibrate.dir_bytes`
-    # does the actual counting; this handler just brackets the fetch
-    # loop with before/after snapshots.
-    bytes_before = calibrate_mod.dir_bytes(ctx.root)
-    for _, row in rows.iterrows():
-        item = row.to_dict()
-        result = fetch_week(
-            ctx.transport, ctx.store, ctx.root, item,
-            span_memory=ctx.span_memory, budget=ctx.budget, now=ctx.now(),
-            api_token=ctx.api_token, writer=ctx.tick_writer,
-            existing_ticks_reader=ctx.existing_ticks_reader, verifier=ctx.verifier,
+
+    run_id = loop_mod.open_run(ctx, "calibrate")
+    run_status = loop_mod.RUN_STATUS_COMPLETED
+    run_error = None
+    try:
+        total_calls = 0
+        total_wall_minutes = 0.0
+        total_rows = 0
+        symbols = 0
+        # Reconciliation honesty (I3 fix-round): `calibrate` does NOT run
+        # the OHLCV reconciliation gate on its own - it only calls
+        # `ctx.reconcile_step` when the caller's `LoopContext` actually
+        # has one wired (`tick_vault.cli.build_ctx_from_env` wires it iff
+        # a reference config - EOD_API_KEY - is available, per the C2
+        # fix-round). Either way, the written report says so explicitly
+        # (see `calibrate_mod.write_calibration_report`'s `reconciliation`
+        # argument) instead of silently implying the gate always ran.
+        reconcile_configured = getattr(ctx, "reconcile_step", None) is not None
+        tranches_checked = 0
+        tranches_held = 0
+        sequence_number = 0
+
+        # Measured, not hardcoded: bytes_written is the real filesystem delta
+        # under VAULT_ROOT across this calibration week's fetches (task-10
+        # fix-round - a hardcoded 0 here made every report's projected
+        # storage-TB figure always read zero). Pure `calibrate.dir_bytes`
+        # does the actual counting; this handler just brackets the fetch
+        # loop with before/after snapshots.
+        bytes_before = calibrate_mod.dir_bytes(ctx.root)
+        for _, row in rows.iterrows():
+            item = row.to_dict()
+            result = fetch_week(
+                ctx.transport, ctx.store, ctx.root, item,
+                span_memory=ctx.span_memory, budget=ctx.budget, now=ctx.now(),
+                api_token=ctx.api_token, writer=ctx.tick_writer,
+                existing_ticks_reader=ctx.existing_ticks_reader, verifier=ctx.verifier,
+            )
+            total_calls += result.captures
+            total_wall_minutes += result.wall_minutes
+            total_rows += result.rows_written
+            symbols += 1
+
+            if reconcile_configured and result.status in (STATUS_COMPLETE, STATUS_PARTIAL):
+                decision = ctx.reconcile_step(ctx, item, result, sequence_number)
+                if decision is not None:
+                    sequence_number += 1
+                    tranches_checked += 1
+                    if decision.hold:
+                        tranches_held += 1
+        bytes_after = calibrate_mod.dir_bytes(ctx.root)
+        bytes_written = max(bytes_after - bytes_before, 0)
+
+        if symbols == 0:
+            print(f"calibrate --week {args.week}: no symbols processed")
+            run_status = loop_mod.RUN_STATUS_FAILED
+            run_error = "no symbols processed"
+            return 1
+
+        measurements = calibrate_mod.CalibrationMeasurements(
+            calls=total_calls,
+            wall_minutes=total_wall_minutes,
+            rows=total_rows,
+            bytes_written=bytes_written,
+            symbols=symbols,
+            week=week_date,
         )
-        total_calls += result.captures
-        total_wall_minutes += result.wall_minutes
-        total_rows += result.rows_written
-        symbols += 1
-    bytes_after = calibrate_mod.dir_bytes(ctx.root)
-    bytes_written = max(bytes_after - bytes_before, 0)
-
-    if symbols == 0:
-        print(f"calibrate --week {args.week}: no symbols processed")
-        return 1
-
-    measurements = calibrate_mod.CalibrationMeasurements(
-        calls=total_calls,
-        wall_minutes=total_wall_minutes,
-        rows=total_rows,
-        bytes_written=bytes_written,
-        symbols=symbols,
-        week=week_date,
-    )
-    legacy_df = calibrate_mod.read_legacy_wall_minutes(legacy_root)
-    projection = calibrate_mod.calibration_projection(measurements, legacy_df=legacy_df)
-    report_path = calibration_report_path()
-    calibrate_mod.write_calibration_report(report_path, projection, measurements, legacy_df)
-    print(f"calibrate --week {args.week}: report written to {report_path}")
-    return 0
+        legacy_df = calibrate_mod.read_legacy_wall_minutes(legacy_root)
+        projection = calibrate_mod.calibration_projection(measurements, legacy_df=legacy_df)
+        report_path = calibration_report_path()
+        calibrate_mod.write_calibration_report(
+            report_path, projection, measurements, legacy_df,
+            reconciliation={
+                "configured": reconcile_configured,
+                "tranches_checked": tranches_checked,
+                "held": tranches_held,
+            },
+        )
+        print(f"calibrate --week {args.week}: report written to {report_path}")
+        return 0
+    except Exception as exc:
+        run_status = loop_mod.RUN_STATUS_FAILED
+        run_error = f"{type(exc).__name__}: {exc}"
+        raise
+    finally:
+        loop_mod.close_run(ctx, run_id, status=run_status, error_summary=run_error, run_type="calibrate")
 
 
 HANDLER_NAMES = {

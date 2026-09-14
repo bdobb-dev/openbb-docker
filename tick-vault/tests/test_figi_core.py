@@ -189,6 +189,25 @@ def test_build_figi_rows_three_levels_with_decimal_confidence():
         assert r["figi_assignment_version_id"]
 
 
+def test_build_figi_rows_accepts_lowercase_igi_share_class_alias():
+    """I6 regression: the official OpenFIGI field is `shareClassFIGI`
+    (capital FIGI); this codebase's own fixture used to be transcribed as
+    `shareClassFigi` (lowercase `igi`), which a real OpenFIGI response
+    would never match, silently dropping every share-class-level row.
+    The lookup is now case-tolerant of both spellings."""
+    row = _queue_row(instrument_id="ins_1", listing_id="lst_1")
+    entry = dict(matched_data(FIXTURE[0]))
+    entry.pop("shareClassFIGI", None)
+    entry["shareClassFigi"] = "BBG001S5N8V8"
+
+    figi_rows = build_figi_rows(entry, row, "cap_1", OBS)
+
+    levels = [r["figi_level"] for r in figi_rows]
+    assert FIGI_LEVEL_SHARE_CLASS in levels
+    share_class_row = next(r for r in figi_rows if r["figi_level"] == FIGI_LEVEL_SHARE_CLASS)
+    assert share_class_row["figi"] == "BBG001S5N8V8"
+
+
 def test_build_figi_rows_empty_for_no_match():
     row = _queue_row()
     assert build_figi_rows({}, row, "cap_1", OBS) == []

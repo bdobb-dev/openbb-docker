@@ -175,10 +175,34 @@ def _default_manifest_counts(root: str) -> dict:
     return {str(k): int(v) for k, v in df["status"].value_counts().items()}
 
 
+def _isoformat_or_none(value) -> "str | None":
+    """`value` may be a `datetime.date`/`datetime.datetime`, a pandas
+    `Timestamp`/`NaT`, `None`, or plain `nan` - normalize all of those to
+    an ISO-8601 string (or `None`) so `json.dumps` never chokes on a raw
+    `date`/`Timestamp` object (`TypeError: Object of type date is not
+    JSON serializable`)."""
+    import pandas as pd
+
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
 def _default_frontier(root: str) -> dict:
     """Real reader: the PENDING-week frontier, `{min_complete_week,
     max_complete_week}` (naming matches the brief's `/status` contract;
-    values are `None` when there is no PENDING work left)."""
+    values are `None` when there is no PENDING work left). Values are
+    normalized to ISO-8601 strings (`_isoformat_or_none`) - a raw
+    `datetime.date`/pandas `Timestamp` is not JSON-serializable, and
+    `build_status_payload`'s dict is always run through `json.dumps` by
+    `StatusServer`."""
     from tick_vault.cli import _default_manifest_reader
 
     df = _default_manifest_reader(root)
@@ -188,8 +212,8 @@ def _default_frontier(root: str) -> dict:
     if pending.empty:
         return {"min_complete_week": None, "max_complete_week": None}
     return {
-        "min_complete_week": pending["week_monday"].min(),
-        "max_complete_week": pending["week_monday"].max(),
+        "min_complete_week": _isoformat_or_none(pending["week_monday"].min()),
+        "max_complete_week": _isoformat_or_none(pending["week_monday"].max()),
     }
 
 

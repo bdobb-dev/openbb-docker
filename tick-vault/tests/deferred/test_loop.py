@@ -16,6 +16,7 @@ a `tmp_path` lake created via `tick_vault.schemas.create_all`.
 """
 import datetime as dt
 
+import pandas as pd
 import pytest
 from deltalake import DeltaTable
 
@@ -51,7 +52,7 @@ def test_open_run_lands_real_running_row(lake):
     row = rows.iloc[0]
     assert row["status"] == RUN_STATUS_RUNNING
     assert row["run_type"] == "backfill_loop"
-    assert row["completed_at_ts"] is None
+    assert pd.isna(row["completed_at_ts"])
 
 
 def test_open_then_close_run_lands_two_real_rows_same_run_id(lake):
@@ -66,7 +67,7 @@ def test_open_then_close_run_lands_two_real_rows_same_run_id(lake):
     assert len(rows) == 2
     assert rows.iloc[0]["status"] == RUN_STATUS_RUNNING
     assert rows.iloc[1]["status"] == RUN_STATUS_COMPLETED
-    assert rows.iloc[1]["completed_at_ts"] is not None
+    assert not pd.isna(rows.iloc[1]["completed_at_ts"])
 
 
 def test_open_run_with_override_note_lands_in_quality_check_summary(lake):

@@ -37,7 +37,8 @@ each entry either `{"data": [{...}, ...]}` (first element used - baseline
 doesn't ask this module to disambiguate multiple candidates for one job)
 or `{"error": "..."}`/no `data` key at all for a miss): `figi` ->
 `FIGI_LEVEL_VENUE`, `compositeFIGI` -> `FIGI_LEVEL_COMPOSITE`,
-`shareClassFigi` -> `FIGI_LEVEL_SHARE_CLASS`, each present-and-non-empty
+`shareClassFIGI` (case-tolerant of the `shareClassFigi` alias) ->
+`FIGI_LEVEL_SHARE_CLASS`, each present-and-non-empty
 field of the matched `data[0]` yielding its own `silver.
 figi_assignment_version` row (so a job can yield 0-3 rows on a genuine
 match; a job with no usable `data` yields 0 rows, ever - `NO_MATCH` is
@@ -140,10 +141,19 @@ IDTYPE_TICKER = "TICKER"
 # priority order rows are built/returned (VENUE first, so the VENUE-level
 # row's id is preferred as `resolved_figi_assignment_version_id` when a
 # job matches at more than one level).
+#
+# I6 fix-round: OpenFIGI's own API docs spell the share-class field
+# `shareClassFIGI` (capital FIGI); this codebase's fixture/tests had
+# transcribed it as `shareClassFigi` (lowercase `igi`) instead, which
+# would have silently dropped every share-class-level match against a
+# real OpenFIGI response. The primary field name is now the official
+# `shareClassFIGI` spelling, with `shareClassFigi` accepted as a
+# case-tolerant alias (third tuple element) so neither a real vendor
+# response nor this repo's own pre-fix fixture data breaks.
 _FIGI_RESPONSE_FIELDS = (
-    ("figi", FIGI_LEVEL_VENUE),
-    ("compositeFIGI", FIGI_LEVEL_COMPOSITE),
-    ("shareClassFigi", FIGI_LEVEL_SHARE_CLASS),
+    ("figi", FIGI_LEVEL_VENUE, ()),
+    ("compositeFIGI", FIGI_LEVEL_COMPOSITE, ()),
+    ("shareClassFIGI", FIGI_LEVEL_SHARE_CLASS, ("shareClassFigi",)),
 )
 
 # Column list, transcribed from tick_vault.schemas._SILVER_FIGI_ASSIGNMENT_VERSION
@@ -376,7 +386,8 @@ def build_figi_rows(
 ) -> "list[dict]":
     """A matched `data[0]` dict -> 0-3 `silver.figi_assignment_version`
     rows (one per present-and-non-empty `figi`/`compositeFIGI`/
-    `shareClassFigi` field - see `_FIGI_RESPONSE_FIELDS`), each carrying
+    `shareClassFIGI` field, case-tolerant of the `shareClassFigi` alias -
+    see `_FIGI_RESPONSE_FIELDS`), each carrying
     `queue_row`'s `instrument_id`/`listing_id`, `match_status="MATCH"`,
     `confidence=CONFIDENCE_MATCH` (a `decimal.Decimal`, never a float -
     the schema column is `decimal128(5,4)`), and knowledge time
@@ -385,8 +396,13 @@ def build_figi_rows(
     """
     observed_at_ts = _to_utc_ts(observed_at)
     rows = []
-    for field, level in _FIGI_RESPONSE_FIELDS:
+    for field, level, aliases in _FIGI_RESPONSE_FIELDS:
         value = data_entry.get(field)
+        if _is_missing(value):
+            for alias in aliases:
+                value = data_entry.get(alias)
+                if not _is_missing(value):
+                    break
         if _is_missing(value):
             continue
         rows.append(_row(

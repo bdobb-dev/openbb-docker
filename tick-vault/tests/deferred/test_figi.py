@@ -84,7 +84,7 @@ def _fixture_response():
                 {
                     "figi": "BBG000B9XRY4",
                     "compositeFIGI": "BBG000B9XVV8",
-                    "shareClassFigi": "BBG001S5N8V8",
+                    "shareClassFIGI": "BBG001S5N8V8",
                 }
             ]
         }

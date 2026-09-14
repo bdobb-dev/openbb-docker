@@ -238,6 +238,7 @@ def write_calibration_report(
     projection: dict,
     measurements: CalibrationMeasurements,
     legacy_df: "pd.DataFrame | None" = None,
+    reconciliation: "dict | None" = None,
 ) -> None:
     """Write a frozen markdown calibration report to `path` (creating
     parent directories as needed), naming convention per
@@ -252,6 +253,17 @@ def write_calibration_report(
     string forms appear in the written file - this function's exact
     prose/layout is not itself a frozen contract, only that those
     figures are present and legible.
+
+    `reconciliation` (I3 fix-round honesty requirement): `calibrate`
+    itself does NOT run the OHLCV reconciliation gate unless a reference
+    config is wired on the caller's `LoopContext` (see
+    `tick_vault.cli.build_ctx_from_env`/`handle_calibrate`) - this report
+    says so explicitly rather than implying the gate always ran.
+    `reconciliation` is `{"configured": bool, "tranches_checked": int,
+    "held": int}` when supplied, or `None` (the report then states
+    reconciliation status is unknown - a caller that never passes this
+    argument at all, e.g. an old caller, gets an honest "not reported"
+    line rather than a false-positive "ran" claim).
     """
     parent = os.path.dirname(path)
     if parent:
@@ -301,6 +313,27 @@ def write_calibration_report(
             "- legacy progress data found but no usable wall_minutes values",
             "",
         ])
+
+    lines.append("## Reconciliation")
+    lines.append("")
+    if reconciliation is None:
+        lines.append(
+            "- reconciliation_gate: NOT REPORTED (this calibration run did "
+            "not record whether tick_vault.reconcile.Gate ran)"
+        )
+    elif reconciliation.get("configured"):
+        lines.append(
+            f"- reconciliation_gate: RAN ({reconciliation.get('tranches_checked', 0)} "
+            f"tranche(s) checked, {reconciliation.get('held', 0)} held)"
+        )
+    else:
+        lines.append(
+            "- reconciliation_gate: NOT CONFIGURED (ctx.reconcile_step is "
+            "None - typically no EOD_API_KEY reference credential set; "
+            "this calibration week's fetched data was NOT checked against "
+            "vendor EOD reference bars)"
+        )
+    lines.append("")
 
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))

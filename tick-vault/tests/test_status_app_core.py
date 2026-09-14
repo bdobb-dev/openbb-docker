@@ -141,6 +141,54 @@ def test_status_server_end_to_end_status_and_widgets():
         thread.join(timeout=5)
 
 
+def test_default_frontier_isoformats_real_dates_through_live_server():
+    """I4 regression: `_default_frontier`'s real reader used to return raw
+    `datetime.date`/pandas `Timestamp` objects, which `json.dumps` cannot
+    serialize (`TypeError: Object of type date is not JSON serializable`).
+    This drives the ACTUAL `_default_frontier` function (not a fake string
+    reader like `_fake_readers` above) with a fake `ops.backfill_manifest`
+    frame carrying real `datetime.date` values, through a real
+    `StatusServer` HTTP round-trip, and asserts the JSON body carries
+    ISO-8601 strings."""
+    import datetime as dt
+
+    import pandas as pd
+
+    from tick_vault import cli as cli_mod
+    from tick_vault.status_app import _default_frontier
+
+    manifest_df = pd.DataFrame([
+        {"work_id": "wrk_a", "status": "PENDING", "week_monday": dt.date(2020, 1, 6)},
+        {"work_id": "wrk_b", "status": "PENDING", "week_monday": dt.date(2020, 1, 13)},
+        {"work_id": "wrk_c", "status": "COMPLETE", "week_monday": dt.date(2019, 12, 30)},
+    ])
+
+    original_reader = cli_mod._default_manifest_reader
+    cli_mod._default_manifest_reader = lambda root: manifest_df
+    try:
+        readers = _fake_readers()
+        readers["frontier"] = lambda: _default_frontier("./unused_vault_root")
+
+        server = StatusServer("./unused_vault_root", readers, port=0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            base = server.base_url
+            with urllib.request.urlopen(f"{base}/status", timeout=5) as resp:
+                assert resp.status == 200
+                body = json.loads(resp.read().decode("utf-8"))
+            assert body["frontier"] == {
+                "min_complete_week": "2020-01-06",
+                "max_complete_week": "2020-01-13",
+            }
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+    finally:
+        cli_mod._default_manifest_reader = original_reader
+
+
 def test_status_server_unknown_path_is_404():
     server = StatusServer("./unused_vault_root", _fake_readers(), port=0)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
