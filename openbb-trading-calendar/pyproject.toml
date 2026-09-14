@@ -24,6 +24,12 @@ dependencies = [
 # httpx is FastAPI TestClient's transport; the image does not ship it.
 dev = ["pytest", "httpx"]
 
+# openbb_core's RouterLoader mounts every router in this group at
+# /<entry-point name> under the API prefix, so the name `calendar` IS the
+# /api/v1/calendar path segment -- and the widgets.json category "Calendar".
+[project.entry-points.openbb_core_extension]
+calendar = "openbb_trading_calendar.router:router"
+
 [tool.setuptools]
 packages = ["openbb_trading_calendar"]
 
