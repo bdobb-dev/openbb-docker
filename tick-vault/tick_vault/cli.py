@@ -242,6 +242,17 @@ def build_ctx_from_env() -> loop_mod.LoopContext:
     )
 
 
+def _real_ctx() -> loop_mod.LoopContext:
+    """`main`'s default ctx factory: the env-built ctx, with every table
+    created on first use - on a fresh VAULT_ROOT each verb's first Delta
+    read otherwise fails with TableNotFoundError."""
+    from tick_vault.schemas import create_all
+
+    ctx = build_ctx_from_env()
+    create_all(ctx.root)
+    return ctx
+
+
 # ---------------------------------------------------------------------------
 # handlers
 # ---------------------------------------------------------------------------
@@ -381,27 +392,69 @@ def handle_manifest(args: argparse.Namespace, ctx_factory) -> int:
     raise SystemExit("manifest requires --generate FIRST LAST")
 
 
-def handle_reference(args: argparse.Namespace, ctx_factory) -> int:
+def sync_reference(ctx: loop_mod.LoopContext) -> dict:
+    """`vault reference --sync`'s body: capture the four reference feeds,
+    build the security master and S&P 500 membership from them (the
+    identity `vault manifest --generate` reads), then attach CUSIP/ISIN/CIK
+    from each constituent's fundamentals. Every builder dedups, so a re-run
+    only adds what changed. Separated from `handle_reference` so tests can
+    monkeypatch it."""
     from tick_vault.eodhd_reference import ReferenceClient
+    from tick_vault.master import MasterBuilder
+    from tick_vault.membership import build_membership
 
+    now = ctx.now()
+    client = ReferenceClient(ctx.transport, ctx.store, ctx.api_token)
+    symbols, symbols_rec = client.get_exchange_symbols(observed_at=now)
+    delisted, delisted_rec = client.get_delisted(observed_at=now)
+    changes, changes_rec = client.get_symbol_changes(observed_at=now)
+    components, components_rec = client.get_index_components(observed_at=now)
+
+    # ponytail: the master is scoped to the index universe (constituent
+    # codes plus the old codes chained to them by symbol changes), not all
+    # ~100k US codes; widen this when a second index lands.
+    members = set(components["code"].dropna())
+    changes = changes[changes["old"].isin(members) | changes["new"].isin(members)].sort_values("date")
+    universe = members | set(changes["old"].dropna())
+
+    master = MasterBuilder(ctx.root)
+    master.upsert_from_symbols(symbols[symbols["code"].isin(universe)], symbols_rec.capture_id, now)
+    master.upsert_from_symbols(delisted[delisted["code"].isin(universe)], delisted_rec.capture_id, now)
+    master.apply_symbol_changes(changes, changes_rec.capture_id, now)
+    report = build_membership(
+        ctx.root, components, resolver=master.resolve_listing_and_instrument_at,
+        capture_id=components_rec.capture_id, observed_at=now,
+    )
+
+    attached = 0
+    for code in sorted(members):
+        fundamentals, rec = client.get_fundamentals(f"{code}.US", observed_at=now)
+        fundamentals = fundamentals.dropna(subset=["code"])
+        if not fundamentals.empty:
+            master.attach_issue_ids(fundamentals, rec.capture_id, now)
+            attached += 1
+    return {
+        "members": len(members), "resolved": report.resolved, "ambiguous": report.ambiguous,
+        "unresolved": report.unresolved, "fundamentals": attached,
+    }
+
+
+def handle_reference(args: argparse.Namespace, ctx_factory) -> int:
     ctx = ctx_factory()
     if args.sync:
         run_id = loop_mod.open_run(ctx, "reference_sync")
         status = loop_mod.RUN_STATUS_COMPLETED
         error_summary = None
+        summary = None
         try:
-            client = ReferenceClient(ctx.transport, ctx.store, ctx.api_token)
-            client.get_exchange_symbols()
-            client.get_delisted()
-            client.get_symbol_changes()
-            client.get_index_components()
+            summary = sync_reference(ctx)
         except Exception as exc:
             status = loop_mod.RUN_STATUS_FAILED
             error_summary = f"{type(exc).__name__}: {exc}"
             raise
         finally:
             loop_mod.close_run(ctx, run_id, status=status, error_summary=error_summary, run_type="reference_sync")
-        print("reference --sync: symbols, delisted, changes, components synced")
+        print(f"reference --sync: {summary}")
         return 0
     raise SystemExit("reference requires --sync")
 
@@ -637,7 +690,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: "list[str] | None" = None, *, ctx_factory=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    ctx_factory = ctx_factory or build_ctx_from_env
+    ctx_factory = ctx_factory or _real_ctx
     handler_name = HANDLER_NAMES[args.command]
     handler = globals()[handler_name]
     return handler(args, ctx_factory)

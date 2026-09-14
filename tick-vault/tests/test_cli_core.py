@@ -287,32 +287,14 @@ def test_handle_reference_opens_and_closes_ingestion_run():
     now = dt.datetime(2026, 9, 14, 12, 0, tzinfo=dt.timezone.utc)
     ctx = cli.loop_mod.LoopContext(root="mem://test", clock=lambda: now, ingestion_run_writer=writer)
 
-    class _FakeReferenceClient:
-        def __init__(self, transport, store, api_token):
-            pass
-
-        def get_exchange_symbols(self):
-            return None
-
-        def get_delisted(self):
-            return None
-
-        def get_symbol_changes(self):
-            return None
-
-        def get_index_components(self):
-            return None
-
-    import tick_vault.eodhd_reference as eodhd_reference_mod
-
-    original = eodhd_reference_mod.ReferenceClient
-    eodhd_reference_mod.ReferenceClient = _FakeReferenceClient
+    original = cli.sync_reference
+    cli.sync_reference = lambda ctx: {"members": 0}
     try:
         args = cli.build_parser().parse_args(["reference", "--sync"])
         rc = cli.handle_reference(args, ctx_factory=lambda: ctx)
         assert rc == 0
     finally:
-        eodhd_reference_mod.ReferenceClient = original
+        cli.sync_reference = original
 
     assert _run_type_rows(writer) == [
         ("reference_sync", "RUNNING"),

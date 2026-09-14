@@ -21,7 +21,7 @@ from tick_vault.membership import (
     INCLUSION_REASON_START_UNKNOWN,
     INDEX_ID,
     INDEX_VENDOR_SYMBOL,
-    MEMBERSHIP_BOUNDARY_V1,
+    MEMBERSHIP_BOUNDARY_V2,
     RESOLUTION_AMBIGUOUS,
     RESOLUTION_RESOLVED,
     RESOLUTION_UNRESOLVED,
@@ -290,20 +290,18 @@ def test_rerun_idempotent_with_fake_reader_over_first_runs_output():
 # ---------------------------------------------------------------------------
 
 def test_boundary_policy_constant_exported():
-    assert MEMBERSHIP_BOUNDARY_V1 == "MEMBERSHIP_BOUNDARY_V1"
+    assert MEMBERSHIP_BOUNDARY_V2 == "MEMBERSHIP_BOUNDARY_V2"
 
 
 # ---------------------------------------------------------------------------
-# 7. inclusive-boundary overlap (controller ruling, fix-round)
+# 7. end-exclusive boundary (MEMBERSHIP_BOUNDARY_V2, Phase-0 2026-09-14)
 # ---------------------------------------------------------------------------
 
-def test_touching_endpoints_same_listing_flagged_as_overlap():
-    """`MEMBERSHIP_BOUNDARY_V1` documents an INCLUSIVE `effective_to` (the
-    last member session, not an exclusive/day-after boundary), so two
-    same-listing intervals that merely TOUCH at a shared boundary date -
-    one ending 2010-01-01, the next starting exactly 2010-01-01 - both
-    claim that same session and MUST be flagged as an overlap, not treated
-    as adjacent/non-overlapping."""
+def test_touching_endpoints_same_listing_are_adjacent_not_overlap():
+    """`MEMBERSHIP_BOUNDARY_V2`: `effective_to` is the first NON-member
+    session (EODHD dates a removal with its replacement's StartDate), so one
+    interval ending 2010-01-01 and the next starting exactly 2010-01-01 are
+    adjacent - both RESOLVED, no overlap issue."""
     lake = _FakeLake()
     resolver = _fake_resolver({
         "OLDX": [("lst_shared", "ins_shared", dt.date(1990, 1, 1))],
@@ -321,17 +319,14 @@ def test_touching_endpoints_same_listing_flagged_as_overlap():
         memberships_reader=lake.reader, writer=lake.writer,
     )
 
-    assert report.resolved == 1
-    assert report.ambiguous == 1
+    assert report.resolved == 2
+    assert report.ambiguous == 0
 
     rows = lake.get("silver.index_membership_version")
-    by_code = {r["source_constituent_code"]: r for _, r in rows.iterrows()}
-    assert by_code["OLDX"]["resolution_status"] == RESOLUTION_RESOLVED
-    assert by_code["NEWX"]["resolution_status"] == RESOLUTION_AMBIGUOUS
+    assert set(rows["resolution_status"]) == {RESOLUTION_RESOLVED}
 
     dq = lake.get("ops.data_quality_issue")
-    overlap_issues = dq[dq["check_name"] == "MEMBERSHIP_OVERLAP"]
-    assert len(overlap_issues) == 1
+    assert dq is None or dq.empty or (dq["check_name"] != "MEMBERSHIP_OVERLAP").all()
 
 
 # ---------------------------------------------------------------------------
