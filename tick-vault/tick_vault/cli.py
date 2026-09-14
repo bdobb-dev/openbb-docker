@@ -66,14 +66,27 @@ def _default_manifest_reader(root: str) -> pd.DataFrame:
 
 def _default_manifest_row_writer(root: str, updated_row: dict) -> None:
     """Production manifest-row update: read the whole `ops.
-    backfill_manifest` table, replace the row matching `(listing_id,
-    week_monday)`, and overwrite. `ops.backfill_manifest` is the one
-    table in this codebase whose rows are mutated in place (`status`/
-    `attempts`/... - see `tick_vault.engine`'s own module docstring);
-    since `deltalake` has no per-row `UPDATE` primitive as simple as
-    `append_rows`, a full-table overwrite is this module's (documented,
-    Plan-3-revisitable) choice for a manifest small enough to fit in
-    memory (~522 weeks x ~505 symbols, a few hundred thousand rows)."""
+    backfill_manifest` table, replace the row matching `work_id` (the
+    manifest's own single-column natural key - see `tick_vault.schemas`'s
+    `_OPS_BACKFILL_MANIFEST`, `work_id` non-nullable and unique per
+    `(listing_id, week_monday)` pair at generation time), and overwrite.
+    `ops.backfill_manifest` is the one table in this codebase whose rows
+    are mutated in place (`status`/`attempts`/... - see
+    `tick_vault.engine`'s own module docstring); since `deltalake` has no
+    per-row `UPDATE` primitive as simple as `append_rows`, a full-table
+    overwrite is this module's (documented, Plan-3-revisitable) choice
+    for a manifest small enough to fit in memory (~522 weeks x ~505
+    symbols, a few hundred thousand rows).
+
+    WARNING - concurrency: this read-modify-overwrite is safe ONLY under
+    the single-CLI-invocation ops rule (one `vault backfill --loop`
+    process, or one-shot verb, ever writing to a given `root` at a time).
+    It is NOT optimistic-concurrency-safe: two concurrent writers can
+    each read the same pre-update table, race to overwrite, and one
+    writer's update silently disappears (no version check, no retry). A
+    real per-row/optimistic-concurrency mechanism is deferred to Plan 3;
+    until then, do not run multiple `vault` processes against the same
+    `VAULT_ROOT` concurrently."""
     import pyarrow as pa
     from deltalake import write_deltalake
 
@@ -82,8 +95,8 @@ def _default_manifest_row_writer(root: str, updated_row: dict) -> None:
     table = "ops.backfill_manifest"
     schema = SCHEMAS[table]
     df = _default_manifest_reader(root)
-    key = (updated_row.get("listing_id"), updated_row.get("week_monday"))
-    mask = (df["listing_id"] == key[0]) & (df["week_monday"] == key[1])
+    work_id = updated_row.get("work_id")
+    mask = df["work_id"] == work_id
     if mask.any():
         for col, value in updated_row.items():
             if col in df.columns:
@@ -334,6 +347,13 @@ def handle_calibrate(args: argparse.Namespace, ctx_factory) -> int:
     total_wall_minutes = 0.0
     total_rows = 0
     symbols = 0
+    # Measured, not hardcoded: bytes_written is the real filesystem delta
+    # under VAULT_ROOT across this calibration week's fetches (task-10
+    # fix-round - a hardcoded 0 here made every report's projected
+    # storage-TB figure always read zero). Pure `calibrate.dir_bytes`
+    # does the actual counting; this handler just brackets the fetch
+    # loop with before/after snapshots.
+    bytes_before = calibrate_mod.dir_bytes(ctx.root)
     for _, row in rows.iterrows():
         item = row.to_dict()
         result = fetch_week(
@@ -346,6 +366,8 @@ def handle_calibrate(args: argparse.Namespace, ctx_factory) -> int:
         total_wall_minutes += result.wall_minutes
         total_rows += result.rows_written
         symbols += 1
+    bytes_after = calibrate_mod.dir_bytes(ctx.root)
+    bytes_written = max(bytes_after - bytes_before, 0)
 
     if symbols == 0:
         print(f"calibrate --week {args.week}: no symbols processed")
@@ -355,7 +377,7 @@ def handle_calibrate(args: argparse.Namespace, ctx_factory) -> int:
         calls=total_calls,
         wall_minutes=total_wall_minutes,
         rows=total_rows,
-        bytes_written=0,
+        bytes_written=bytes_written,
         symbols=symbols,
         week=week_date,
     )

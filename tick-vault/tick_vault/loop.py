@@ -259,10 +259,13 @@ def run_cycle(ctx: LoopContext, manifest_df: "pd.DataFrame | None", state: dict)
        settles, by construction, no special-casing needed).
     3. A `FAILED` row whose `updated_at_ts` is more than 24h old (oldest
        first, so the longest-stuck item gets retried first).
-    4. Otherwise, the newest remaining `PENDING` week regardless of the
-       T+1 completeness gate (the historical backward walk - once the
-       live-edge weeks near "today" are exhausted or not yet due, this
-       keeps the manifest queue draining from newest to oldest).
+    4. Otherwise, the newest remaining `PENDING` week that STILL passes
+       the T+1 completeness gate (the historical backward walk - once
+       the live-edge weeks near "today" are exhausted or not yet due,
+       this keeps the manifest queue draining from newest to oldest;
+       an incomplete `PENDING` week is never selected here either - if
+       every remaining `PENDING` row is incomplete, cycle 5 (SLEEP)
+       applies instead).
     5. `CycleAction(kind='SLEEP', seconds=900)` if nothing above applies.
 
     `state` is read AND mutated for `last_daily_date`/
@@ -332,10 +335,22 @@ def run_cycle(ctx: LoopContext, manifest_df: "pd.DataFrame | None", state: dict)
             row = retryable.sort_values("updated_at_ts", ascending=True).iloc[0]
             return CycleAction(kind=CYCLE_RETRY, item=row.to_dict(), reason="failed retry >24h")
 
-    # priority 4: next PENDING week backwards (no completeness gate)
+    # priority 4: next PENDING week backwards - STILL gated by the T+1
+    # completeness rule (fix, task-10 fix-round: the original version
+    # here picked the newest PENDING week unconditionally, bypassing
+    # T+1 and fetching data before the vendor had finalized it). Since
+    # priority 1 above already tried this exact `pending`/`complete_mask`
+    # combination and only falls through to here when it found nothing,
+    # this branch is reachable in practice only when priority 2/3 fired
+    # in between on a DIFFERENT status subset (COMPLETE/FAILED rows) -
+    # it never picks an incomplete week. If every remaining PENDING row
+    # is incomplete, there is nothing safe to do this cycle: SLEEP.
     if not pending.empty:
-        row = pending.sort_values("week_monday", ascending=False).iloc[0]
-        return CycleAction(kind=CYCLE_FETCH, item=row.to_dict(), reason="backward historical walk")
+        complete_mask = pending["week_monday"].apply(lambda wm: _week_is_complete(_to_date(wm), now_utc))
+        complete_pending = pending[complete_mask]
+        if not complete_pending.empty:
+            row = complete_pending.sort_values("week_monday", ascending=False).iloc[0]
+            return CycleAction(kind=CYCLE_FETCH, item=row.to_dict(), reason="backward historical walk")
 
     return CycleAction(kind=CYCLE_SLEEP, seconds=ctx.config.sleep_seconds, reason="nothing to do")
 

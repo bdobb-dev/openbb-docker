@@ -2,9 +2,12 @@
 (task-10 brief): argparse wiring (each verb dispatches to its handler,
 monkeypatched), the calibration-report gate refusal/override on
 `backfill --loop`, and `format_status`'s pure formatting."""
+import datetime as dt
 import os
 import shutil
 import tempfile
+
+import pandas as pd
 
 from tick_vault import cli
 
@@ -253,3 +256,84 @@ def test_format_status_basic():
 def test_format_status_no_frontier():
     text = cli.format_status({}, None, 0, {})
     assert "frontier (PENDING weeks): none" in text
+
+
+# ---------------------------------------------------------------------------
+# handle_calibrate: measured bytes_written (task-10 fix-round - this used
+# to be hardcoded to 0, so every calibration report's projected
+# storage-TB figure always read zero in a real run)
+# ---------------------------------------------------------------------------
+
+class _FakeCalibrateCtx:
+    """A minimal stand-in for `loop_mod.LoopContext`, exposing exactly
+    the attributes `handle_calibrate` touches."""
+
+    def __init__(self, root, manifest_df, legacy_root=None):
+        self.root = root
+        self._manifest_df = manifest_df
+        self.legacy_progress_root = legacy_root
+        self.transport = None
+        self.store = None
+        self.span_memory = None
+        self.budget = None
+        self.api_token = "REDACTED"
+        self.tick_writer = None
+        self.existing_ticks_reader = None
+        self.verifier = None
+
+    def manifest_reader(self, root):
+        return self._manifest_df
+
+    def now(self):
+        return dt.datetime(2026, 9, 1, tzinfo=dt.timezone.utc)
+
+
+def test_handle_calibrate_measures_real_bytes_written():
+    from tick_vault.engine import FetchResult
+
+    d = _tmpdir()
+    try:
+        week = dt.date(2026, 8, 31)
+        manifest_df = pd.DataFrame([
+            {"work_id": "wrk_a", "listing_id": "lst_a", "week_monday": week},
+            {"work_id": "wrk_b", "listing_id": "lst_b", "week_monday": week},
+        ])
+        ctx = _FakeCalibrateCtx(root=d, manifest_df=manifest_df)
+
+        def fake_fetch_week(transport, store, root, item, **kwargs):
+            # Write a real file under the fake VAULT_ROOT, like a real
+            # bronze capture would - this is what dir_bytes must detect.
+            bronze_dir = os.path.join(root, "bronze")
+            os.makedirs(bronze_dir, exist_ok=True)
+            with open(os.path.join(bronze_dir, f"{item['work_id']}.bin"), "wb") as f:
+                f.write(b"x" * 12345)
+            return FetchResult(status="COMPLETE", rows_written=100, captures=1, wall_minutes=0.5)
+
+        import tick_vault.engine as engine_mod
+        original_fetch_week = engine_mod.fetch_week
+        engine_mod.fetch_week = fake_fetch_week
+
+        old_env = os.environ.get("CALIBRATION_REPORT")
+        report_path = os.path.join(d, "report.md")
+        os.environ["CALIBRATION_REPORT"] = report_path
+        try:
+            args = cli.build_parser().parse_args(["calibrate", "--week", "2026-08-31"])
+            rc = cli.handle_calibrate(args, ctx_factory=lambda: ctx)
+            assert rc == 0
+        finally:
+            engine_mod.fetch_week = original_fetch_week
+            if old_env is None:
+                os.environ.pop("CALIBRATION_REPORT", None)
+            else:
+                os.environ["CALIBRATION_REPORT"] = old_env
+
+        assert os.path.isfile(report_path)
+        content = open(report_path).read()
+        assert "bytes_written: 24690" in content  # 2 x 12345 bytes written
+        # projected_storage_tb must be nonzero now that bytes are measured.
+        import re
+        m = re.search(r"projected_storage_tb: ([0-9.]+)", content)
+        assert m is not None
+        assert float(m.group(1)) > 0.0
+    finally:
+        shutil.rmtree(d)
