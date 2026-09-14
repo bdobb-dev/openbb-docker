@@ -162,6 +162,47 @@ def test_failed_fetch_still_captures_with_no_payload_uri_and_empty_frame(tmp_pat
     assert row["raw_payload_uri"] is None
 
 
+def test_get_eod_captures_to_eod_table_and_parses(tmp_path):
+    client, transport, _ = _client(tmp_path, [(200, _load_bytes("eod_slice.json"))])
+    df, record = client.get_eod("AAPL.US", "2026-07-01", "2026-07-02", observed_at=OBS)
+
+    assert list(df.columns) == ["date", "open", "high", "low", "close", "adjusted_close", "volume"]
+    assert len(df) == 2
+    assert df.iloc[0]["date"] == dt.date(2026, 7, 1)
+
+    bronze = _read_delta(tmp_path, "bronze/eodhd_eod_capture")
+    assert len(bronze) == 1
+    row = bronze.iloc[0]
+    assert row["capture_id"] == record.capture_id
+    assert row["request_symbol"] == "AAPL.US"
+    assert row["endpoint"] == "eod"
+    assert row["http_status"] == 200
+    assert row["request_from_sec"] == int(
+        dt.datetime(2026, 7, 1, tzinfo=dt.timezone.utc).timestamp()
+    )
+
+
+def test_get_intraday_captures_to_intraday_table_and_parses(tmp_path):
+    client, transport, _ = _client(tmp_path, [(200, _load_bytes("intraday_slice.json"))])
+    df, record = client.get_intraday(
+        "AAPL.US", "1m", 1751370600, 1751370660, observed_at=OBS
+    )
+
+    assert list(df.columns) == ["ts_ms", "open", "high", "low", "close", "volume"]
+    assert len(df) == 2
+    assert df.iloc[0]["ts_ms"] == 1751370600 * 1000
+
+    bronze = _read_delta(tmp_path, "bronze/eodhd_intraday_capture")
+    assert len(bronze) == 1
+    row = bronze.iloc[0]
+    assert row["capture_id"] == record.capture_id
+    assert row["request_symbol"] == "AAPL.US"
+    assert row["interval"] == "1m"
+    assert row["request_from_sec"] == 1751370600
+    assert row["request_to_sec"] == 1751370660
+    assert row["endpoint"] == "intraday"
+
+
 def test_ingestion_run_id_shared_across_calls_on_same_client(tmp_path):
     client, transport, _ = _client(
         tmp_path,
