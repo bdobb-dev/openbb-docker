@@ -18,6 +18,7 @@ import pandas as pd
 
 from tick_vault.membership import (
     AUTO_CONFIDENCE,
+    INCLUSION_REASON_START_UNKNOWN,
     INDEX_ID,
     INDEX_VENDOR_SYMBOL,
     MEMBERSHIP_BOUNDARY_V1,
@@ -290,3 +291,143 @@ def test_rerun_idempotent_with_fake_reader_over_first_runs_output():
 
 def test_boundary_policy_constant_exported():
     assert MEMBERSHIP_BOUNDARY_V1 == "MEMBERSHIP_BOUNDARY_V1"
+
+
+# ---------------------------------------------------------------------------
+# 7. inclusive-boundary overlap (controller ruling, fix-round)
+# ---------------------------------------------------------------------------
+
+def test_touching_endpoints_same_listing_flagged_as_overlap():
+    """`MEMBERSHIP_BOUNDARY_V1` documents an INCLUSIVE `effective_to` (the
+    last member session, not an exclusive/day-after boundary), so two
+    same-listing intervals that merely TOUCH at a shared boundary date -
+    one ending 2010-01-01, the next starting exactly 2010-01-01 - both
+    claim that same session and MUST be flagged as an overlap, not treated
+    as adjacent/non-overlapping."""
+    lake = _FakeLake()
+    resolver = _fake_resolver({
+        "OLDX": [("lst_shared", "ins_shared", dt.date(1990, 1, 1))],
+        "NEWX": [("lst_shared", "ins_shared", dt.date(1990, 1, 1))],
+    })
+    components = _components_df([
+        {"code": "OLDX", "name": "Old Co", "start_date": dt.date(2000, 1, 1),
+         "end_date": dt.date(2010, 1, 1), "is_active": False, "sector": "Industrials"},
+        {"code": "NEWX", "name": "New Co", "start_date": dt.date(2010, 1, 1),
+         "end_date": None, "is_active": True, "sector": "Industrials"},
+    ])
+
+    report = build_membership(
+        "fake_root", components, resolver=resolver, capture_id=CAP1, observed_at=OBS1,
+        memberships_reader=lake.reader, writer=lake.writer,
+    )
+
+    assert report.resolved == 1
+    assert report.ambiguous == 1
+
+    rows = lake.get("silver.index_membership_version")
+    by_code = {r["source_constituent_code"]: r for _, r in rows.iterrows()}
+    assert by_code["OLDX"]["resolution_status"] == RESOLUTION_RESOLVED
+    assert by_code["NEWX"]["resolution_status"] == RESOLUTION_AMBIGUOUS
+
+    dq = lake.get("ops.data_quality_issue")
+    overlap_issues = dq[dq["check_name"] == "MEMBERSHIP_OVERLAP"]
+    assert len(overlap_issues) == 1
+
+
+# ---------------------------------------------------------------------------
+# 8. missing start_date -> bounded at observed_at, never a bare None
+# ---------------------------------------------------------------------------
+
+def test_missing_start_date_resolves_bounds_effective_from_at_observation():
+    lake = _FakeLake()
+    # The resolver only knows AAPL as of observed_at's date (2026-01-10),
+    # not any earlier - matching a Components-only row with no start_date.
+    resolver = _fake_resolver({"AAPL": [("lst_aapl", "ins_aapl", dt.date(2026, 1, 10))]})
+    components = _components_df([
+        {"code": "AAPL", "name": "Apple Inc", "start_date": None,
+         "end_date": None, "is_active": True, "sector": "Technology"},
+    ])
+
+    report = build_membership(
+        "fake_root", components, resolver=resolver, capture_id=CAP1, observed_at=OBS1,
+        memberships_reader=lake.reader, writer=lake.writer,
+    )
+
+    assert report.resolved == 1
+    assert report.unresolved == 0
+
+    row = lake.get("silver.index_membership_version").iloc[0]
+    assert row["membership_effective_from"] == OBS1.date()
+    assert row["membership_effective_from"] is not None
+    assert row["resolution_status"] == RESOLUTION_RESOLVED
+    assert row["inclusion_reason"] == INCLUSION_REASON_START_UNKNOWN
+
+    dq = lake.get("ops.data_quality_issue")
+    start_unknown_issues = dq[dq["check_name"] == "MEMBERSHIP_START_UNKNOWN"]
+    assert len(start_unknown_issues) == 1
+
+
+def test_missing_start_date_unresolved_still_bounds_effective_from():
+    lake = _FakeLake()
+    resolver = _fake_resolver({})  # nothing resolves, even at observed_at
+    components = _components_df([
+        {"code": "GHOST", "name": "Ghost Corp", "start_date": None,
+         "end_date": None, "is_active": True, "sector": "Unknown"},
+    ])
+
+    report = build_membership(
+        "fake_root", components, resolver=resolver, capture_id=CAP1, observed_at=OBS1,
+        memberships_reader=lake.reader, writer=lake.writer,
+    )
+
+    assert report.resolved == 0
+    assert report.unresolved == 1
+
+    row = lake.get("silver.index_membership_version").iloc[0]
+    # Never a bare None into the non-nullable column, even when unresolved.
+    assert row["membership_effective_from"] == OBS1.date()
+    assert row["membership_effective_from"] is not None
+    assert row["resolution_status"] == RESOLUTION_UNRESOLVED
+    assert row["listing_id"] is None
+    assert row["inclusion_reason"] == INCLUSION_REASON_START_UNKNOWN
+
+    dq = lake.get("ops.data_quality_issue")
+    start_unknown_issues = dq[dq["check_name"] == "MEMBERSHIP_START_UNKNOWN"]
+    assert len(start_unknown_issues) == 1
+
+
+# ---------------------------------------------------------------------------
+# 9. overlap quality-issue not re-emitted on an idempotent re-run
+# ---------------------------------------------------------------------------
+
+def test_overlap_issue_not_reemitted_on_idempotent_rerun():
+    lake = _FakeLake()
+    resolver = _fake_resolver({
+        "OLDX": [("lst_shared", "ins_shared", dt.date(1990, 1, 1))],
+        "NEWX": [("lst_shared", "ins_shared", dt.date(1990, 1, 1))],
+    })
+    components = _components_df([
+        {"code": "OLDX", "name": "Old Co", "start_date": dt.date(2000, 1, 1),
+         "end_date": dt.date(2010, 1, 1), "is_active": False, "sector": "Industrials"},
+        {"code": "NEWX", "name": "New Co", "start_date": dt.date(2005, 1, 1),
+         "end_date": None, "is_active": True, "sector": "Industrials"},
+    ])
+
+    first = build_membership(
+        "fake_root", components, resolver=resolver, capture_id=CAP1, observed_at=OBS1,
+        memberships_reader=lake.reader, writer=lake.writer,
+    )
+    assert first.written == 2
+    assert len(lake.get("ops.data_quality_issue")) == 1
+
+    second = build_membership(
+        "fake_root", components, resolver=resolver, capture_id=CAP2, observed_at=OBS2,
+        memberships_reader=lake.reader, writer=lake.writer,
+    )
+
+    # Same batch, re-run: zero NEW membership rows, and the overlap issue
+    # is not re-appended (still exactly one issue row total).
+    assert second.written == 0
+    assert second.ambiguous == 1  # still classified as ambiguous
+    assert len(lake.get("silver.index_membership_version")) == 2
+    assert len(lake.get("ops.data_quality_issue")) == 1

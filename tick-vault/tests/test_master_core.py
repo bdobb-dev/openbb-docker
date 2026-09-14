@@ -35,6 +35,7 @@ from tick_vault.master import (
     REASON_UNKNOWN_OLD_CODE,
     MasterBuilder,
     _ASSIGNMENT_COLUMNS,
+    resolve_listing_and_instrument_at,
     resolve_listing_at,
 )
 
@@ -459,3 +460,64 @@ def test_cusip_attached_at_instrument_scope():
     # idempotent re-attach: no duplicate rows
     again = mb.attach_issue_ids(fundamentals, CAP2, OBS2)
     assert len(again["identifier_assignment_version"]) == 0
+
+
+# ---------------------------------------------------------------------------
+# 7. resolve_listing_and_instrument_at (task-5 brief's named resolver
+#    producer - the real adapter `tick_vault.membership.build_membership`
+#    is meant to be given, per its module docstring: `MasterBuilder(root).
+#    resolve_listing_and_instrument_at`)
+# ---------------------------------------------------------------------------
+
+def test_resolve_listing_and_instrument_at_returns_both_ids():
+    lake = _FakeLake()
+    mb = _builder(lake)
+    symbols = _symbols_df([
+        {"code": "IBM", "name": "IBM Corp", "exchange": "US", "type": "Common Stock", "isin": None},
+    ])
+    upsert_result = mb.upsert_from_symbols(symbols, CAP1, OBS1)
+    listing_id = upsert_result["listing_version"].iloc[0]["listing_id"]
+    instrument_id = upsert_result["instrument"].iloc[0]["instrument_id"]
+
+    resolved = mb.resolve_listing_and_instrument_at("IBM", dt.date(2026, 5, 1))
+    assert resolved == (listing_id, instrument_id)
+
+    # Bound module function, same result over the raw assignments frame.
+    assignments = lake.reader("fake_root")
+    assert resolve_listing_and_instrument_at(assignments, "IBM", dt.date(2026, 5, 1)) == (listing_id, instrument_id)
+
+
+def test_resolve_listing_and_instrument_at_unresolved_returns_none():
+    lake = _FakeLake()
+    mb = _builder(lake)
+    symbols = _symbols_df([
+        {"code": "IBM", "name": "IBM Corp", "exchange": "US", "type": "Common Stock", "isin": None},
+    ])
+    mb.upsert_from_symbols(symbols, CAP1, OBS1)
+
+    # Unknown code entirely.
+    assert mb.resolve_listing_and_instrument_at("GHOST", dt.date(2026, 5, 1)) is None
+    # Known code, but the queried date falls in the gap between two
+    # disjoint windows (ticker-reuse shape) - no covering row at all.
+    assignments = pd.DataFrame([
+        {
+            "assignment_version_id": "wrk_old", "issuer_id": None, "registrant_id": None,
+            "instrument_id": "ins_old", "listing_id": "lst_old",
+            "id_namespace": NAMESPACE_EODHD_SYMBOL, "id_value": "X", "normalized_id_value": "X",
+            "effective_from_ts": dt.datetime(2010, 1, 1, tzinfo=dt.timezone.utc),
+            "effective_to_ts": dt.datetime(2017, 6, 1, tzinfo=dt.timezone.utc),
+            "observed_at_ts": dt.datetime(2000, 1, 1, tzinfo=dt.timezone.utc),
+            "available_at_ts": dt.datetime(2000, 1, 1, tzinfo=dt.timezone.utc),
+            "system_from_ts": dt.datetime(2000, 1, 1, tzinfo=dt.timezone.utc),
+            "system_to_ts": None, "source_system": "eodhd", "source_capture_id": "cap_a",
+            "verification_status": "UNVERIFIED", "confidence": AUTO_CONFIDENCE,
+            "supersedes_assignment_version_id": None,
+        },
+    ], columns=_ASSIGNMENT_COLUMNS)
+    assert resolve_listing_and_instrument_at(assignments, "X", dt.date(2018, 6, 1)) is None
+
+    # Known code, covering row exists, but its instrument_id is itself
+    # missing - the function's contract is "a complete pair, or nothing".
+    assignments_no_instrument = assignments.copy()
+    assignments_no_instrument.loc[0, "instrument_id"] = None
+    assert resolve_listing_and_instrument_at(assignments_no_instrument, "X", dt.date(2015, 1, 1)) is None

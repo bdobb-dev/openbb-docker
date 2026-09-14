@@ -298,26 +298,24 @@ def _open_assignments_for_code(
     return matches[matches["effective_to_ts"].isna()]
 
 
-def resolve_listing_at(
+def _resolve_covering_row(
     assignments_df: "pd.DataFrame | None",
     code,
     at_date,
     namespaces=(NAMESPACE_EODHD_SYMBOL, NAMESPACE_TICKER),
-) -> "str | None":
-    """`code` -> `listing_id` as of `at_date`, or `None` if unresolvable.
-
-    Pure function over an assignments frame shaped like
-    `silver.identifier_assignment_version` (see `_ASSIGNMENT_COLUMNS`):
-    among the current (non-superseded) rows in `namespaces` whose
-    `id_value == code`, returns the `listing_id` of whichever row's
+):
+    """Shared lookup behind `resolve_listing_at`/
+    `resolve_listing_and_instrument_at`: among the current
+    (non-superseded) assignment rows in `namespaces` whose `id_value ==
+    code`, returns the full row (a `pandas.Series`) of whichever one's
     effective interval `[effective_from_ts, effective_to_ts)` covers
-    `at_date` (a `None` bound is open on that side). Two disjoint windows
-    for the same `code` pointing at different listings (ticker reuse) each
-    only match their own date range, so this resolves correctly by date
-    alone; if more than one covering row is somehow found (a genuine
-    overlap - not expected from this module's own writers), the
-    most-recently-asserted one (highest `system_from_ts`, falling back to
-    `observed_at_ts`) wins.
+    `at_date` (a `None` bound is open on that side), or `None` if
+    unresolvable. Two disjoint windows for the same `code` pointing at
+    different listings (ticker reuse) each only match their own date
+    range, so this resolves correctly by date alone; if more than one
+    covering row is somehow found (a genuine overlap - not expected from
+    this module's own writers), the most-recently-asserted one (highest
+    `system_from_ts`, falling back to `observed_at_ts`) wins.
     """
     if _is_missing(code):
         return None
@@ -346,7 +344,51 @@ def resolve_listing_at(
     sort_cols = [c for c in ("system_from_ts", "observed_at_ts") if c in covering.columns]
     if sort_cols:
         covering = covering.sort_values(by=sort_cols)
-    return covering.iloc[-1]["listing_id"]
+    return covering.iloc[-1]
+
+
+def resolve_listing_at(
+    assignments_df: "pd.DataFrame | None",
+    code,
+    at_date,
+    namespaces=(NAMESPACE_EODHD_SYMBOL, NAMESPACE_TICKER),
+) -> "str | None":
+    """`code` -> `listing_id` as of `at_date`, or `None` if unresolvable.
+
+    Pure function over an assignments frame shaped like
+    `silver.identifier_assignment_version` (see `_ASSIGNMENT_COLUMNS`);
+    see `_resolve_covering_row` for the matching/tie-break rule.
+    """
+    row = _resolve_covering_row(assignments_df, code, at_date, namespaces)
+    if row is None:
+        return None
+    return row["listing_id"]
+
+
+def resolve_listing_and_instrument_at(
+    assignments_df: "pd.DataFrame | None",
+    code,
+    at_date,
+    namespaces=(NAMESPACE_EODHD_SYMBOL, NAMESPACE_TICKER),
+) -> "tuple[str, str] | None":
+    """`code` -> `(listing_id, instrument_id)` as of `at_date`, or `None`
+    if unresolvable - the two-value counterpart to `resolve_listing_at`
+    consumed by `tick_vault.membership.build_membership`'s injected
+    `resolver` seam (which needs both ids, not just `listing_id`).
+
+    Same matching/tie-break rule as `resolve_listing_at` (see
+    `_resolve_covering_row`); additionally returns `None` (rather than a
+    tuple with a missing half) when the covering row's `instrument_id` is
+    itself missing/null, since the caller's contract is "a complete pair,
+    or nothing".
+    """
+    row = _resolve_covering_row(assignments_df, code, at_date, namespaces)
+    if row is None:
+        return None
+    instrument_id = row["instrument_id"]
+    if _is_missing(instrument_id):
+        return None
+    return (row["listing_id"], instrument_id)
 
 
 # ---------------------------------------------------------------------------
@@ -838,3 +880,12 @@ class MasterBuilder:
         """`code` -> `listing_id` as of `date` (see `resolve_listing_at`),
         used by the manifest generator before DuckDB is warm."""
         return resolve_listing_at(self._read_assignments(), code, date)
+
+    def resolve_listing_and_instrument_at(self, code, date) -> "tuple[str, str] | None":
+        """`code` -> `(listing_id, instrument_id)` as of `date` (see
+        `resolve_listing_and_instrument_at` module function): the named
+        resolver adapter `tick_vault.membership.build_membership`'s
+        injected `resolver(code, date)` seam is meant to be bound to (per
+        that module's docstring - it never constructs a `MasterBuilder`
+        itself)."""
+        return resolve_listing_and_instrument_at(self._read_assignments(), code, date)
