@@ -51,13 +51,6 @@
         }
       }
     },
-    "${TS_CERT_DOMAIN}:6904": {
-      "Handlers": {
-        "/": {
-          "Proxy": "http://stores-explorer:6904"
-        }
-      }
-    },
     "${TS_CERT_DOMAIN}:8088": {
       "Handlers": {
         "/": {
@@ -111,22 +104,6 @@
           "Handlers": {
             "/": {
               "Proxy": "http://key-maint:8447"
-            }
-          }
-        }
-      }
-    },
-    "svc:openbb-explorer": {
-      "TCP": {
-        "443": {
-          "HTTPS": true
-        }
-      },
-      "Web": {
-        "openbb-explorer.<your-tailnet>.ts.net:443": {
-          "Handlers": {
-            "/": {
-              "Proxy": "http://stores-explorer:6904"
             }
           }
         }

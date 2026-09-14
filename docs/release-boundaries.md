@@ -39,9 +39,9 @@ as ep 9 / ep 10 / ep 12 respectively.
   originate there. The Apache headers follow on top, then `/apps.json` on
   openbb-api and live-grid, each serving its episode's example dashboard
   (bdobb-v2 `docs/examples`, written by `EPISODE=10 pnpm apps:sync`).
-  openbb-kdb and kdb-store are 10.1.0. The pre-Delta MinIO/ArcticDB store
-  services ride along in compose: they were already on that line, and
-  removing shipped code from a release line is churn.
+  openbb-kdb and kdb-store are 10.1.0. The Ep. 11 store that line also
+  carried (MinIO, ArcticDB, eod-dump, stores-explorer, stores-mcp, tick-lab)
+  is removed: no ArcticDB services in chapter 10.
 - **v11.2.0**: the Delta Lake replacement of the ArcticDB/MinIO store —
   eod-dump flushing to Delta Lake (`a061853`), daily storage, and the
   fundamentals read-through L2 rebuilt on delta-rs (design:

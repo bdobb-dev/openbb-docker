@@ -146,18 +146,6 @@ RUN pip install --no-cache-dir /tmp/kdb-store && rm -rf /tmp/kdb-store
 COPY openbb-kdb /tmp/openbb-kdb
 RUN pip install --no-cache-dir /tmp/openbb-kdb && rm -rf /tmp/openbb-kdb
 
-# ArcticDB store + provider extension (Ep. 11). Bars and ticks persisted to
-# S3/MinIO can stand in for an upstream API call via provider="arcticdb".
-#
-# ArcticDB ships manylinux x86_64 wheels ONLY -- no aarch64. That is why the
-# compose services pin platform: linux/amd64.
-COPY openbb-arcticdb /tmp/openbb-arcticdb
-RUN pip install --no-cache-dir /tmp/openbb-arcticdb && rm -rf /tmp/openbb-arcticdb
-
-# Official OpenBB MCP server (Ep. 6): wraps the Platform FastAPI app
-# in-process and serves MCP over streamable-http. PIP_CONSTRAINT still
-# applies, so it cannot drag shared libs anywhere the stack doesn't tolerate.
-RUN pip install "openbb-mcp-server==1.4.1"
 RUN python -c "import openbb_mcp_server; print('openbb-mcp-server import OK')"
 
 # Pre-compile the static package so the first run is instant, and verify the
@@ -165,8 +153,7 @@ RUN python -c "import openbb_mcp_server; print('openbb-mcp-server import OK')"
 RUN python -c "import openbb; openbb.build(); from openbb import obb; \
 assert 'eodhd' in obb.coverage.providers, 'eodhd provider not registered'; \
 assert 'kdb' in obb.coverage.providers, 'kdb provider not registered'; \
-assert 'arcticdb' in obb.coverage.providers, 'arcticdb provider not registered'; \
-print('OpenBB Platform OK:', len(obb.coverage.providers), 'providers (incl. eodhd, kdb, arcticdb)')"
+print('OpenBB Platform OK:', len(obb.coverage.providers), 'providers (incl. eodhd, kdb)')"
 
 # The FastAPI app factory `openbb-api --factory` serves (see api_app.py):
 # the stock Platform app with Chrome's Private Network Access preflight
@@ -192,17 +179,6 @@ print('api_app factory OK:', len(layers), 'CORS layer(s), all private-network en
 
 WORKDIR /workspace
 
-# stores-mcp (Ep. 11): read-only ArcticDB/kdb+ discovery/query MCP server.
-# Runs `python /opt/mcp_stores/server.py` (see docker-compose.yml's
-# stores-mcp service) directly against this image -- nothing extra to
-# install: fastmcp came in with openbb-mcp-server above, arcticdb/pandas with
-# openbb-arcticdb, pykx with openbb-kdb. Just the two files.
-COPY mcp_stores/server.py mcp_stores/test_server.py /opt/mcp_stores/
-
-# Self-provision persistent mount points so the image is drop-in on any host
-# (NAS container managers, plain Docker) with bind mounts to not-yet-created
-# paths. OPENBB_HOME persists settings/credentials; /workspace holds user data.
-ENV APP_DIRS="/root/.openbb_platform /workspace"
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

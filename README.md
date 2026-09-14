@@ -18,16 +18,9 @@ from later chapters is.
 | v8.0.0 | Ep. 8 — All the News That Fits, We Print | rss-ticker news wire joins the stack |
 | v9.0.0 | Ep. 9 — The Tape | EODHD provider extension + live-grid streaming service |
 | v10.0.0 | Ep. 10 — The Cache | kdb+ read-through cache (`provider="kdb"`) + tick recording and a unified chart in `live-grid` |
-| v11.0.0 | Ep. 11 — The Shared Store | MinIO as its own tailnet node + ArcticDB (`provider="arcticdb"`) + `tick-lab` + the `live_chart` widget |
-| v11.1.0 | Ep. 11 — The Shared Store | `tick-lab`'s EODHD-through-the-API reference adapter — the per-minute 2023 comparison yfinance cannot serve |
-| v11.1.1 | Ep. 11 — The Shared Store | `tick-lab`'s in-process OpenBB reference adapter (`--reference eodhd-local`) — the same call made locally, and what it costs versus `eodhd-api` |
+| v10.1.0 | Ep. 10 — The Cache | the kdb-line follow-ons: tick-log durability, the kdb-ws demo chart, per-bar vwap, the `subscriptions` and `kdb_ticks` widgets; the Ep. 9 and Ep. 10 example dashboards served at each backend's `/apps.json` |
 
-Ep. 11's three tags point at the same commit. The chapter was built and
-verified as one body of work — the rows above describe what each release
-*adds*, not three separate states of the code, and the two later reference
-adapters are `--reference` options you select at runtime.
-
-## What you get (this release: v11.1.1)
+## What you get (this release: v10.1.0)
 
 Eight services across two tailnet nodes, zero exposed ports. The backbone,
 unchanged since Ep. 1:
@@ -38,46 +31,13 @@ unchanged since Ep. 1:
   quantitative, and econometrics extensions) sharing that namespace, bound to
   loopback only.
 
-Everything else — `openbb-mcp`, `key-maint`, `live-grid`, `rss-ticker`, and
-`minio` as its own second tailnet node — arrived in the episodes below.
+Everything else — `openbb-mcp`, `key-maint`, `live-grid` and `rss-ticker` —
+arrived in the episodes below.
 
 **Tailscale Serve is the only way in** — real HTTPS with a Let's Encrypt
 certificate at `https://openbb.<your-tailnet>.ts.net`, reachable from every
 device on your tailnet and invisible to everything else.
 
-**New in v11.0.0 (Ep. 11):** the shared store. **MinIO joins the tailnet as
-its own node**, `minio.<your-tailnet>.ts.net`, with a real Let's Encrypt
-certificate — not a Serve route on the `openbb` node, because S3's SigV4
-signing covers the `Host` header and a reverse proxy in that path is a
-failure mode this chapter doesn't need. `tailscaled` runs *inside* the MinIO
-container rather than a sidecar (a sidecar's control socket is a file, and
-`network_mode` only shares the network namespace, so a sidecar daemon is
-unreachable from another container no matter what's mounted), and certificate
-renewal lives there too, signalling its own `minio` child with `SIGHUP` —
-measured: MinIO ignores a certificate rewritten on disk, but reloads it on
-`SIGHUP` — certificate serial updated, container uptime untouched (no
-restart); connections in flight during the signal were never observed.
-Nothing is published to the host; `:9000` is reachable on the tailnet and,
-as a documented limit of the posture, from the Docker bridge — in this
-deployment, that means never from the LAN, but that depends on the reader's
-host networking, not on anything this compose file guarantees. The
-**openbb-arcticdb provider extension** (`provider="arcticdb"`) puts that
-store behind the Platform's normal historical-price interface, tick data
-included (pass `interval` to resample ticks into OHLCV on read).
-**`tick-lab`** is a new, separate CLI — install it locally, point it at the
-same store via `minio.env`'s `ARCTICDB_S3_*` values, load FirstRate Data's
-free tick sample (GOOG + MSFT, 2023-05-12 — **not committed here**, it's
-third-party licensed data you download yourself), and it rolls your stored
-ticks into 1-minute bars and checks them against a reference source —
-`eodhd-api` by default since v11.1.0, with `yfinance` and the in-process
-`eodhd-local` also available via `--reference`. **Apple Silicon readers, read
-this:** the Platform image is pinned `linux/amd64` because ArcticDB
-publishes no aarch64 Linux wheels — on an M-series Mac it runs under
-emulation, so expect a slower build and slower queries (correctness is
-unaffected). `tick-lab` itself is unaffected either way: it runs on your
-laptop, not in the image, and ArcticDB does publish native macOS arm64
-wheels. See [tick-lab/README.md](tick-lab/README.md) and
-[docs/arcticdb-minio-design.md](docs/arcticdb-minio-design.md).
 This release also ships the **`live_chart` widget** — a data-only
 `live-grid/widgets.json` declaration (Workspace type `live_chart`) over the
 existing `GET /series` + `live_grid_ws`, so the Ep. 10 chart streams in
@@ -201,7 +161,6 @@ cd openbb-docker
 cp ts.env.example ts.env            # paste a tagged, reusable auth key; chmod 600 ts.env
 cp api-auth.env.example api-auth.env         # REQUIRED — set a strong password; chmod 600
 cp credentials.env.example credentials.env   # optional — keyless providers work with none
-cp minio.env.example minio.env     # REQUIRED for the store; chmod 600
 cp rss-ticker.env.example rss-ticker.env     # REQUIRED — admin key; chmod 600
 
 # 2. Build and start
@@ -216,7 +175,7 @@ curl -u openbb:<password> https://openbb.<your-tailnet>.ts.net/api/v1/equity/pri
 curl https://openbb.<your-tailnet>.ts.net/widgets.json                                     # 200 — metadata, by design
 
 # 4. Verify the walls (from a SECOND tailnet device)
-scripts/verify-isolation.sh openbb.<your-tailnet>.ts.net minio.<your-tailnet>.ts.net
+scripts/verify-isolation.sh openbb.<your-tailnet>.ts.net
 ```
 
 Step 4 is not optional ceremony — it is the step that catches the one
