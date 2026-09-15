@@ -872,9 +872,11 @@ Expected: a successful build. (The Dockerfile installs `mcp_stores/` as a siblin
 
 - [ ] **Step 2: Ship it and recreate the service — after 4 PM ET**
 
+`<nas-path>` is where the NAS keeps its container-station binaries (docker is not on the NAS PATH) and `<nas-compose-dir>` is the live compose project directory — both are machine details kept out of the repo, as every other plan here does.
+
 ```bash
-docker save openbb-stores-explorer:11.6.0 | gzip -1 | ssh nas 'gunzip | /share/ZFS530_DATA/.qpkg/container-station/bin/docker load'
-ssh nas 'cd /share/Container/openbb && cp docker-compose.yml docker-compose.yml.pre-stores-explorer-11.6.0 && sed -i "s#openbb-stores-explorer:[0-9.]*#openbb-stores-explorer:11.6.0#" docker-compose.yml && /share/ZFS530_DATA/.qpkg/container-station/bin/docker compose up -d --no-deps stores-explorer'
+docker save openbb-stores-explorer:11.6.0 | gzip -1 | ssh nas 'gunzip | <nas-path>/container-station/bin/docker load'
+ssh nas 'cd <nas-compose-dir> && cp docker-compose.yml docker-compose.yml.pre-stores-explorer-11.6.0 && sed -i "s#openbb-stores-explorer:[0-9.]*#openbb-stores-explorer:11.6.0#" docker-compose.yml && <nas-path>/container-station/bin/docker compose up -d --no-deps stores-explorer'
 ```
 Expected: the container recreates; `docker ps` on the NAS shows `openbb-stores-explorer` on 11.6.0. Rollback is the `.pre-stores-explorer-11.6.0` copy plus `compose up -d --no-deps stores-explorer`.
 
