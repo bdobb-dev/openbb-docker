@@ -2,10 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Docker only reads .dockerignore from the build-context root, so a leftover
-# egg-info/__pycache__/.pytest_cache in the worktree (left by running the
+# egg-info/__pycache__/.pytest_cache in the worktree (left by running a
 # package's own test suite, or by an editable install) would otherwise get
-# COPYed into the image alongside openbb-trading-calendar/. Scoped to that
-# one package so nothing else in the context changes.
+# COPYed into the image alongside the extension packages. Scoped to those
+# packages so nothing else in the context changes.
 openbb-trading-calendar/*.egg-info
 openbb-trading-calendar/**/__pycache__
 openbb-trading-calendar/.pytest_cache
+openbb-fundamentals/*.egg-info
+openbb-fundamentals/**/__pycache__
+openbb-fundamentals/.pytest_cache

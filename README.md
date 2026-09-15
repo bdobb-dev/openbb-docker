@@ -16,7 +16,7 @@ from later chapters is.
 | v3.0.0 | Ep. 3 — (with BDOBB v3.0.0) | key-maint: the transport-tiered key status widget backend |
 | v5.3.0 | Ep. 5 — (with BDOBB v5.3.0) | openbb-trading-calendar: exchange trading calendars (pandas-market-calendars) and the Trading calendar widget |
 
-## What you get (this release: v5.3.0)
+## What you get (this release: v5.4.0)
 
 Two containers, one tailnet node, zero exposed ports:
 
@@ -119,7 +119,7 @@ published on loopback with its Basic-auth env:
 ```bash
 docker compose build openbb-api
 docker run -d --name openbb-api-demo -p 127.0.0.1:6900:6900 --env-file api-auth.env \
-  openbb-local:5.3.0 openbb-api --host 0.0.0.0 --port 6900
+  openbb-local:5.4.0 openbb-api --host 0.0.0.0 --port 6900
 curl -u openbb:<password> "http://127.0.0.1:6900/api/v1/calendar/trading?exchange=XNYS&year=2026"
 docker rm -f openbb-api-demo      # when done
 ```
