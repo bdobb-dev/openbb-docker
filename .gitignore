@@ -2,6 +2,7 @@
 credentials.env
 api-auth.env
 ts.env
+rss-ticker.env
 deps.env
 .env
 .env.*
