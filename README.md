@@ -153,9 +153,12 @@ other path.
 
 - **SEC only, so US filers only.** It knows the tickers in SEC's
   `company_tickers.json`: US-listed issuers, including ADRs and foreign
-  companies listed in the US. Anything else (`VOW3.XETRA`, `7203.T`) is a 404.
-  An exchange suffix is dropped (`AAPL.US` is looked up as `AAPL`), and case
-  does not matter. Class shares take SEC's dash: `BRK-B`, not `BRK.B`.
+  companies listed in the US. Only a `.US` suffix is dropped (`AAPL.US` is
+  looked up as `AAPL`); any other exchange suffix is a 404, because a non-US
+  listing's root can belong to an unrelated US ticker on SEC (`VOW3.XETRA`,
+  `7203.T`, `TSCO.LSE` — Tesco, not the unrelated US ticker `TSCO` — all
+  404). Case does not matter. Class shares take SEC's dash: `BRK-B`, not
+  `BRK.B`.
 - **`SEC_USER_AGENT` is required.** SEC's fair-access policy refuses requests
   that do not name a contact. Set it in `credentials.env` as
   `Your Name you@example.com`, without quotes. Unset or empty, the route
@@ -163,8 +166,10 @@ other path.
 - **Answers.** 200 with the English month name. 404
   `No fiscal year end for <TICKER>` when SEC does not know the ticker or has
   no usable year end. 502 when SEC cannot be reached or refuses. Answers and
-  404s are kept in memory until the container restarts. A 502 is not kept, so
-  the next request asks again.
+  404s are kept in memory until the container restarts, and so is SEC's
+  ticker-to-CIK map itself: a ticker that starts trading or is renamed after
+  the container starts still answers 404 until the next restart. A 502 is
+  not kept, so the next request asks again.
 - **52/53-week years.** SEC records the year's actual last day. A day in the
   first week of a month counts as the month before, so Deere and Broadcom,
   whose years end in late October or early November and which SEC records as

@@ -14,8 +14,10 @@ foreign filers listed in the US included. Anything else is a miss."""
 from __future__ import annotations
 
 import calendar
+import http.client
 import json
 import os
+import threading
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -29,12 +31,14 @@ TIMEOUT = 10
 # ticker map, fetched once; _answers holds every answer and every definitive
 # miss, keyed by the normalized ticker. A failed fetch stores nothing, so the
 # next request asks SEC again.
-# ponytail: no lock -- two first requests racing both fetch the map, and the
-# second write wins with identical data. Add a lock if SEC ever complains.
+# _lock serializes the ticker-map fetch: concurrent first requests all see
+# `_ciks is None`, but only one gets past the lock's re-check, so the map is
+# fetched once instead of once per racing request.
 # ponytail: _answers is unbounded; a caller spraying made-up symbols grows it
 # by one entry each. Cap it with an LRU if that ever matters.
 _ciks: dict[str, int] | None = None
 _answers: dict[str, str | None] = {}
+_lock = threading.Lock()
 
 
 class UpstreamError(Exception):
@@ -53,9 +57,13 @@ def _get(url: str, agent: str) -> dict | None:
             return None
         # 403 is what SEC answers a request its fair-access policy refuses.
         raise UpstreamError(f"SEC answered {exc.code} for {url}") from exc
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, http.client.HTTPException) as exc:
         # OSError: DNS, refused connection, TLS, timeout (URLError is one).
         # ValueError: a body that is not JSON.
+        # http.client.HTTPException: a broken response (IncompleteRead,
+        # BadStatusLine, LineTooLong) -- these are not OSError subclasses,
+        # so without this they would escape as an unhandled 500 instead of
+        # the 502 every other transport failure gets.
         raise UpstreamError(f"SEC unreachable for {url}: {exc}") from exc
 
 
@@ -81,14 +89,25 @@ def month_name(mmdd: object) -> str | None:
 def _cik(ticker: str, agent: str) -> int | None:
     global _ciks
     if _ciks is None:
-        tickers = _get(TICKERS_URL, agent)
-        if tickers is None:
-            # The map itself missing is SEC failing, not SEC saying no.
-            raise UpstreamError(f"SEC answered 404 for {TICKERS_URL}")
-        # SEC writes class shares with a dash (BRK-B) and every ticker in
-        # upper case; the keys are upper-cased anyway so the match cannot
-        # depend on that.
-        _ciks = {row["ticker"].upper(): int(row["cik_str"]) for row in tickers.values()}
+        with _lock:
+            # Re-check: another thread may have finished the fetch while we
+            # were waiting for the lock.
+            if _ciks is None:
+                tickers = _get(TICKERS_URL, agent)
+                if tickers is None:
+                    # The map itself missing is SEC failing, not SEC saying no.
+                    raise UpstreamError(f"SEC answered 404 for {TICKERS_URL}")
+                try:
+                    # SEC writes class shares with a dash (BRK-B) and every
+                    # ticker in upper case; the keys are upper-cased anyway
+                    # so the match cannot depend on that.
+                    ciks = {row["ticker"].upper(): int(row["cik_str"]) for row in tickers.values()}
+                except (KeyError, TypeError) as exc:
+                    # A malformed row is SEC failing us, not a definitive
+                    # answer -- build into a local dict first so a bad row
+                    # never gets assigned to _ciks and cached.
+                    raise UpstreamError(f"SEC's ticker map has a malformed row: {exc}") from exc
+                _ciks = ciks
     return _ciks.get(ticker)
 
 
@@ -104,8 +123,20 @@ def fiscal_year_end(symbol: str) -> str | None:
     agent = os.environ.get("SEC_USER_AGENT", "").strip()
     if not agent:
         return None
-    # AAPL.US -> AAPL: the exchange suffix is not part of SEC's ticker.
-    ticker = symbol.strip().upper().split(".")[0]
+    upper = symbol.strip().upper()
+    # AAPL.US -> AAPL: .US is bdobb's own marker for "the US listing", not
+    # part of SEC's ticker. Any other suffix names a foreign exchange, and
+    # its root can belong to an unrelated US company on SEC -- TSCO.LSE is
+    # Tesco, but SEC's bare TSCO is Tractor Supply. Stripping blindly would
+    # answer with a confidently wrong month, so any other suffix is a
+    # definitive miss instead: cached like any other miss, with no SEC
+    # request needed to find that out.
+    if upper.endswith(".US"):
+        ticker = upper[: -len(".US")]
+    elif "." in upper:
+        return _answers.setdefault(upper, None)
+    else:
+        ticker = upper
     if ticker in _answers:
         return _answers[ticker]
     answer = None

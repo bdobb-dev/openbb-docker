@@ -19,6 +19,10 @@ AGENT = "bdobb-tests admin@example.com"
 TICKERS = {
     "0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."},
     "1": {"cik_str": 1067983, "ticker": "BRK-B", "title": "BERKSHIRE HATHAWAY INC"},
+    # A US company that happens to share a root with a foreign-exchange
+    # ticker (TSCO.LSE is Tesco): proves a non-.US suffix must not resolve
+    # against this unrelated US listing.
+    "2": {"cik_str": 916365, "ticker": "TSCO", "title": "TRACTOR SUPPLY CO /DE/"},
 }
 APPLE = sec.SUBMISSIONS_URL.format(cik=320193)
 BERKSHIRE = sec.SUBMISSIONS_URL.format(cik=1067983)

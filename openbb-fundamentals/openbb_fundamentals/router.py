@@ -34,8 +34,10 @@ async def fiscal_year_end(symbol: str) -> dict:
         month = await asyncio.to_thread(sec.fiscal_year_end, symbol)
     except sec.UpstreamError as exc:
         # HTTPException passes through openbb_core's CommandRunner with its own
-        # status. 502, not 404: the app remembers a 404 for the session, and
-        # SEC being down says nothing about the ticker.
+        # status. 502, not 404: the server does not cache this answer (sec.py
+        # only caches a definitive hit or miss), so a later request can still
+        # succeed once SEC recovers; and a 404 would claim SEC looked at the
+        # symbol and does not know it, when really SEC could not be asked.
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     if month is None:
         raise HTTPException(status_code=404, detail=f"No fiscal year end for {symbol}")
