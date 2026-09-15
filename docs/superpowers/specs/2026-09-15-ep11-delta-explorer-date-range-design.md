@@ -88,15 +88,15 @@ Routes unchanged. `widgets.json`: `start` and `end` stay `type: "date"` and hidd
 
 ### `src/lib/params.ts`
 
-`resolveParamValue` gains the grammar `^T([+-]\d+)([dhms])?$`:
+`resolveParamValue` gains the grammar `^T([+-]\d+)([dhms])$` — the signed offset is required, never bare `T`, because `T` is AT&T's ticker and resolution is value-keyed: a symbol param holding it must reach the wire untouched (`T+0d` says today; so does `$currentDate`):
 
 | Input | Output | Note |
 |---|---|---|
-| `T`, `T-5d` | `YYYY-MM-DD` | local calendar date, as `$currentDate` |
+| `T-5d`, `T+0d` | `YYYY-MM-DD` | local calendar date, as `$currentDate` |
 | `T-5h`, `T+30m`, `T-90s` | `YYYY-MM-DD HH:MM:SS` | naive UTC (D3) |
 | anything else | unchanged | absolute dates and timestamps pass through |
 
-`T` is not a legal value anywhere today, so no existing resolution changes.
+A signed offset with a unit is not a value any widget carries today, so no existing resolution changes; bare `T` is left alone for the reason above.
 `ParamControls` already displays resolved values, so a panel field holding
 `T-5d` shows today minus five days, as `$currentDate` does.
 
