@@ -207,6 +207,19 @@ jobs:
         run: |
           pip install -e .[dev]
           PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest -q --capture=sys
+  tick-vault:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.12" }
+      - name: Test tick-vault (core schemas and temporal queries, all mocked)
+        working-directory: tick-vault
+        run: |
+          pip install -e .[dev]
+          PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest -q --capture=sys
+
   minio-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 20

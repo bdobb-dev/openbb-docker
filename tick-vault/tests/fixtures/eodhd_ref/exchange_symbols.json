@@ -1,0 +1,20 @@
+[
+  {
+    "Code": "AAPL",
+    "Name": "Apple Inc",
+    "Country": "USA",
+    "Exchange": "US",
+    "Currency": "USD",
+    "Type": "Common Stock",
+    "Isin": "US0378331005"
+  },
+  {
+    "Code": "MSFT",
+    "Name": "Microsoft Corporation",
+    "Country": "USA",
+    "Exchange": "US",
+    "Currency": "USD",
+    "Type": "Common Stock",
+    "Isin": "US5949181045"
+  }
+]
