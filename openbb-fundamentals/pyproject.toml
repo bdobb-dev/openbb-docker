@@ -22,6 +22,12 @@ dependencies = [
 # httpx is FastAPI TestClient's transport; the image does not ship it.
 dev = ["pytest", "httpx"]
 
+# openbb_core's RouterLoader mounts every router in this group at
+# /<entry-point name> under the API prefix, so the name `fundamentals` IS the
+# /api/v1/fundamentals path segment.
+[project.entry-points.openbb_core_extension]
+fundamentals = "openbb_fundamentals.router:router"
+
 [tool.setuptools]
 packages = ["openbb_fundamentals"]
 
