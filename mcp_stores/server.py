@@ -341,24 +341,53 @@ def delta_read(
     start/end are ISO dates/timestamps filtering the stored index. as_of is an
     int Delta version or an ISO timestamp for time travel. Returns at most
     tail_rows rows (the most recent in range, hard cap MAX_ROWS) as JSON
-    records with ISO timestamps.
+    records with ISO timestamps. For a symbol read across several day tables,
+    `as_of` must be a timestamp; an int version is rejected, since versions
+    are per table.
 
     A symbol stored as one table per day (see daykeys) is read across the day
     tables the window covers, oldest first, and tailed as one frame. With no
     window it reads its newest day only, so it stays as bounded as a single
-    table. A window that covers no day table answers zero rows, not an error:
-    the symbol exists, that stretch of it does not.
+    table. With no window and a timestamp `as_of`, the day read is the newest
+    one already committed at `as_of`. A window that covers no day table
+    answers zero rows, not an error: the symbol exists, that stretch of it
+    does not. `_bounded`'s deadline applies per table, so a symbol spanning N
+    days may take up to N times STORES_TIMEOUT_S -- bounded and linear, never
+    the whole symbol.
     """
     import pandas as pd
+
+    for name, val in (("start", start), ("end", end)):
+        if val is not None and val != "" and not _TIME_RE.match(val):
+            raise ValueError(f"invalid {name} {val!r}: must be an ISO date or naive timestamp")
 
     tail_rows = max(1, min(int(tail_rows), MAX_ROWS))
     store, raw = _require_symbol(library, symbol)
     if isinstance(as_of, str) and as_of.isdigit():
         as_of = int(as_of)
 
+    if not (start or end) and isinstance(as_of, str):
+        # No window plus a time travel: "the newest day" means the newest day
+        # that existed THEN, or an As-of older than the newest table would
+        # read as nothing. Newest-first, first hit, still one table (D4).
+        keys = [
+            k for k in reversed(daykeys.day_keys(raw, symbol)) if _committed_by(store, k, as_of)
+        ][:1]
+    else:
+        keys = daykeys.in_window(raw, symbol, start, end)
+
+    if isinstance(as_of, int) and len(keys) > 1:
+        # Version numbers are per table and do not line up across days: v3 of
+        # Monday is not v3 of Tuesday, and a day lacking the number would be a
+        # raw delta-rs error. A timestamp applies uniformly; delta_history
+        # answers in that form.
+        raise ValueError(
+            "as_of must be a timestamp for a symbol that spans days; call delta_history first"
+        )
+
     parts = [
         _read_one(store, key, start, end, tail_rows, as_of)
-        for key in daykeys.in_window(raw, symbol, start, end)
+        for key in keys
         if _committed_by(store, key, as_of)
     ]
     total = sum(n for n, _ in parts)

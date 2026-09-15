@@ -250,10 +250,59 @@ def test_delta_read_timestamp_as_of_skips_a_day_table_committed_later(delta_stor
     before = pd.Timestamp(first - 1, unit="ms", tz="UTC").isoformat()
     at = pd.Timestamp(first, unit="ms", tz="UTC").isoformat()
 
-    out = server.delta_read("ticks_live", "AAPL", start="2026-09-04", end="2026-09-04", as_of=before)
+    out = server.delta_read(
+        "ticks_live", "AAPL", start="2026-09-04", end="2026-09-04", as_of=before
+    )
     assert out["returned_rows"] == 0
     out = server.delta_read("ticks_live", "AAPL", start="2026-09-04", end="2026-09-04", as_of=at)
     assert out["returned_rows"] == 5
+
+
+def test_delta_read_rejects_an_int_as_of_across_days(delta_store):
+    with pytest.raises(ValueError, match="must be a timestamp"):
+        server.delta_read("ticks_live", "AAPL", start="2026-09-01", end="2026-09-02", as_of=0)
+    # One day in the window: the version applies to that one table, as before.
+    assert server.delta_read(
+        "ticks_live", "AAPL", start="2026-09-02", end="2026-09-02", as_of=0
+    )["returned_rows"] == 5
+
+
+def test_delta_read_no_window_with_an_older_as_of_reads_the_newest_day_that_existed_then(
+    delta_store,
+):
+    from deltalake import DeltaTable
+
+    first_of_04 = DeltaTable(f"{delta_store}/ticks_live/AAPL_2026_09_04").history()[-1]["timestamp"]
+    before_04 = pd.Timestamp(first_of_04 - 1, unit="ms", tz="UTC").isoformat()
+    out = server.delta_read("ticks_live", "AAPL", as_of=before_04)
+    assert out["returned_rows"] == 5
+    assert {r["price"] for r in out["rows"]} == {2.0}
+
+
+def test_delta_read_rejects_a_malformed_bound_before_touching_the_store(delta_store):
+    with pytest.raises(ValueError, match="invalid start"):
+        server.delta_read("ticks", "AAPL", start="garbage")
+    # NOTE: the review's example end value, "2026-09-01T00:00:00-05:00", is
+    # NOT actually rejected by _TIME_RE -- the offset's own hyphen and colons
+    # are within [0-9T:. \-], same as kdb_select's existing check. A "Z"
+    # suffix is the character that regex has never accepted; see final report.
+    with pytest.raises(ValueError, match="invalid end"):
+        server.delta_read("ticks", "AAPL", end="2026-09-01T00:00:00Z")
+
+
+def test_delta_read_string_as_of_older_than_a_single_table_is_empty(delta_store):
+    # A plain table too: an instant before its first commit reads as nothing,
+    # not as version 0 (deltalake 1.6.3 would otherwise load version 0).
+    from deltalake import DeltaTable
+
+    first = DeltaTable(f"{delta_store}/ticks/AAPL").history()[-1]["timestamp"]
+    before = pd.Timestamp(first - 1, unit="ms", tz="UTC").isoformat()
+    assert server.delta_read("ticks", "AAPL", as_of=before)["returned_rows"] == 0
+
+
+def test_iso_ms_leaves_non_digit_text_alone():
+    assert server._iso_ms("2026-09-02T10:00:00") == "2026-09-02T10:00:00"
+    assert server._iso_ms("1789471562256") == "2026-09-15T11:26:02.256Z"
 
 
 def test_delta_describe_reports_metadata_without_reading_rows(delta_store, monkeypatch):

@@ -21,6 +21,11 @@ answered from the transaction log, no row data read),
 `GET /delta/series?library=&symbol=&start=&end=&tail_rows=&as_of=`
 (`as_of` is an int Delta version or an ISO timestamp).
 
+Start and End on the explorer card accept an absolute time or `T-5h` style
+offsets; bdobb resolves those before the request, so the routes only ever see
+ISO text. A day-keyed symbol (`ticks_live`) reads across the days a window
+covers — see `mcp_stores/README.md`.
+
 **kdb+:** `GET /kdb/tables`, `GET /kdb/schema?table=`,
 `GET /kdb/select?table=&symbol=&start_time=&end_time=&limit=`.
 
@@ -34,8 +39,3 @@ answered from the transaction log, no row data read),
 
 All backend calls are injected in tests (see `tests/test_main.py`'s
 `make_client`/`make_kdb_client`) — no real Delta store or kdb+ needed.
-
-Start and End on the explorer card accept an absolute time or `T-5h` style
-offsets; bdobb resolves those before the request, so the routes only ever see
-ISO text. A day-keyed symbol (`ticks_live`) reads across the days a window
-covers — see `mcp_stores/README.md`.

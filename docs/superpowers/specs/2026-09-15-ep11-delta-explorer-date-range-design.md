@@ -74,7 +74,7 @@ The key grammar in one place, no I/O:
 
 - `delta_list_symbols` returns `bases(raw)`.
 - `_require_symbol` accepts a base with at least one table; the identity regex is unchanged (a base is a substring of a key it already admits).
-- `delta_read`: expand, read each key with the same `start`, `end`, `as_of`, concatenate in day order, `tail(tail_rows)`. `total_rows_in_range` is the sum before the tail. A key whose earliest commit is after a timestamp `as_of` contributes no rows. The 10,000-row cap and the response shape are unchanged.
+- `delta_read`: expand, read each key with the same `start`, `end`, `as_of`, concatenate in day order, `tail(tail_rows)`. `total_rows_in_range` is the sum before the tail. A key whose earliest commit is after a timestamp `as_of` contributes no rows. The 10,000-row cap and the response shape are unchanged. With no window and a timestamp `as_of`, the day read is the newest one already committed at `as_of`.
 - `delta_describe` on a spanning base: `row_count` summed, `date_range` the outer min/max, `columns` from the newest day, plus `days: <int>` (1 for a single table, so the frontend has one shape).
 - `delta_history`: the union of commits across the expanded keys, newest first, each `{version, timestamp}` with `timestamp` as an ISO string (UTC, millisecond precision: the string is what a client sends back as `as_of`, and a commit's own instant must resolve to that commit, which a value truncated to the second would miss by up to 999 ms). For a single table this only reformats the millis.
 
@@ -154,8 +154,8 @@ Passes `start`, `end` and `onRangeChange` to the renderer, next to `asOf`.
 | Case | Outcome |
 |---|---|
 | Window covers no day table | Zero rows, `total_rows_in_range: 0`; not a 404. |
-| Unparseable expression | Sent as typed; the backend's 422 surfaces as the card error, as any bad param does today. |
-| `as_of` predates every table in the window | Zero rows, not an error. |
+| Unparseable expression | Sent as typed; the backend rejects it as `invalid start …` (a 404 through stores-explorer's ValueError mapping), which surfaces as the card error, as any bad param does today. |
+| `as_of` predates every table in the window | Zero rows, not an error. With no window, the newest day that existed at `as_of` is read instead, so an older As-of still answers. |
 | Describe fails | The strip shows its error, the pickers fall back to `datetime-local`, the rows still render (v11.0.0's rule). |
 | `start` after `end` | Sent as is; the backend answers zero rows. No client-side guard — the resolved values are visible in the tooltips. |
 
