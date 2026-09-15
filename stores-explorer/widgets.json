@@ -1,7 +1,7 @@
 {
   "delta_explorer": {
     "name": "Delta Lake Explorer",
-    "description": "Browse the shared Delta Lake store: pick a library, pick a symbol, see what is stored and read it at any version.",
+    "description": "Browse the shared Delta Lake store: pick a library, pick a symbol, see what is stored and read it at any version. A symbol stored one table per day is listed once and may span days; Start and End take an absolute time or T-5h style offsets.",
     "category": "Data",
     "type": "delta_explorer",
     "endpoint": "delta/series",

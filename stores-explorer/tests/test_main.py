@@ -37,6 +37,7 @@ DEFAULT_DESCRIBE = {
     "row_count": 42,
     "date_range": ["2026-01-01", "2026-08-07"],
     "columns": [{"name": "close", "dtype": "float64"}],
+    "days": 1,
 }
 
 
@@ -64,8 +65,8 @@ def make_client(libraries=("openbb",), symbols_by_library=None, series_response=
 
     def delta_history_fn(library, symbol):
         _check(library, symbol)
-        return [{"version": 1, "timestamp": "2026-09-02T10:00:00"},
-                {"version": 0, "timestamp": "2026-09-01T10:00:00"}]
+        return [{"version": 1, "timestamp": "2026-09-02T10:00:00.000Z"},
+                {"version": 0, "timestamp": "2026-09-01T10:00:00.000Z"}]
 
     def delta_read_fn(library, symbol, start=None, end=None, tail_rows=1000, as_of=None):
         _check(library, symbol)
@@ -97,6 +98,15 @@ def test_widgets_json_declares_delta_explorer():
     assert symbol_param["optionsEndpoint"] == "delta/symbols"
     assert symbol_param["optionsParams"] == {"library": "$library"}
     assert "arctic_explorer" not in body
+    assert "span" in w["description"]  # a symbol may span day tables; the widget says so
+    for name in ("start", "end"):
+        p = next(p for p in w["params"] if p["paramName"] == name)
+        assert p["type"] == "date" and p["show"] is False  # the strip renders them
+
+
+def test_delta_describe_passes_days_through():
+    r = make_client().get("/delta/describe", params={"library": "openbb", "symbol": "AAPL"})
+    assert r.json()["days"] == 1
 
 
 def test_delta_libraries_lists_libraries():

@@ -331,7 +331,7 @@ services:
     build:
       context: .
       dockerfile: stores-explorer/Dockerfile
-    image: openbb-stores-explorer:11.2.0
+    image: openbb-stores-explorer:11.6.0
     container_name: openbb-stores-explorer
     restart: unless-stopped
     # Bridge migration (Layer 1): was
