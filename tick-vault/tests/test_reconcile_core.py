@@ -507,3 +507,18 @@ def test_reconcile_tranche_flags_high_low_divergence():
     report = reconcile_tranche({"listing_id": "lst_a"}, ours, _ref_eod(close=100.00, volume=1000))
     assert report.status == "DIVERGENT"
     assert set(report.diffs_df["field"]) == {"low"}
+
+
+def test_reconcile_tranche_unadjusts_split_adjusted_vendor_volume():
+    # APH, Phase-0: a 2-for-1 on 2026-09-03 doubled EODHD's EOD volume for
+    # every earlier session; our tick volume is raw.
+    import pandas as pd
+
+    ours = _daily_bars(close=100.00, volume=500)
+    theirs = _ref_eod(close=100.00, volume=1000)
+    later_split = pd.DataFrame([{"date": TRADE_DATE + dt.timedelta(days=2), "factor": 2.0}])
+    item = {"listing_id": "lst_a"}
+    assert reconcile_tranche(item, ours, theirs).status == "DIVERGENT"
+    assert reconcile_tranche(item, ours, theirs, splits_df=later_split).status == "PASS"
+    same_day = later_split.assign(date=TRADE_DATE)  # the split session is already post-split
+    assert reconcile_tranche(item, ours, theirs, splits_df=same_day).status == "DIVERGENT"

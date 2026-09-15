@@ -114,6 +114,7 @@ _ENDPOINTS = {
     "symbol_changes": "https://eodhd.com/api/symbol-change-history?api_token={token}&fmt=json",
     "index_components": "https://eodhd.com/api/fundamentals/{symbol}?api_token={token}",
     "fundamentals": "https://eodhd.com/api/fundamentals/{symbol}?api_token={token}",
+    "splits": "https://eodhd.com/api/splits/{symbol}?api_token={token}&fmt=json",
     "eod": "https://eodhd.com/api/eod/{symbol}?from={from_date}&to={to_date}&api_token={token}&fmt=json",
     "intraday": "https://eodhd.com/api/intraday/{symbol}?interval={interval}&from={from_ts}&to={to_ts}&api_token={token}&fmt=json",
 }
@@ -285,6 +286,27 @@ def parse_fundamentals(payload: dict) -> pd.DataFrame:
         "share_class": _ci_get(general, "ShareClass", default=_ci_get(shares, "ShareClass")),
     }
     return pd.DataFrame([row], columns=_FUNDAMENTALS_COLUMNS)
+
+
+_SPLIT_COLUMNS = ["date", "factor"]
+
+
+def parse_splits(payload: list) -> pd.DataFrame:
+    """Parse a splits payload (JSON array of `{"date", "split": "new/old"}`)
+    -> a `date, factor` DataFrame, `factor` = new shares per old share (2.0
+    for a 2-for-1, 0.1 for a 1-for-10 reverse split). A malformed ratio is
+    skipped, never guessed."""
+    rows = []
+    for item in payload or []:
+        date = _parse_date(_ci_get(item, "date"))
+        new, _, old = str(_ci_get(item, "split", default="")).partition("/")
+        try:
+            factor = float(new) / float(old)
+        except (TypeError, ValueError, ZeroDivisionError):
+            continue
+        if date is not None:
+            rows.append({"date": date, "factor": factor})
+    return pd.DataFrame(rows, columns=_SPLIT_COLUMNS)
 
 
 _EOD_COLUMNS = ["date", "open", "high", "low", "close", "adjusted_close", "volume"]
@@ -485,6 +507,28 @@ class ReferenceClient:
         )
         payload = self._load_json(payload_bytes, {})
         return parse_fundamentals(payload), record
+
+    def get_splits(
+        self,
+        symbol: str,
+        *,
+        exchange: str | None = None,
+        observed_at: dt.datetime | None = None,
+    ) -> tuple[pd.DataFrame, Any]:
+        """Full split history for `symbol`, captured into the corporate-actions
+        bronze table (reconciliation reads it back: EODHD EOD volume is
+        split-adjusted, its prices are not)."""
+        url = _ENDPOINTS["splits"].format(symbol=symbol, token=self.api_key)
+        payload_bytes, record = self._fetch(
+            url=url,
+            table="bronze.eodhd_corporate_actions_capture",
+            endpoint="splits",
+            request_params={"symbol": symbol, "token": _REDACTED},
+            extra_cols={"request_symbol": symbol, "request_exchange_code": exchange},
+            observed_at=observed_at,
+        )
+        payload = self._load_json(payload_bytes, [])
+        return parse_splits(payload), record
 
     def get_eod(
         self,

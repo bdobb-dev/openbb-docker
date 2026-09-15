@@ -260,3 +260,15 @@ def test_parse_intraday_empty_payload():
     df = parse_intraday([])
     assert list(df.columns) == ["ts_ms", "open", "high", "low", "close", "volume"]
     assert len(df) == 0
+
+
+def test_parse_splits_ratio_reverse_split_and_malformed():
+    from tick_vault.eodhd_reference import parse_splits
+
+    df = parse_splits([
+        {"date": "2026-09-03", "split": "2.000000/1.000000"},
+        {"date": "2020-01-02", "split": "1.000000/10.000000"},
+        {"date": "2019-01-02", "split": "garbage"},
+    ])
+    assert df["factor"].tolist() == [2.0, 0.1]
+    assert str(df["date"].iloc[0]) == "2026-09-03"

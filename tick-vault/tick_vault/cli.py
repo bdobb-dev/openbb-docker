@@ -149,6 +149,30 @@ def _default_existing_ticks_reader(
     return table.to_pandas(filters=filters)
 
 
+def _default_splits_reader(root: str, symbol: str) -> "pd.DataFrame | None":
+    """Latest captured split history for `symbol` (written by `vault
+    reference --sync` into bronze.eodhd_corporate_actions_capture), parsed
+    to `date, factor`; `None` when nothing was captured."""
+    import gzip
+    import json
+
+    from deltalake import DeltaTable
+
+    from tick_vault.eodhd_reference import parse_splits
+
+    try:
+        caps = DeltaTable(f"{root}/bronze/eodhd_corporate_actions_capture").to_pandas(
+            filters=[("request_symbol", "=", f"{symbol}.US")]
+        )
+    except Exception:
+        return None
+    caps = caps[(caps["endpoint"] == "splits") & caps["raw_payload_uri"].notna()]
+    if caps.empty:
+        return None
+    with gzip.open(caps.sort_values("observed_at_ts").iloc[-1]["raw_payload_uri"]) as f:
+        return parse_splits(json.loads(f.read()))
+
+
 def _item_get(item, key: str, default=None):
     if item is None:
         return default
@@ -208,8 +232,10 @@ def _pandas_reconcile_step(
         symbol, from_date, to_date, exchange=_item_get(item, "eodhd_exchange_code")
     )
 
+    splits_reader = getattr(ctx, "splits_reader", None)
+    splits_df = splits_reader(ctx.root, symbol) if splits_reader is not None else None
     report = reconcile_mod.reconcile_tranche(
-        item, our_daily_df, ref_eod_df, our_daily_stats=our_daily_stats
+        item, our_daily_df, ref_eod_df, our_daily_stats=our_daily_stats, splits_df=splits_df
     )
     # Persist the divergence rows: before this, a HOLD left no trace in
     # ops.data_quality_issue (Phase-0 calibration: 500 holds, 0 rows).
@@ -250,6 +276,7 @@ def build_ctx_from_env() -> loop_mod.LoopContext:
         existing_ticks_reader=_default_existing_ticks_reader,
         reconcile_step=_pandas_reconcile_step if reference_configured else None,
         dq_issue_writer=append_rows,
+        splits_reader=_default_splits_reader,
         api_token=api_key,
         span_memory=SpanMemory(),
         budget=Budget(),
@@ -442,16 +469,19 @@ def sync_reference(ctx: loop_mod.LoopContext) -> dict:
         capture_id=components_rec.capture_id, observed_at=now,
     )
 
-    attached = 0
+    attached = with_splits = 0
     for code in sorted(members):
         fundamentals, rec = client.get_fundamentals(f"{code}.US", observed_at=now)
         fundamentals = fundamentals.dropna(subset=["code"])
         if not fundamentals.empty:
             master.attach_issue_ids(fundamentals, rec.capture_id, now)
             attached += 1
+        # split history, read back by reconciliation (EODHD EOD volume is split-adjusted)
+        splits, _ = client.get_splits(f"{code}.US", observed_at=now)
+        with_splits += int(len(splits) > 0)
     return {
         "members": len(members), "resolved": report.resolved, "ambiguous": report.ambiguous,
-        "unresolved": report.unresolved, "fundamentals": attached,
+        "unresolved": report.unresolved, "fundamentals": attached, "with_splits": with_splits,
     }
 
 

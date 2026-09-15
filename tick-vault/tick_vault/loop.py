@@ -197,6 +197,8 @@ class LoopContext:
     reconcile_step: "object | None" = None
     # where reconcile_step persists divergence rows: (root, table, df) -> None
     dq_issue_writer: "object | None" = None
+    # split history for reconcile: (root, vendor_symbol) -> DataFrame(date, factor) | None
+    splits_reader: "object | None" = None
 
     api_token: str = _REDACTED
     span_memory: SpanMemory = field(default_factory=SpanMemory)

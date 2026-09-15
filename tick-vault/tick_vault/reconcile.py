@@ -292,6 +292,16 @@ class ReconcileReport:
     null_size_count: int = 0
 
 
+def _split_factor(splits_df: "pd.DataFrame | None", trade_date) -> float:
+    """Product of the split factors dated after `trade_date`: the multiplier
+    the vendor applied to that session's volume (APH, 2-for-1 on 2026-09-03:
+    x2 through 2026-09-02, x1 from 2026-09-03 - the split day is post-split)."""
+    if splits_df is None or not len(splits_df):
+        return 1.0
+    later = splits_df[splits_df["date"] > trade_date]["factor"]
+    return float(later.prod()) if len(later) else 1.0
+
+
 def _pct_diff(ours: float, theirs) -> "float | None":
     if theirs is None or (isinstance(theirs, float) and pd.isna(theirs)):
         return None
@@ -310,6 +320,7 @@ def reconcile_tranche(
     tolerance: ReconcileTolerance = ReconcileTolerance(),
     our_daily_stats: "BarStats | None" = None,
     our_minute_stats: "BarStats | None" = None,
+    splits_df: "pd.DataFrame | None" = None,
 ) -> ReconcileReport:
     """Compare our OHLCV bars (from `aggregate_bars`) against vendor
     reference bars (from `ReferenceClient.get_eod`/`get_intraday`, already
@@ -375,11 +386,14 @@ def reconcile_tranche(
                     "theirs": theirs.get(field), "pct": hl_pct, "kind": DIFF_KIND_DIVERGENCE,
                 })
 
-        volume_pct = _pct_diff(ours["volume"], theirs.get("volume"))
+        # EODHD EOD volume is split-adjusted (its prices are not): scale our
+        # raw tick volume by every split dated after this session.
+        our_volume = ours["volume"] * _split_factor(splits_df, trade_date)
+        volume_pct = _pct_diff(our_volume, theirs.get("volume"))
         if volume_pct is not None and volume_pct > tolerance.volume_pct:
             divergent = True
             diff_rows.append({
-                "trade_date": trade_date, "field": "volume", "ours": ours["volume"],
+                "trade_date": trade_date, "field": "volume", "ours": our_volume,
                 "theirs": theirs.get("volume"), "pct": volume_pct, "kind": DIFF_KIND_DIVERGENCE,
             })
 
