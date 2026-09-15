@@ -99,6 +99,9 @@ CYCLE_SETTLE = "SETTLE"
 CYCLE_RETRY = "RETRY"
 CYCLE_SLEEP = "SLEEP"
 
+# How long to leave a not-yet-loaded session alone before probing again.
+SESSION_RETRY = dt.timedelta(minutes=15)
+
 
 # ---------------------------------------------------------------------------
 # small shared helpers (duplicated from tick_vault.engine by the same
@@ -199,6 +202,8 @@ class LoopContext:
     dq_issue_writer: "object | None" = None
     # split history for reconcile: (root, vendor_symbol) -> DataFrame(date, factor) | None
     splits_reader: "object | None" = None
+    # (day) -> bool: has the vendor loaded that session yet? (SPY control probe)
+    session_probe: "object | None" = None
 
     api_token: str = _REDACTED
     span_memory: SpanMemory = field(default_factory=SpanMemory)
@@ -247,6 +252,50 @@ def _week_is_complete(week_monday: "dt.date | None", now_utc: dt.datetime) -> bo
     return now_utc >= saturday_utc
 
 
+def _latest_session_day(now_utc: dt.datetime) -> dt.date:
+    """The most recent weekday before today in New York: the session the
+    vendor may not have loaded yet (a holiday answers empty, which counts
+    as loaded)."""
+    day = now_utc.astimezone(_NY_TZ).date() - dt.timedelta(days=1)
+    while day.weekday() >= 5:
+        day -= dt.timedelta(days=1)
+    return day
+
+
+def _covers(week_monday, day: dt.date) -> bool:
+    wm = _to_date(week_monday)
+    return wm is not None and wm <= day <= wm + dt.timedelta(days=6)
+
+
+def _blocked_session(state: dict, now_utc: dt.datetime) -> "dt.date | None":
+    """The session a probe found not loaded, while its retry is pending."""
+    blocked = state.get("unloaded_session")
+    if blocked and now_utc < blocked["retry_at"]:
+        return blocked["day"]
+    return None
+
+
+def _session_ready(ctx: "LoopContext", state: dict, week_monday=None) -> bool:
+    """Before work that reads the latest session - the daily pass
+    (`week_monday=None`), or a settle/fetch whose week covers that session -
+    ask `ctx.session_probe` whether the vendor has loaded it (once per
+    session). Not loaded: record a retry time so `run_cycle` skips that work
+    and keeps the historical walk moving meanwhile. Unwired probe: ready."""
+    if ctx.session_probe is None:
+        return True
+    now = ctx.now()
+    day = _latest_session_day(now)
+    if week_monday is not None and not _covers(week_monday, day):
+        return True
+    loaded = state.setdefault("loaded_sessions", {})
+    if loaded.get(day) or ctx.session_probe(day):
+        loaded[day] = True
+        state.pop("unloaded_session", None)
+        return True
+    state["unloaded_session"] = {"day": day, "retry_at": now + SESSION_RETRY}
+    return False
+
+
 def _parse_hh_mm(value: str) -> "tuple[int, int]":
     hh, mm = value.split(":")
     return int(hh), int(mm)
@@ -289,9 +338,13 @@ def run_cycle(ctx: LoopContext, manifest_df: "pd.DataFrame | None", state: dict)
     now_utc = ctx.now()
     ny_now = now_utc.astimezone(_NY_TZ)
 
+    # A session the vendor has not loaded yet (per the last probe): skip any
+    # work that reads it until the retry time; everything else proceeds.
+    blocked = _blocked_session(state, now_utc)
+
     daily_hh, daily_mm = _parse_hh_mm(ctx.config.daily_after_ny)
     daily_threshold = ny_now.replace(hour=daily_hh, minute=daily_mm, second=0, microsecond=0)
-    if ny_now >= daily_threshold and state["last_daily_date"] != ny_now.date():
+    if ny_now >= daily_threshold and state["last_daily_date"] != ny_now.date() and blocked is None:
         return CycleAction(kind=CYCLE_DAILY, reason=f"daily pass due for {ny_now.date().isoformat()}")
 
     if manifest_df is None or manifest_df.empty:
@@ -304,6 +357,10 @@ def run_cycle(ctx: LoopContext, manifest_df: "pd.DataFrame | None", state: dict)
     if not pending.empty:
         complete_mask = pending["week_monday"].apply(lambda wm: _week_is_complete(_to_date(wm), now_utc))
         complete_pending = pending[complete_mask]
+        if blocked is not None:
+            complete_pending = complete_pending[
+                ~complete_pending["week_monday"].apply(lambda wm: _covers(wm, blocked))
+            ]
         if not complete_pending.empty:
             row = complete_pending.sort_values("week_monday", ascending=False).iloc[0]
             return CycleAction(kind=CYCLE_FETCH, item=row.to_dict(), reason="newest complete unloaded week")
@@ -321,6 +378,8 @@ def run_cycle(ctx: LoopContext, manifest_df: "pd.DataFrame | None", state: dict)
                 return False
             age_days = (today - week_monday).days
             if age_days < 0 or age_days > horizon:
+                return False
+            if blocked is not None and _covers(week_monday, blocked):
                 return False
             return last_settle.get(row["work_id"]) != today
 
@@ -473,6 +532,8 @@ def close_run(
 
 def _execute_fetch_like(ctx: LoopContext, action: CycleAction, state: dict) -> None:
     item = action.item
+    if not _session_ready(ctx, state, item.get("week_monday")):
+        return  # the week's last session is not loaded yet: fetch it later, not as FAILED
     result = fetch_week(
         ctx.transport,
         ctx.store,
@@ -513,6 +574,8 @@ def _execute_settle(ctx: LoopContext, action: CycleAction, state: dict) -> None:
 
     item = action.item
     today = ctx.now().date()
+    if not _session_ready(ctx, state, item.get("week_monday")):
+        return  # vendor has not loaded the latest session: run_cycle retries after SESSION_RETRY
     if ctx.existing_latest_reader is None:
         # Not wired up (Plan-3 concern) - nothing safe to do. Still record
         # `today` against this work_id BEFORE returning (fix, I5): leaving
@@ -545,6 +608,8 @@ def _execute_daily(ctx: LoopContext, action: CycleAction, state: dict) -> None:
     from tick_vault.settle import daily_pass
 
     now = ctx.now()
+    if not _session_ready(ctx, state):
+        return  # not loaded yet: last_daily_date stays unset, retried after SESSION_RETRY
     state["last_daily_date"] = now.astimezone(_NY_TZ).date()
 
     if ctx.existing_latest_reader is None or ctx.manifest_reader is None:
