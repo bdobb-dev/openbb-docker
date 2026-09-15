@@ -881,7 +881,7 @@ Expected: the container recreates; `docker ps` on the NAS shows `openbb-stores-e
 - [ ] **Step 3: Probe the live routes**
 
 ```bash
-B=https://openbb.tailb9874f.ts.net:6904
+B=https://openbb.<your-tailnet>.ts.net:6904
 curl -s "$B/delta/symbols?library=ticks_live" | python3 -c "import json,sys;d=json.load(sys.stdin);print(len(d),[o['value'] for o in d[:5]])"
 time curl -s "$B/delta/describe?library=ticks_live&symbol=AAPL" | python3 -m json.tool | head -12
 curl -s "$B/delta/history?library=ticks_live&symbol=AAPL" | head -c 300; echo
