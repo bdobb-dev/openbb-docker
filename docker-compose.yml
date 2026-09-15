@@ -515,10 +515,15 @@ services:
   # funneled, because anyone who can reach the port can make it poll any URL
   # and read every article.
   #
+  # Compose builds it from the public rss-feedhandler repo, pinned to the
+  # v8.0.0 tag, so no registry login is needed. Upgrading a token-era volume
+  # deletes data: see the README before the first start.
+  #
   # Before first start:
   #   cp rss-ticker-config/config.yaml.example rss-ticker-config/config.yaml
   rss-ticker:
-    image: ghcr.io/artcashin/rss-feedhandler:8.0.0
+    build: https://github.com/artcashin/rss-feedhandler.git#v8.0.0
+    image: rss-feedhandler:8.0.0
     container_name: openbb-rss-ticker
     restart: unless-stopped
     networks:

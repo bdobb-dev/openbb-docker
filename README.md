@@ -158,10 +158,27 @@ watch over a websocket, it polls the union (conditional GETs, jitter,
 backoff), dedupes into SQLite, and streams every new article tagged by feed.
 With the reworked rss-ticker 8.0.0 there are no users, keys or configured feeds: the
 pool has **no authentication**, and reachability is the whole access control
-— Serve publishes it on :8088, tailnet-only, never funneled. Compose pulls
-the published image; the only setup is `rss-ticker-config/config.yaml` (from
-the example, four operational settings). In BDOBB, add a News card and set
-its Ticker URL to the Serve address.
+— Serve publishes it on :8088, tailnet-only, never funneled. Compose builds
+it from the public repo at the `v8.0.0` tag; the only setup is
+`rss-ticker-config/config.yaml` (from the example, four operational
+settings). In BDOBB, add a News card and set its **RSS Aggregator Server**
+to the Serve address.
+
+*Upgrading from the token-era ticker* (a stack that ran rss-ticker with
+users and keys):
+
+- **Back up the `rss-ticker-data` volume first.** Nothing below can be
+  undone.
+- **The old `config.yaml` refuses to start.** The server will not boot on
+  it and names every stale key (`users`, `admin_key`, `public_base_url`,
+  `tailscale_auth`, ...). Replace the file with a fresh copy of the example.
+  `rss-ticker.env` is no longer read; delete it.
+- **The database migrates one way on first boot.** The users, subscriptions
+  and filter rules are dropped for good; the backup is the only way back.
+- **Feeds survive only if a News card asks for them.** Every feed is disabled
+  at boot. The hourly sweep deletes each feed that no News card has
+  re-subscribed, together with its articles. So open the News cards you want
+  kept within the first hour.
 
 **New in v6.0.0 (Ep. 6, pairs with BDOBB v6.0.0):** the **OpenBB MCP
 server** — the analyst's hands. Same image, wrapping the same Platform
