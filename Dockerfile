@@ -206,6 +206,20 @@ p.write_text(src.replace(anchor, anchor.replace("\n)", "\n    allow_private_netw
 PY
 RUN python -c "import ast; ast.parse(open('/usr/local/lib/python3.12/site-packages/openbb_core/api/rest_api.py').read()); print('rest_api CORS patch parses OK')"
 
+# Exchange trading calendars (v5.3.0, Ep. 5, with BDOBB v5.3.0): an OpenBB
+# router extension serving /api/v1/calendar/trading -- the EODHD v2
+# exchange-details shape BDOBB's period expressions read for trade_date,
+# session_open/close and business-day offsets -- and
+# /api/v1/calendar/trading_table, the "Trading calendar" widget. See
+# openbb-trading-calendar/.
+#
+# Installed AFTER the rest_api.py patches so that editing the extension
+# rebuilds only these last layers, and BEFORE openbb.build() so the static
+# package includes it (obb.calendar). PIP_CONSTRAINT pins its one new
+# dependency, pandas_market_calendars==5.4.0; nothing already installed moves.
+COPY openbb-trading-calendar /opt/openbb-trading-calendar
+RUN pip install /opt/openbb-trading-calendar
+
 # Pre-compile the static package so the first run is instant, and verify the
 # platform registers at build time.
 RUN python -c "import openbb; openbb.build(); from openbb import obb; \

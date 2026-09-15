@@ -1,0 +1,37 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openbb-trading-calendar"
+version = "5.3.0"
+description = "OpenBB Platform router serving exchange trading calendars from pandas-market-calendars"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+# Unversioned on purpose: the image installs under PIP_CONSTRAINT, and
+# extension-constraints.txt pins pandas_market_calendars==5.4.0. openbb-core is
+# already in the image; naming it keeps the import honest for anyone installing
+# the package elsewhere.
+dependencies = [
+    "openbb-core",
+    "pandas_market_calendars",
+]
+
+[project.optional-dependencies]
+# httpx is FastAPI TestClient's transport; the image does not ship it.
+dev = ["pytest", "httpx"]
+
+# openbb_core's RouterLoader mounts every router in this group at
+# /<entry-point name> under the API prefix, so the name `calendar` IS the
+# /api/v1/calendar path segment -- and the widgets.json category "Calendar".
+[project.entry-points.openbb_core_extension]
+calendar = "openbb_trading_calendar.router:router"
+
+[tool.setuptools]
+packages = ["openbb_trading_calendar"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
