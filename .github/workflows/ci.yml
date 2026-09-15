@@ -72,3 +72,36 @@ jobs:
           echo "widgets: $count"; test "$count" -gt 50
       - name: Keyless data endpoint answers
         run: docker exec api curl -fsS -u ci:ci-secret "http://127.0.0.1:6900/api/v1/equity/price/historical?symbol=AAPL&provider=yfinance" | head -c 120
+      - name: Trading calendar extension tests (inside the image)
+        run: |
+          # In the image, not a host venv: the router tests boot the real app
+          # with every installed extension, so they need the stack's own
+          # openbb-core and pandas. The editable reinstall points the already
+          # installed package at this checkout and adds pytest + httpx.
+          docker run --rm -v "$PWD:/repo" -w /repo/openbb-trading-calendar \
+            -e PIP_CONSTRAINT=/repo/extension-constraints.txt \
+            --entrypoint sh openbb-local:ci \
+            -c 'pip install -q --root-user-action=ignore -e ".[dev]" && pytest -q'
+      - name: widgets.json lists the Trading calendar widget, not its data route
+        run: |
+          docker exec api curl -fsS -u ci:ci-secret http://127.0.0.1:6900/widgets.json | python3 -c '
+          import json, sys
+          widgets = json.load(sys.stdin)
+          table = widgets["calendar_trading_table_custom_obb"]
+          assert table["name"] == "Trading calendar" and table["type"] == "table", table
+          exchange = next(p for p in table["params"] if p["paramName"] == "exchange")
+          assert [o["value"] for o in exchange["options"]] == ["XNYS", "XLON", "XTSE", "XETR", "XTKS", "XHKG"], exchange
+          assert not any(w.get("endpoint") == "/api/v1/calendar/trading" for w in widgets.values())
+          print("Trading calendar widget listed; /api/v1/calendar/trading excluded")'
+      - name: The trading calendar data route answers, behind auth
+        run: |
+          probe() { docker exec api curl -s -o /dev/null -w '%{http_code}' "$@"; }
+          ep="http://127.0.0.1:6900/api/v1/calendar/trading?exchange=XNYS&year=2026"
+          test "$(probe "$ep")" = "401"
+          test "$(probe -u ci:ci-secret "http://127.0.0.1:6900/api/v1/calendar/trading?exchange=ZZZZ&year=2026")" = "404"
+          docker exec api curl -fsS -u ci:ci-secret "$ep" | python3 -c '
+          import json, sys
+          data = json.load(sys.stdin)["data"]
+          assert data["OperatingMIC"] == "XNYS", data
+          assert data["ExchangeHolidays"]["2026-07-03"]["Type"] == "Official", data
+          print("XNYS 2026 served")'
