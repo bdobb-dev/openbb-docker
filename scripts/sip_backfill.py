@@ -559,9 +559,12 @@ def load_week(monday: date, uni: Universe, key: str, store: TickStore, library: 
 ET = "America/New_York"
 
 
-def daily_due(store: TickStore, library: str, now: datetime) -> date | None:
-    """The UTC date to run a daily pass for, or None. Due once per day after
-    02:05 New York time (the vendor finishes loading yesterday by ~02:00 ET)."""
+def daily_due(store: TickStore, library: str, now: datetime, key: str | None = None) -> date | None:
+    """The New York date to run a daily pass for, or None. Due once per day
+    after 02:05 New York time AND once the vendor serves the previous session:
+    the first-party endpoint loads later than the marketplace product did
+    (2026-09-15: SPY for Monday was still 404 at 02:25 ET), so the pass
+    defers until SPY for yesterday answers with data or an empty holiday."""
     from zoneinfo import ZoneInfo
     local = now.astimezone(ZoneInfo(ET))
     if (local.hour, local.minute) < (2, 5):
@@ -575,7 +578,26 @@ def daily_due(store: TickStore, library: str, now: datetime) -> date | None:
     today = local.date()
     fsys, root = store._fs_and_root()  # noqa: SLF001
     st = _read_json(fsys, f"{root}/{library}/_progress/daily/{today}.json")
-    return None if st and st.get("finished") else today
+    if st and st.get("finished"):
+        return None
+    if key is not None and not _session_loaded(key, today - timedelta(days=1)):
+        log.info("daily %s deferred: the vendor has not loaded %s yet", today, today - timedelta(days=1))
+        return None
+    return today
+
+
+def _session_loaded(key: str, day: date) -> bool:
+    """Whether the vendor serves `day` yet: SPY, limit=1. 404 = not loaded;
+    200 with rows or an empty holiday answer = loaded."""
+    frm = int(datetime(day.year, day.month, day.day, tzinfo=timezone.utc).timestamp())
+    q = urllib.parse.urlencode({"s": "SPY", "from": frm, "to": frm + 86400 - 1, "limit": 1, "api_token": key, "fmt": "json"})
+    try:
+        _get_json(f"{TICKS}?{q}", tries=1)
+        return True
+    except NotFound:
+        return False
+    except (RuntimeError, Budget):
+        return False
 
 
 def daily_pass(today: date, uni: Universe, key: str, store: TickStore, library: str, work: Path,
@@ -771,7 +793,7 @@ def _cycle(a, uni, key, store, library, work, floor, settle_lag, retry_max, vacu
     if True:
         now = datetime.now(timezone.utc)
         # 0. the daily rolling refresh: yesterday plus late prints for the six days before
-        d = daily_due(store, library, now)
+        d = daily_due(store, library, now, key)
         if d:
             daily_pass(d, uni, key, store, library, work, a.workers, vacuum_days)
             return
