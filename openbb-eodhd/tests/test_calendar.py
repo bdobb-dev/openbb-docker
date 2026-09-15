@@ -77,6 +77,9 @@ ECON_RESP = [
     {"type": "Foreign Bond Investment", "comparison": None, "period": "Aug/29",
      "country": "JP", "date": "2026-09-02 23:50:00", "actual": None,
      "previous": -1978.4, "estimate": None, "change": None, "change_percentage": None},
+    {"type": "Made Up Event", "comparison": None, "period": None,
+     "country": "XX", "date": "2026-09-02 23:55:00", "actual": None,
+     "previous": None, "estimate": None, "change": None, "change_percentage": None},
 ]
 
 CREDS = {"eodhd_api_key": "test_key_123"}
@@ -88,6 +91,37 @@ def _client(method: str, response):
     client.__exit__ = MagicMock(return_value=False)
     getattr(client, method).return_value = response
     return client
+
+
+def _client_series(method: str, responses):
+    """Fake SDK client whose `method` answers one scripted page per call.
+
+    `responses` is a list (one page per call) or a callable(**kwargs)->page,
+    for the window-walk tests where a single `aextract_data` call makes
+    several SDK requests.
+    """
+    client = MagicMock()
+    client.__enter__ = MagicMock(return_value=client)
+    client.__exit__ = MagicMock(return_value=False)
+    getattr(client, method).side_effect = responses
+    return client
+
+
+def _econ_page(day_counts: list[tuple]) -> list[dict]:
+    """A synthetic EODHD /economic-events page: `[(date, row_count), ...]`.
+
+    `day_counts` must already be newest-day-first, matching how EODHD orders
+    a real page, since the window-walk reads the boundary date off the
+    page's first/last rows.
+    """
+    return [
+        {"type": "Test Event", "comparison": None, "period": None,
+         "country": "US", "date": f"{d} 12:00:00", "actual": None,
+         "previous": None, "estimate": None, "change": None,
+         "change_percentage": None}
+        for d, count in day_counts
+        for _ in range(count)
+    ]
 
 
 # ============================================================
@@ -203,6 +237,18 @@ class TestEconomicCalendar:
         assert nz.comparison == "qoq"
         assert nz.date.year == 2026 and nz.date.hour == 22
 
+    def test_transform_sets_source_and_category(self):
+        query = EODHDEconomicCalendarQueryParams()
+        rows = EODHDEconomicCalendarFetcher.transform_data(query, ECON_RESP)
+        jp = rows[1]
+        assert jp.event == "Foreign Bond Investment"
+        assert jp.source == "Treasury"
+        assert jp.category == "TIC"
+        unknown = rows[2]
+        assert unknown.event == "Made Up Event"
+        assert unknown.source is None
+        assert unknown.category is None
+
     def test_extract_passes_filters(self):
         query = EODHDEconomicCalendarQueryParams(country="US", comparison="yoy")
         client = _client("get_economic_events_data", ECON_RESP)
@@ -210,7 +256,7 @@ class TestEconomicCalendar:
             rows = run_async(
                 EODHDEconomicCalendarFetcher.aextract_data, query, CREDS
             )
-        assert len(rows) == 2
+        assert len(rows) == 3
         client.get_economic_events_data.assert_called_once_with(
             date_from=None, date_to=None, country="US", comparison="yoy", limit=1000
         )
@@ -221,3 +267,84 @@ class TestEconomicCalendar:
         with patch("openbb_eodhd.models.calendar.get_client", return_value=client):
             with pytest.raises(UnauthorizedError):
                 run_async(EODHDEconomicCalendarFetcher.aextract_data, query, CREDS)
+
+    # --------------------------------------------------------------
+    # Window walk: EODHD caps /economic-events at limit=1000/request, so a
+    # full page has to be windowed forward in date instead of trusted whole.
+    # --------------------------------------------------------------
+
+    def test_short_page_is_one_call(self):
+        """Fewer than 1,000 rows back means the range is already complete."""
+        query = EODHDEconomicCalendarQueryParams()
+        client = _client_series("get_economic_events_data", [ECON_RESP])
+        with patch("openbb_eodhd.models.calendar.get_client", return_value=client):
+            rows = run_async(EODHDEconomicCalendarFetcher.aextract_data, query, CREDS)
+        assert rows == ECON_RESP
+        assert client.get_economic_events_data.call_count == 1
+
+    def test_full_page_across_days_windows_on_boundary_date(self):
+        # Page 1: 1,000 rows, 100/day across ten days, newest first.
+        days = [f"2026-09-{n:02d}" for n in range(10, 0, -1)]
+        page1 = _econ_page([(d, 100) for d in days])
+        # Page 2: the boundary day (09-01) re-fetched whole, complete at 50.
+        page2 = _econ_page([("2026-09-01", 50)])
+        client = _client_series("get_economic_events_data", [page1, page2])
+        query = EODHDEconomicCalendarQueryParams()
+        with patch("openbb_eodhd.models.calendar.get_client", return_value=client):
+            rows = run_async(EODHDEconomicCalendarFetcher.aextract_data, query, CREDS)
+
+        assert client.get_economic_events_data.call_count == 2
+        second_kwargs = client.get_economic_events_data.call_args_list[1].kwargs
+        assert second_kwargs["date_to"] == "2026-09-01"
+        assert "offset" not in second_kwargs
+
+        # 900 complete rows from page 1 (days 09-02..09-10) plus the 50
+        # authoritative rows for 09-01 from page 2; no duplicates.
+        assert len(rows) == 950
+        assert sum(1 for r in rows if r["date"].startswith("2026-09-01")) == 50
+        dates = [r["date"] for r in rows]
+        assert dates == sorted(dates)  # ascending
+
+    def test_full_page_on_one_day_pages_by_offset(self):
+        page1 = _econ_page([("2026-09-01", 1000)])
+        page2 = _econ_page([("2026-09-01", 50)])
+        page3: list[dict] = []  # nothing before 09-01: walk ends
+        client = _client_series(
+            "get_economic_events_data", [page1, page2, page3]
+        )
+        query = EODHDEconomicCalendarQueryParams()
+        with patch("openbb_eodhd.models.calendar.get_client", return_value=client):
+            rows = run_async(EODHDEconomicCalendarFetcher.aextract_data, query, CREDS)
+
+        assert client.get_economic_events_data.call_count == 3
+        second_kwargs = client.get_economic_events_data.call_args_list[1].kwargs
+        assert second_kwargs["offset"] == 1000
+        assert second_kwargs["date_to"] == "2026-09-01"
+        third_kwargs = client.get_economic_events_data.call_args_list[2].kwargs
+        assert third_kwargs["date_to"] == "2026-08-31"
+        assert "offset" not in third_kwargs
+        assert len(rows) == 1050
+
+    def test_limit_truncates_after_the_full_walk(self):
+        days = [f"2026-09-{n:02d}" for n in range(10, 0, -1)]
+        page1 = _econ_page([(d, 100) for d in days])
+        page2 = _econ_page([("2026-09-01", 200)])  # walk totals 1,100
+        client = _client_series("get_economic_events_data", [page1, page2])
+        query = EODHDEconomicCalendarQueryParams(limit=50)
+        with patch("openbb_eodhd.models.calendar.get_client", return_value=client):
+            rows = run_async(EODHDEconomicCalendarFetcher.aextract_data, query, CREDS)
+        assert len(rows) == 50
+
+    def test_request_ceiling_stops_and_warns(self):
+        # Every page is full and spans the same days, so the walk never
+        # naturally terminates; the ceiling must cut it off.
+        days = [f"2026-09-{n:02d}" for n in range(10, 0, -1)]
+        page = _econ_page([(d, 100) for d in days])
+        client = _client_series(
+            "get_economic_events_data", lambda **kw: page
+        )
+        query = EODHDEconomicCalendarQueryParams()
+        with patch("openbb_eodhd.models.calendar.get_client", return_value=client):
+            with pytest.warns(UserWarning):
+                run_async(EODHDEconomicCalendarFetcher.aextract_data, query, CREDS)
+        assert client.get_economic_events_data.call_count == 20
