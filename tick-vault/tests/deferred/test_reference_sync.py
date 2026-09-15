@@ -31,8 +31,10 @@ def _sync(tmp_path):
         (200, (FX / "delisted_symbols.json").read_bytes()),
         (200, (FX / "symbol_changes.json").read_bytes()),
         (200, (FX / "components_gspc.json").read_bytes()),
-        (200, (FX / "fundamentals.json").read_bytes()),  # AAPL.US
-        (404, b'{"error": "not found"}'),                # TWTR.US
+        (200, (FX / "fundamentals.json").read_bytes()),  # AAPL.US fundamentals
+        (200, b'[{"date": "2020-08-31", "split": "4.000000/1.000000"}]'),  # AAPL.US splits
+        (404, b'{"error": "not found"}'),                # TWTR.US fundamentals
+        (200, b'[]'),                                    # TWTR.US splits
     ])
     ctx = LoopContext(root=root, transport=transport, store=CaptureStore(root),
                       api_token="KEY", clock=lambda: NOW)
@@ -42,8 +44,13 @@ def _sync(tmp_path):
 def test_sync_builds_master_membership_and_issue_ids(tmp_path):
     root, transport, summary = _sync(tmp_path)
 
-    assert summary == {"members": 2, "resolved": 2, "ambiguous": 0, "unresolved": 0, "fundamentals": 1}
-    assert [u.split("?")[0].rsplit("/", 1)[-1] for u in transport.requested_urls[-2:]] == ["AAPL.US", "TWTR.US"]
+    assert summary == {"members": 2, "resolved": 2, "ambiguous": 0, "unresolved": 0,
+                       "fundamentals": 1, "with_splits": 1}
+    assert ["/".join(u.split("?")[0].rsplit("/", 2)[-2:]) for u in transport.requested_urls[-4:]] == [
+        "fundamentals/AAPL.US", "splits/AAPL.US", "fundamentals/TWTR.US", "splits/TWTR.US"]
+    # reconciliation reads the split history back from bronze
+    assert cli._default_splits_reader(root, "AAPL")["factor"].tolist() == [4.0]
+    assert cli._default_splits_reader(root, "TWTR").empty
     assert set(_read(root, "silver.index_membership_version")["resolution_status"]) == {"RESOLVED"}
     ids = set(_read(root, "silver.identifier_assignment_version")["id_value"])
     assert "037833100" in ids  # AAPL's CUSIP, attached from fundamentals
