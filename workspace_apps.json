@@ -1,7 +1,7 @@
 [
   {
-    "name": "Example Dashboard - V9.6.1",
-    "description": "The v9 vendor episode with its calendars. Markets: two EODHD price histories, an income statement and a candlestick chart, sharing one symbol and one interval. Calendars: the EODHD economic calendar as a paged month, Treasury auctions as an endless week grid, and the EODHD earnings calendar as a horizontal day ribbon filtered to seven names, each with its stock logo — each a Calendar view over the table the backend already serves. Needs the OpenBB backend with the eodhd provider configured.",
+    "name": "Example Dashboard - V9.6.2",
+    "description": "The v9 vendor episode with its calendars. Markets: two EODHD price histories, an income statement as a twelve-quarter pivot, and a candlestick chart, sharing one symbol and one interval. Calendars: the EODHD economic calendar as a paged month, Treasury auctions as an endless week grid, and the EODHD earnings calendar as a horizontal day ribbon filtered to seven names, each with its stock logo — each a Calendar view over the table the backend already serves. Needs the OpenBB backend with the eodhd provider configured.",
     "img": "",
     "img_dark": "",
     "img_light": "",
@@ -67,12 +67,16 @@
             "state": {
               "params": {
                 "symbol": "AAPL",
-                "period": "annual",
+                "period": "quarter",
+                "limit": "12",
                 "provider": "eodhd"
               },
               "chartView": {
                 "enabled": false,
                 "chartType": "line"
+              },
+              "pivotView": {
+                "enabled": true
               }
             }
           }
