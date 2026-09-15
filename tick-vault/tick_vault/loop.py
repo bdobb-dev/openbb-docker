@@ -195,6 +195,8 @@ class LoopContext:
     # sequence_number, report)` itself. `None` means "no reconciliation
     # performed for this tranche" (gate skipped, sequence NOT advanced).
     reconcile_step: "object | None" = None
+    # where reconcile_step persists divergence rows: (root, table, df) -> None
+    dq_issue_writer: "object | None" = None
 
     api_token: str = _REDACTED
     span_memory: SpanMemory = field(default_factory=SpanMemory)

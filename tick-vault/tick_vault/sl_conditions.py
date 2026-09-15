@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 
-DECODE_VERSION = "SL_DECODE_V2"
+DECODE_VERSION = "SL_DECODE_V3"
 
 
 # Internal decode table: (position, char) -> (flag_name, bars_eligible, out_of_sequence)
@@ -17,11 +17,11 @@ _TABLE = {
     (1, ' '): (None, True, False),
     (2, ' '): (None, True, False),
     (3, ' '): (None, True, False),
-    # 'I' = ODD_LOT (eligible)
-    (0, 'I'): ('ODD_LOT', True, False),
-    (1, 'I'): ('ODD_LOT', True, False),
-    (2, 'I'): ('ODD_LOT', True, False),
-    (3, 'I'): ('ODD_LOT', True, False),
+    # 'I' = ODD_LOT (volume only: odd lots never set high/low/last)
+    (0, 'I'): ('ODD_LOT', False, False),
+    (1, 'I'): ('ODD_LOT', False, False),
+    (2, 'I'): ('ODD_LOT', False, False),
+    (3, 'I'): ('ODD_LOT', False, False),
     # 'L' = SOLD_LAST (eligible, not out-of-seq)
     (0, 'L'): ('SOLD_LAST', True, False),
     (1, 'L'): ('SOLD_LAST', True, False),
@@ -85,11 +85,11 @@ _TABLE = {
     (1, 'F'): ('INTERMARKET_SWEEP', True, False),
     (2, 'F'): ('INTERMARKET_SWEEP', True, False),
     (3, 'F'): ('INTERMARKET_SWEEP', True, False),
-    # 'M' = CLOSING_PRINT (eligible)
-    (0, 'M'): ('CLOSING_PRINT', True, False),
-    (1, 'M'): ('CLOSING_PRINT', True, False),
-    (2, 'M'): ('CLOSING_PRINT', True, False),
-    (3, 'M'): ('CLOSING_PRINT', True, False),
+    # 'M' = MARKET_CENTER_OFFICIAL_CLOSE (a summary record, not a trade: no price, no volume)
+    (0, 'M'): ('MARKET_CENTER_OFFICIAL_CLOSE', False, False),
+    (1, 'M'): ('MARKET_CENTER_OFFICIAL_CLOSE', False, False),
+    (2, 'M'): ('MARKET_CENTER_OFFICIAL_CLOSE', False, False),
+    (3, 'M'): ('MARKET_CENTER_OFFICIAL_CLOSE', False, False),
     # 'O' = OPENING_PRINT (eligible)
     (0, 'O'): ('OPENING_PRINT', True, False),
     (1, 'O'): ('OPENING_PRINT', True, False),
@@ -107,13 +107,39 @@ _TABLE = {
     (3, '5'): ('REOPENING_PRINT', True, False),
 }
 
+# SL_DECODE_V3 (Phase-0, 2026-09-15): codes seen in the calibration week's
+# 191M prints that V2 did not know. `eligible_for_bars` means "may set
+# open/high/low/close"; volume eligibility is separate (below).
+for _char, _entry in {
+    'Q': ('MARKET_CENTER_OFFICIAL_OPEN', False, False),
+    '9': ('CORRECTED_CONSOLIDATED_CLOSE', False, False),
+    'X': ('CROSS_TRADE', True, False),
+    'R': ('SELLER', False, False),
+    'H': ('PRICE_VARIATION', False, False),
+    'N': ('NEXT_DAY', False, False),
+}.items():
+    for _pos in range(4):
+        _TABLE[(_pos, _char)] = _entry
+
+# Summary records rather than trades: excluded from volume too. Every other
+# condition (odd lots, extended hours, out of sequence, ...) counts toward
+# consolidated volume - matched against EODHD EOD volume to 0.02% median.
+VOLUME_INELIGIBLE_FLAGS = frozenset({
+    'MARKET_CENTER_OFFICIAL_CLOSE',
+    'MARKET_CENTER_OFFICIAL_OPEN',
+    'CORRECTED_CONSOLIDATED_CLOSE',
+})
+
 
 @dataclass(frozen=True)
 class SaleConditions:
-    """Decoded CTA/UTP sale-condition information."""
+    """Decoded CTA/UTP sale-condition information. `eligible_for_bars`:
+    may set open/high/low/close; `eligible_for_volume`: counts toward
+    consolidated volume."""
     flags: tuple[str, ...]
     eligible_for_bars: bool
     out_of_sequence: bool
+    eligible_for_volume: bool = True
 
 
 def decode_sl(sl: str) -> SaleConditions:
@@ -159,5 +185,6 @@ def decode_sl(sl: str) -> SaleConditions:
     return SaleConditions(
         flags=tuple(flags_list),
         eligible_for_bars=eligible_for_bars,
-        out_of_sequence=out_of_sequence
+        out_of_sequence=out_of_sequence,
+        eligible_for_volume=not any(f in VOLUME_INELIGIBLE_FLAGS for f in flags_list),
     )

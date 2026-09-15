@@ -211,6 +211,11 @@ def _pandas_reconcile_step(
     report = reconcile_mod.reconcile_tranche(
         item, our_daily_df, ref_eod_df, our_daily_stats=our_daily_stats
     )
+    # Persist the divergence rows: before this, a HOLD left no trace in
+    # ops.data_quality_issue (Phase-0 calibration: 500 holds, 0 rows).
+    dq_issue_writer = getattr(ctx, "dq_issue_writer", None)
+    if dq_issue_writer is not None and len(report.issues_df):
+        dq_issue_writer(ctx.root, "ops.data_quality_issue", report.issues_df)
     return ctx.gate.check(sequence_number, report)
 
 
@@ -228,7 +233,7 @@ def build_ctx_from_env() -> loop_mod.LoopContext:
     `_default_existing_ticks_reader` unconditionally - it is also the
     read-back seam `fetch_week` itself uses for idempotent re-runs, not
     only a reconciliation concern."""
-    from tick_vault.capture import CaptureStore, UrlLibTransport
+    from tick_vault.capture import CaptureStore, UrlLibTransport, append_rows
 
     root = os.environ.get("VAULT_ROOT", "./vault_data")
     api_key = os.environ.get("EOD_API_KEY", _REDACTED)
@@ -244,6 +249,7 @@ def build_ctx_from_env() -> loop_mod.LoopContext:
         manifest_row_writer=_default_manifest_row_writer,
         existing_ticks_reader=_default_existing_ticks_reader,
         reconcile_step=_pandas_reconcile_step if reference_configured else None,
+        dq_issue_writer=append_rows,
         api_token=api_key,
         span_memory=SpanMemory(),
         budget=Budget(),

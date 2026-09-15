@@ -14,10 +14,20 @@ scope) so it's exercised directly by the sandbox mini-runner
 silver instead of pandas for performance - the inclusion policy encoded
 here (`BAR_INCLUSION_POLICY`) is the source of truth either way.
 
-Bar inclusion policy ("BAR_INCL_V1")
+Bar inclusion policy ("BAR_INCL_V2")
 -------------------------------------
-A tick row contributes to a regular-session bar iff, after resolving to
-the latest revision per `logical_tick_id` and dropping cancellations:
+V2 (Phase-0, 2026-09-15) splits PRICE from VOLUME eligibility, as the
+consolidated tape does, and re-decodes each print's `sale_condition_raw`
+with the current `tick_vault.sl_conditions` table rather than trusting
+the flags stored at write time (SL_DECODE_V2 rows flag the official-close
+record `M` as a closing print). Checked against EODHD EOD bars, 30
+symbols x 5 days: daily volume as defined below matches to 0.02% median,
+high/low to 0.003% at p90 (V1: every tranche failed, odd lots set
+bogus lows).
+
+OPEN/HIGH/LOW/CLOSE: a tick row contributes to a regular-session bar iff,
+after resolving to the latest revision per `logical_tick_id` and dropping
+cancellations:
 
 1. Its America/New_York trade time falls in the regular session window
    `[09:30:00.000, 16:00:00.000]` - INCLUSIVE at the close boundary
@@ -26,7 +36,8 @@ the latest revision per `logical_tick_id` and dropping cancellations:
    regular-session print, no `CLOSING_PRINT` flag required.
 
    Additionally, a *closing-auction grace window*: any print whose
-   stored `sale_condition_flags` include `CLOSING_PRINT` and whose
+   re-decoded conditions include `CLOSING_PRINT` (a real `6` closing
+   print, not the `M` official-close record) and whose
    America/New_York trade time falls in `(16:00:00.000, 16:10:00.000]`
    is also included - closing-auction prints are eligible by design but
    commonly stamp a few minutes after the nominal 16:00:00 close, and
@@ -42,13 +53,19 @@ the latest revision per `logical_tick_id` and dropping cancellations:
    wall-clock minute - there is no real `16:00` trading minute, so these
    prints fold into the last real bucket and participate in that
    bucket's (and the daily bar's) close/high/low/volume.
-2. None of its stored `sale_condition_flags` is in `INELIGIBLE_FLAGS`.
-   `INELIGIBLE_FLAGS` is transcribed directly from
-   `tick_vault.sl_conditions`'s internal decode table (the single source
-   of truth for which flags mark a print bars-ineligible) - this module
-   filters on the *stored* flags column, it never re-decodes
-   `sale_condition_raw` itself. (`CLOSING_PRINT` is itself eligible, so a
-   grace-window print that qualifies under rule 1 always passes rule 2.)
+2. Its re-decoded conditions are price-eligible (`eligible_for_bars`: no
+   flag in `INELIGIBLE_FLAGS` - odd lots, extended hours, out of
+   sequence, average price, official open/close records, ...).
+   (`CLOSING_PRINT` is itself eligible, so a grace-window print that
+   qualifies under rule 1 always passes rule 2.)
+
+VOLUME: the daily bar's `volume` sums EVERY print of that trade date
+whose re-decoded conditions are volume-eligible (`eligible_for_volume`:
+all but the market-center official open/close and corrected consolidated
+close records) - regular session, extended hours and odd lots alike,
+which is how vendor EOD volume is defined. Intraday (`1m`/`5m`) bucket
+volume sums only the volume-eligible prints inside the session window,
+so intraday buckets do not add up to the daily volume.
 
 Bars are analytics output, not the bitemporal system of record: OHLCV
 values are plain Python floats/ints even when the input frame carries
@@ -74,9 +91,9 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from tick_vault.ids import new_id
-from tick_vault.sl_conditions import _TABLE as _SL_TABLE
+from tick_vault.sl_conditions import _TABLE as _SL_TABLE, decode_sl
 
-BAR_INCLUSION_POLICY = "BAR_INCL_V1"
+BAR_INCLUSION_POLICY = "BAR_INCL_V2"
 
 _NY_TZ = ZoneInfo("America/New_York")
 
@@ -124,57 +141,9 @@ def _item_get(item, key: str, default=None):
     return getattr(item, key, default)
 
 
-def _is_eligible_flags(flags) -> bool:
-    # Delta returns list<string> columns as numpy arrays: never truth-test them
-    if flags is None or len(flags) == 0:
-        return True
-    return not any(f in INELIGIBLE_FLAGS for f in flags)
-
-
-def _floor_minute(ts: "pd.Timestamp", minutes: int) -> "pd.Timestamp":
-    floored = (ts.minute // minutes) * minutes
-    return ts.replace(minute=floored, second=0, microsecond=0, nanosecond=0)
-
-
-def _session_open(ts: "pd.Timestamp") -> "pd.Timestamp":
-    return ts.replace(hour=9, minute=30, second=0, microsecond=0, nanosecond=0)
-
-
-def _session_close(ts: "pd.Timestamp") -> "pd.Timestamp":
-    return ts.replace(hour=16, minute=0, second=0, microsecond=0, nanosecond=0)
-
-
 _CLOSING_GRACE = dt.timedelta(minutes=10)
-
-
-def _is_closing_print(flags) -> bool:
-    return flags is not None and "CLOSING_PRINT" in list(flags)
-
-
-def _in_session_or_closing_grace(ts: "pd.Timestamp", flags) -> bool:
-    """BAR_INCL_V1 session-window test: inclusive `[09:30:00, 16:00:00]`,
-    plus a `CLOSING_PRINT`-only grace window `(16:00:00, 16:10:00]` for
-    closing-auction prints that stamp a few minutes after the nominal
-    close."""
-    open_ts = _session_open(ts)
-    close_ts = _session_close(ts)
-    if open_ts <= ts <= close_ts:
-        return True
-    if close_ts < ts <= close_ts + _CLOSING_GRACE:
-        return _is_closing_print(flags)
-    return False
-
-
-def _intraday_bucket(ts: "pd.Timestamp", minutes: int) -> "pd.Timestamp":
-    """Floor `ts` to its `minutes`-wide bucket, except that anything at or
-    after the 16:00:00 session close (the exact-close regular print, or a
-    closing-auction grace-window print) folds into the session's final
-    intraday bucket (15:59 for 1m, 15:55 for 5m) rather than a
-    nonexistent post-close bucket."""
-    close_ts = _session_close(ts)
-    if ts >= close_ts:
-        return close_ts - dt.timedelta(minutes=minutes)
-    return _floor_minute(ts, minutes)
+_OPEN_S = 9 * 3600 + 30 * 60   # 09:30:00, seconds after NY midnight
+_CLOSE_S = 16 * 3600           # 16:00:00
 
 
 # ---------------------------------------------------------------------------
@@ -239,59 +208,58 @@ def aggregate_bars(
     if df.empty:
         return _empty()
 
-    # 3. Regular session window (inclusive at close) + closing-print grace
-    #    window, America/New_York.
+    # 3. Re-decode each DISTINCT raw condition once with the current table
+    #    (a week holds ~90 distinct codes, so this is cheap and vectorized).
+    raw = df["sale_condition_raw"].fillna("")
+    decoded = {code: decode_sl(code) for code in raw.unique()}
+    price_ok = raw.map({c: d.eligible_for_bars for c, d in decoded.items()}).astype(bool)
+    volume_ok = raw.map({c: d.eligible_for_volume for c, d in decoded.items()}).astype(bool)
+    closing = raw.map({c: "CLOSING_PRINT" in d.flags for c, d in decoded.items()}).astype(bool)
+
+    # 4. Regular session [09:30:00, 16:00:00] (inclusive at close) plus the
+    #    closing-print grace window (16:00:00, 16:10:00], America/New_York.
     ny_ts = df["trade_ts"].dt.tz_convert(_NY_TZ)
-    df = df.assign(_ny_ts=ny_ts)
-    in_session = df.apply(
-        lambda r: _in_session_or_closing_grace(r["_ny_ts"], r["sale_condition_flags"]),
-        axis=1,
+    secs = (ny_ts - ny_ts.dt.normalize()).dt.total_seconds()
+    in_window = ((secs >= _OPEN_S) & (secs <= _CLOSE_S)) | (
+        (secs > _CLOSE_S) & (secs <= _CLOSE_S + _CLOSING_GRACE.total_seconds()) & closing
     )
-    df = df[in_session]
-    if df.empty:
-        return _empty()
+    df = df.assign(_ny_ts=ny_ts, _secs=secs)
 
-    # 4. Stored-flag eligibility (never re-decode sale_condition_raw).
-    eligible = df["sale_condition_flags"].apply(_is_eligible_flags)
-    df = df[eligible]
-    if df.empty:
+    price_rows = df[in_window & price_ok]
+    if price_rows.empty:
         return _empty()
+    vol_rows = df[volume_ok] if interval == "1d" else df[in_window & volume_ok]
 
-    # 5. Bucket. At/after 16:00:00 (exact-close regular print, or a
-    #    closing-grace print) folds into the session's final bucket.
-    if interval == "1d":
-        bucket_start = df["_ny_ts"].apply(_session_open)
-    else:
+    # 5. Bucket. At/after 16:00:00 (exact-close print, or a closing-grace
+    #    print) folds into the session's final intraday bucket.
+    def _bucket(frame):
+        day = frame["_ny_ts"].dt.normalize()
+        if interval == "1d":
+            return day + pd.Timedelta(seconds=_OPEN_S)
         minutes = 1 if interval == "1m" else 5
-        bucket_start = df["_ny_ts"].apply(lambda t: _intraday_bucket(t, minutes))
-    df = df.assign(_bucket_start=bucket_start)
+        last = day + pd.Timedelta(seconds=_CLOSE_S - minutes * 60)
+        return frame["_ny_ts"].dt.floor(f"{minutes}min").where(frame["_secs"] < _CLOSE_S, last)
+
+    # Sort so first/last-in-group gives open/close by (trade_ts_ms, session_seq).
+    price_rows = price_rows.assign(
+        _bucket=_bucket(price_rows), _px=price_rows["price"].astype(float)
+    ).sort_values(["trade_ts_ms", "session_seq"])
+    g = price_rows.groupby(["trade_date", "_bucket"], sort=True)["_px"]
+    bars = pd.DataFrame({"open": g.first(), "high": g.max(), "low": g.min(), "close": g.last()})
 
     # Null-size accounting: a None size contributes 0 to volume rather
     # than being dropped by pandas' default skipna sum.
-    null_size_rows = int(df["size"].isna().sum())
+    sizes = vol_rows["size"]
+    null_size_rows = int(sizes.isna().sum())
+    sizes = sizes.where(sizes.notna(), 0).astype(float)
+    if interval == "1d":
+        vol = sizes.groupby(vol_rows["trade_date"]).sum()
+        bars["volume"] = [float(vol.get(d, 0.0)) for d in bars.index.get_level_values(0)]
+    else:
+        vol = sizes.groupby([vol_rows["trade_date"], _bucket(vol_rows)]).sum()
+        bars["volume"] = [float(vol.get(k, 0.0)) for k in bars.index]
 
-    # Sort so first/last-in-group gives open/close by (trade_ts_ms, session_seq).
-    df = df.sort_values(["trade_ts_ms", "session_seq"])
-
-    rows = []
-    for (trade_date, bucket_start), group in df.groupby(
-        ["trade_date", "_bucket_start"], sort=True
-    ):
-        prices = group["price"].astype(float)
-        sizes = group["size"]
-        sizes = sizes.where(sizes.notna(), 0).astype(float)
-        rows.append({
-            "trade_date": trade_date,
-            "bucket_start": bucket_start,
-            "open": float(prices.iloc[0]),
-            "high": float(prices.max()),
-            "low": float(prices.min()),
-            "close": float(prices.iloc[-1]),
-            "volume": float(sizes.sum()),
-        })
-
-    bars = pd.DataFrame(rows, columns=BAR_COLUMNS)
-    bars = bars.sort_values(["trade_date", "bucket_start"]).reset_index(drop=True)
+    bars = bars.reset_index().rename(columns={"_bucket": "bucket_start"})[BAR_COLUMNS]
     if return_stats:
         return bars, BarStats(null_size_rows=null_size_rows)
     return bars
@@ -305,6 +273,7 @@ def aggregate_bars(
 class ReconcileTolerance:
     """Plan defaults (baseline §16.3)."""
     close_pct: float = 0.001
+    high_low_pct: float = 0.001
     volume_pct: float = 0.02
     minute_close_pct: float = 0.005
 
@@ -358,7 +327,7 @@ def reconcile_tranche(
     A `trade_date` present in `our_daily_df` but absent from `ref_eod_df`
     produces a `REF_MISSING` diff row (a diagnostic, counted in the
     report) but does NOT by itself flip the report to `DIVERGENT`
-    (baseline §16.3) - only an actual close/volume/minute-close mismatch
+    (baseline §16.3) - only an actual close/high/low/volume/minute-close mismatch
     beyond tolerance does that.
 
     `our_daily_stats`/`our_minute_stats` are the optional `BarStats`
@@ -396,6 +365,15 @@ def reconcile_tranche(
                 "trade_date": trade_date, "field": "close", "ours": ours["close"],
                 "theirs": theirs.get("close"), "pct": close_pct, "kind": DIFF_KIND_DIVERGENCE,
             })
+
+        for field in ("high", "low"):
+            hl_pct = _pct_diff(ours[field], theirs.get(field))
+            if hl_pct is not None and hl_pct > tolerance.high_low_pct:
+                divergent = True
+                diff_rows.append({
+                    "trade_date": trade_date, "field": field, "ours": ours[field],
+                    "theirs": theirs.get(field), "pct": hl_pct, "kind": DIFF_KIND_DIVERGENCE,
+                })
 
         volume_pct = _pct_diff(ours["volume"], theirs.get("volume"))
         if volume_pct is not None and volume_pct > tolerance.volume_pct:
