@@ -80,6 +80,26 @@ def delta_store(monkeypatch, tmp_path):
         pd.DataFrame({"date": idx, "bid": [1.0] * 5}),
         mode="overwrite",
     )
+
+    # A day-keyed library, the EOD dump's shape: one table per (symbol, day),
+    # five one-minute rows from midnight UTC of each day. 09-03 is missing on
+    # purpose -- a window may span a day the dump never wrote.
+    for day in ("2026_09_01", "2026_09_02", "2026_09_04"):
+        d0 = pd.Timestamp(day.replace("_", "-"))
+        write_deltalake(
+            f"{tmp_path}/ticks_live/AAPL_{day}",
+            pd.DataFrame({
+                "date": pd.date_range(d0, periods=5, freq="1min"),
+                "price": [float(day[-2:])] * 5,
+            }),
+            mode="overwrite",
+        )
+    write_deltalake(
+        f"{tmp_path}/ticks_live/MSFT_2026_09_01",
+        pd.DataFrame({"date": pd.date_range("2026-09-01", periods=5, freq="1min"),
+                      "price": [1.0] * 5}),
+        mode="overwrite",
+    )
     return tmp_path
 
 
@@ -99,12 +119,31 @@ def kdb_conn(monkeypatch):
 # ---------- delta ----------
 
 def test_delta_list_libraries_sorted(delta_store):
-    assert server.delta_list_libraries() == ["hrp_prices", "ticks"]
+    assert server.delta_list_libraries() == ["hrp_prices", "ticks", "ticks_live"]
 
 
 def test_delta_list_symbols_unknown_library_raises(delta_store):
     with pytest.raises(ValueError, match="unknown library"):
         server.delta_list_symbols("nope")
+
+
+def test_delta_list_symbols_collapses_day_tables_to_bases(delta_store):
+    assert server.delta_list_symbols("ticks_live") == ["AAPL", "MSFT"]
+    # A library without day suffixes is unchanged.
+    assert server.delta_list_symbols("ticks") == ["AAPL"]
+
+
+@pytest.mark.xfail(strict=True, reason="Task 3")
+def test_delta_read_accepts_a_base_symbol(delta_store):
+    out = server.delta_read("ticks_live", "AAPL")
+    assert out["symbol"] == "AAPL"
+
+
+def test_delta_read_still_accepts_a_raw_day_key(delta_store):
+    # An older client, or Rita quoting a key it was shown, names one day.
+    out = server.delta_read("ticks_live", "AAPL_2026_09_02")
+    assert out["returned_rows"] == 5
+    assert out["rows"][0]["price"] == 2.0
 
 
 def test_delta_read_rejects_unknown_library(delta_store):

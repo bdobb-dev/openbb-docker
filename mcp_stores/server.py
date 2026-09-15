@@ -55,6 +55,8 @@ from concurrent.futures import TimeoutError as _FutureTimeoutError
 
 from fastmcp import FastMCP
 
+import daykeys
+
 MAX_ROWS = 10_000
 STORES_TIMEOUT_S = float(os.environ.get("STORES_TIMEOUT_S", "15"))
 _IDENT_RE = re.compile(r"\A[A-Za-z0-9._-]{1,64}\Z")
@@ -184,8 +186,8 @@ def delta_list_libraries() -> list[str]:
     return sorted(_bounded(D.list_libraries, store.base, store.storage_options))
 
 
-def delta_list_symbols(library: str) -> list[str]:
-    """List symbols (Delta tables) stored in a library."""
+def _raw_keys(library: str) -> list[str]:
+    """Every Delta table in `library`, by its raw key, sorted."""
     _check_ident("library", library)
     if library not in delta_list_libraries():
         raise ValueError(
@@ -194,18 +196,31 @@ def delta_list_symbols(library: str) -> list[str]:
     return sorted(_bounded(_delta(library).list_symbols))
 
 
+def delta_list_symbols(library: str) -> list[str]:
+    """List symbols stored in a library.
+
+    A symbol whose tables are keyed by day (`AAPL_2026_09_11`, the EOD dump's
+    layout) is listed ONCE, as `AAPL`; the read tools expand it to the days a
+    window needs. See daykeys.
+    """
+    return daykeys.bases(_raw_keys(library))
+
+
 def _require_symbol(library: str, symbol: str):
-    """The store for library, once symbol is known to be in it.
+    """(store, raw keys) for library, once symbol is known to be in it.
 
     Every tool validates through here so the "unknown X; call Y first" error
-    contract is one implementation, not one per entry point.
+    contract is one implementation, not one per entry point. `symbol` may be
+    a base (`AAPL`) or a raw day key (`AAPL_2026_09_11`): the second keeps an
+    older client, or an agent quoting a key it was shown, working.
     """
     _check_ident("symbol", symbol)
-    if symbol not in delta_list_symbols(library):
+    raw = _raw_keys(library)
+    if symbol not in raw and symbol not in daykeys.bases(raw):
         raise ValueError(
             f"unknown symbol {symbol!r} in {library!r}; call delta_list_symbols first"
         )
-    return _delta(library)
+    return _delta(library), raw
 
 
 def delta_describe(library: str, symbol: str) -> dict:
@@ -216,14 +231,16 @@ def delta_describe(library: str, symbol: str) -> dict:
     """
     from openbb_deltalake import describe as D
 
-    return _bounded(D.describe, _require_symbol(library, symbol), symbol)
+    store, _ = _require_symbol(library, symbol)
+    return _bounded(D.describe, store, symbol)
 
 
 def delta_history(library: str, symbol: str) -> list[dict]:
     """Delta versions for a symbol, newest first -- the time-travel choices."""
     from openbb_deltalake import describe as D
 
-    return _bounded(D.history, _require_symbol(library, symbol), symbol)
+    store, _ = _require_symbol(library, symbol)
+    return _bounded(D.history, store, symbol)
 
 
 def delta_read(
@@ -247,7 +264,7 @@ def delta_read(
     ArcticDB gave via Library.tail, which delta-rs has no equivalent for.
     """
     tail_rows = max(1, min(int(tail_rows), MAX_ROWS))
-    store = _require_symbol(library, symbol)
+    store, _ = _require_symbol(library, symbol)
     if isinstance(as_of, str) and as_of.isdigit():
         as_of = int(as_of)
 
