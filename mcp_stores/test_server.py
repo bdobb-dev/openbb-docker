@@ -270,6 +270,28 @@ def test_delta_describe_reports_metadata_without_reading_rows(delta_store, monke
     assert {c["name"] for c in out["columns"]} == {"date", "bid"}
 
 
+def test_delta_describe_of_a_single_table_reports_one_day(delta_store):
+    assert server.delta_describe("ticks", "AAPL")["days"] == 1
+
+
+def test_delta_describe_of_a_base_sums_the_days_without_reading_rows(delta_store, monkeypatch):
+    from openbb_deltalake.store import DeltaStore
+
+    def explode(self, *a, **k):
+        raise AssertionError("describe must not read rows")
+
+    monkeypatch.setattr(DeltaStore, "read", explode)
+    monkeypatch.setattr(DeltaStore, "read_trailing", explode)
+
+    out = server.delta_describe("ticks_live", "AAPL")
+    assert out["symbol"] == "AAPL"
+    assert out["days"] == 3
+    assert out["row_count"] == 15
+    assert out["date_range"][0].startswith("2026-09-01 00:00")
+    assert out["date_range"][1].startswith("2026-09-04 00:04")
+    assert {c["name"] for c in out["columns"]} == {"date", "price"}
+
+
 def test_delta_history_and_as_of_return_superseded_data(delta_store):
     from deltalake import write_deltalake
 

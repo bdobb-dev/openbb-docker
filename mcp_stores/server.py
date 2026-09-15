@@ -227,12 +227,29 @@ def delta_describe(library: str, symbol: str) -> dict:
     """Row count, stored date range and column dtypes for a symbol.
 
     Answered from the transaction log: this reads no rows, however large the
-    symbol is.
+    symbol is. A day-keyed symbol is the sum of its day tables -- rows added,
+    the range's outer bounds taken, columns from the newest day -- plus
+    `days`, so a strip can say how many tables stand behind the number.
+    That is one log walk per day; a library of forty symbols over a few
+    weeks is a few dozen small reads, measured against MinIO before merge.
     """
     from openbb_deltalake import describe as D
 
-    store, _ = _require_symbol(library, symbol)
-    return _bounded(D.describe, store, symbol)
+    store, raw = _require_symbol(library, symbol)
+    keys = daykeys.day_keys(raw, symbol)
+    parts = [_bounded(D.describe, store, key) for key in keys]
+    ranges = [p["date_range"] for p in parts if p["date_range"]]
+    # ponytail: min/max over the log's own string form. Every table in a
+    # library is written by one process with one precision, so the strings
+    # sort as the instants do; parse them if a library ever mixes writers.
+    return {
+        "library": library,
+        "symbol": symbol,
+        "row_count": sum(p["row_count"] for p in parts),
+        "date_range": [min(r[0] for r in ranges), max(r[1] for r in ranges)] if ranges else None,
+        "columns": parts[-1]["columns"],
+        "days": len(keys),
+    }
 
 
 def delta_history(library: str, symbol: str) -> list[dict]:
