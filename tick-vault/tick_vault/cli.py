@@ -36,7 +36,7 @@ import pandas as pd
 
 from tick_vault import calibrate as calibrate_mod
 from tick_vault import loop as loop_mod
-from tick_vault.engine import Budget, ManifestBuilder, SpanMemory, _REDACTED
+from tick_vault.engine import Budget, ManifestBuilder, SpanMemory, _REDACTED, session_loaded
 from tick_vault.reconcile import Gate
 
 DEFAULT_CALIBRATION_REPORT = "docs/superpowers/verification/ep15-calibration.md"
@@ -266,8 +266,9 @@ def build_ctx_from_env() -> loop_mod.LoopContext:
     legacy_root = os.environ.get("LEGACY_ROOT")
     reference_configured = bool(api_key) and api_key != _REDACTED
 
+    transport = UrlLibTransport()
     return loop_mod.LoopContext(
-        transport=UrlLibTransport(),
+        transport=transport,
         store=CaptureStore(root),
         root=root,
         legacy_progress_root=legacy_root,
@@ -277,6 +278,7 @@ def build_ctx_from_env() -> loop_mod.LoopContext:
         reconcile_step=_pandas_reconcile_step if reference_configured else None,
         dq_issue_writer=append_rows,
         splits_reader=_default_splits_reader,
+        session_probe=lambda day: session_loaded(transport, day, api_key),
         api_token=api_key,
         span_memory=SpanMemory(),
         budget=Budget(),

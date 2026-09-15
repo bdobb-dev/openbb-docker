@@ -391,3 +391,63 @@ def test_close_run_records_error_summary():
     closing_row = writer.writes[1].iloc[0]
     assert closing_row["status"] == RUN_STATUS_FAILED
     assert closing_row["error_summary"] == "boom"
+
+
+# ---------------------------------------------------------------------------
+# vendor-readiness probe (SPY control) - Phase-0, 2026-09-15
+# ---------------------------------------------------------------------------
+
+def test_latest_session_day_skips_weekends():
+    from tick_vault.loop import _latest_session_day
+
+    assert _latest_session_day(dt.datetime(2026, 9, 15, 12, 29, tzinfo=UTC)) == dt.date(2026, 9, 14)  # Tue -> Mon
+    assert _latest_session_day(dt.datetime(2026, 9, 14, 12, 0, tzinfo=UTC)) == dt.date(2026, 9, 11)   # Mon -> Fri
+
+
+def test_daily_pass_deferred_while_session_not_loaded_then_retried():
+    from tick_vault.loop import CYCLE_DAILY, CycleAction, SESSION_RETRY, _execute_daily
+
+    now = dt.datetime(2026, 9, 15, 12, 29, tzinfo=UTC)  # 08:29 ET, daily due
+    probes = []
+    ctx = LoopContext(root="mem://test", clock=lambda: now,
+                      session_probe=lambda day: probes.append(day) or False)
+    state: dict = {}
+    assert run_cycle(ctx, pd.DataFrame(columns=list(_row().keys())), state).kind == CYCLE_DAILY
+
+    _execute_daily(ctx, CycleAction(kind=CYCLE_DAILY), state)
+    assert probes == [dt.date(2026, 9, 14)]
+    assert state["last_daily_date"] is None                       # not marked done
+    assert state["unloaded_session"] == {"day": dt.date(2026, 9, 14), "retry_at": now + SESSION_RETRY}
+    assert run_cycle(ctx, pd.DataFrame(columns=list(_row().keys())), state).kind != CYCLE_DAILY
+
+    later = LoopContext(root="mem://test", clock=lambda: now + SESSION_RETRY, session_probe=lambda day: True)
+    assert run_cycle(later, pd.DataFrame(columns=list(_row().keys())), state).kind == CYCLE_DAILY
+    _execute_daily(later, CycleAction(kind=CYCLE_DAILY), state)
+    assert state["last_daily_date"] == dt.date(2026, 9, 15) and "unloaded_session" not in state
+
+
+def test_blocked_session_skips_its_week_and_keeps_the_walk_moving():
+    from tick_vault.loop import CYCLE_FETCH
+
+    # Saturday 08:30 UTC: week 2026-09-14 passes the T+1 rule, but Friday
+    # 2026-09-18 is not loaded yet - fetch the older week instead.
+    now = dt.datetime(2026, 9, 19, 8, 30, tzinfo=UTC)
+    ctx = _ctx(now)
+    state: dict = {"unloaded_session": {"day": dt.date(2026, 9, 18), "retry_at": now + dt.timedelta(minutes=10)}}
+    manifest = pd.DataFrame([
+        _row(work_id="wrk_new", week_monday=dt.date(2026, 9, 14)),
+        _row(work_id="wrk_old", week_monday=dt.date(2026, 9, 7)),
+    ])
+    action = run_cycle(ctx, manifest, state)
+    assert action.kind == CYCLE_FETCH and action.item["work_id"] == "wrk_old"
+
+
+def test_session_ready_never_probes_for_a_week_that_does_not_cover_the_latest_session():
+    from tick_vault.loop import _session_ready
+
+    def _boom(day):
+        raise AssertionError("probe must not be called")
+
+    ctx = LoopContext(root="mem://test", clock=lambda: dt.datetime(2026, 9, 15, 12, 0, tzinfo=UTC),
+                      session_probe=_boom)
+    assert _session_ready(ctx, {}, dt.date(2026, 8, 31)) is True

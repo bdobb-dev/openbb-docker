@@ -580,6 +580,22 @@ def build_tick_url(symbol: str, frm: int, to: int, token: str) -> str:
     return TICK_ENDPOINT_TEMPLATE.format(symbol=symbol.replace("-", "."), frm=frm, to=to, token=token)
 
 
+def session_loaded(transport, day: dt.date, token: str) -> bool:
+    """Whether the vendor serves session `day` yet: SPY, limit=1, over that
+    UTC day. A 2xx (rows, or an empty holiday answer) means loaded. A 404
+    means not loaded yet - the tick endpoint loads each session hours after
+    the close (Monday 2026-09-14 was still 404 at 12:29 UTC Tuesday) - and
+    it is the same 404 an unknown symbol gets, so only a control symbol can
+    tell the two apart. Any other status or a network failure also counts
+    as not ready (sip_backfill's `_session_loaded` rule)."""
+    frm = int(dt.datetime(day.year, day.month, day.day, tzinfo=dt.timezone.utc).timestamp())
+    try:
+        status, _body = transport.get(build_tick_url("SPY", frm, frm + 86399, token) + "&limit=1", timeout=60)
+    except OSError:
+        return False
+    return 200 <= status < 300
+
+
 def _window_span_seconds(span_days: float) -> int:
     return max(int(round(span_days * 86400)), 1)
 

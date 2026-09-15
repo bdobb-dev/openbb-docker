@@ -608,3 +608,22 @@ def test_fetch_week_treats_spent_transport_timeout_like_5xx():
     assert span_memory.span("MEGA") == 3.5
     assert result.status == STATUS_COMPLETE
     assert result.rows_written == 2
+
+
+def test_session_loaded_probe_reads_spy_404_vs_2xx():
+    # Phase-0 (2026-09-15): the tick endpoint 404s a session it has not loaded
+    # yet - the same 404 an unknown symbol gets - so the SPY control decides.
+    from tick_vault.engine import session_loaded
+
+    day = dt.date(2026, 9, 14)
+    not_yet = FakeTransport([(404, b"<!DOCTYPE html>")])
+    assert session_loaded(not_yet, day, "T") is False
+    url = not_yet.requested_urls[0]
+    assert "s=SPY&" in url and "from=1789344000&" in url and "to=1789430399&" in url and url.endswith("&limit=1")
+    assert session_loaded(FakeTransport([(200, b'{"ts": []}')]), day, "T") is True  # empty = holiday, loaded
+
+    class _Down:
+        def get(self, url, timeout=30):
+            raise TimeoutError("read timed out")
+
+    assert session_loaded(_Down(), day, "T") is False
