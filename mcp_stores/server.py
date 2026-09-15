@@ -243,6 +243,46 @@ def delta_history(library: str, symbol: str) -> list[dict]:
     return _bounded(D.history, store, symbol)
 
 
+def _committed_by(store, key: str, as_of) -> bool:
+    """Whether `key` existed at a timestamp `as_of`.
+
+    delta-rs (1.6.3) answers an as_of earlier than a table's first commit by
+    loading version 0, not by raising -- so a day table written AFTER the
+    chosen instant would silently contribute rows that did not exist then.
+    One history walk per key is the price of a truthful time travel; an int
+    version or no as_of skips the walk.
+    """
+    if as_of is None or isinstance(as_of, int):
+        return True
+    from openbb_deltalake import describe as D
+    from pandas import Timestamp
+
+    first_ms = min(int(e["timestamp"]) for e in _bounded(D.history, store, key))
+    ts = Timestamp(as_of)
+    ts = ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
+    return Timestamp(first_ms, unit="ms", tz="UTC") <= ts
+
+
+def _read_one(store, key: str, start, end, tail_rows: int, as_of):
+    """(rows in range, frame) for one table -- the v11.0.0 read, per key.
+
+    The READ is bounded, not just the response: with no start/end this reads
+    only the trailing files the transaction log says hold those rows, so an
+    unfiltered call never materializes the whole table -- the guarantee
+    ArcticDB gave via Library.tail, which delta-rs has no equivalent for.
+    """
+    from openbb_deltalake import describe as D
+
+    if start or end:
+        df = _bounded(
+            store.read, key, start_date=start, end_date=end,
+            as_of=as_of, output="dataframe",
+        )
+        return len(df), df
+    total = _bounded(D.describe, store, key)["row_count"]
+    return total, _bounded(store.read_trailing, key, tail_rows, as_of)
+
+
 def delta_read(
     library: str,
     symbol: str,
@@ -258,28 +298,27 @@ def delta_read(
     tail_rows rows (the most recent in range, hard cap MAX_ROWS) as JSON
     records with ISO timestamps.
 
-    The READ is bounded, not just the response: with no start/end this reads
-    only the trailing files the transaction log says hold those rows, so an
-    unfiltered call never materializes the whole symbol -- the guarantee
-    ArcticDB gave via Library.tail, which delta-rs has no equivalent for.
+    A symbol stored as one table per day (see daykeys) is read across the day
+    tables the window covers, oldest first, and tailed as one frame. With no
+    window it reads its newest day only, so it stays as bounded as a single
+    table. A window that covers no day table answers zero rows, not an error:
+    the symbol exists, that stretch of it does not.
     """
+    import pandas as pd
+
     tail_rows = max(1, min(int(tail_rows), MAX_ROWS))
-    store, _ = _require_symbol(library, symbol)
+    store, raw = _require_symbol(library, symbol)
     if isinstance(as_of, str) and as_of.isdigit():
         as_of = int(as_of)
 
-    from openbb_deltalake import describe as D
-
-    if start or end:
-        df = _bounded(
-            store.read, symbol, start_date=start, end_date=end,
-            as_of=as_of, output="dataframe",
-        )
-        total = len(df)
-        df = df.tail(tail_rows).reset_index()
-    else:
-        total = _bounded(D.describe, store, symbol)["row_count"]
-        df = _bounded(store.read_trailing, symbol, tail_rows, as_of).reset_index()
+    parts = [
+        _read_one(store, key, start, end, tail_rows, as_of)
+        for key in daykeys.in_window(raw, symbol, start, end)
+        if _committed_by(store, key, as_of)
+    ]
+    total = sum(n for n, _ in parts)
+    frames = [df for _, df in parts if len(df)]
+    df = pd.concat(frames).tail(tail_rows).reset_index() if frames else pd.DataFrame()
 
     return {
         "library": library,

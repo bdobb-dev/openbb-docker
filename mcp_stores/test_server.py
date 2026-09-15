@@ -133,7 +133,6 @@ def test_delta_list_symbols_collapses_day_tables_to_bases(delta_store):
     assert server.delta_list_symbols("ticks") == ["AAPL"]
 
 
-@pytest.mark.xfail(strict=True, reason="Task 3")
 def test_delta_read_accepts_a_base_symbol(delta_store):
     out = server.delta_read("ticks_live", "AAPL")
     assert out["symbol"] == "AAPL"
@@ -199,6 +198,62 @@ def test_delta_read_passes_date_range(delta_store):
     )
     assert out["returned_rows"] == 3
     assert out["total_rows_in_range"] == 3
+
+
+def test_delta_read_of_a_base_with_no_bounds_reads_the_newest_day_only(delta_store, monkeypatch):
+    from openbb_deltalake.store import DeltaStore
+
+    def explode(self, *a, **k):
+        raise AssertionError("an unfiltered read must not open more than the newest day")
+
+    monkeypatch.setattr(DeltaStore, "read", explode)
+    out = server.delta_read("ticks_live", "AAPL")
+    assert out["total_rows_in_range"] == 5
+    assert {r["price"] for r in out["rows"]} == {4.0}
+
+
+def test_delta_read_of_a_base_concatenates_the_days_in_the_window_in_order(delta_store):
+    out = server.delta_read(
+        "ticks_live", "AAPL", start="2026-09-01 00:03", end="2026-09-04 00:01"
+    )
+    # 09-01: minutes 3,4 (2 rows); 09-02: all 5; 09-03: no table; 09-04: minutes 0,1 (2)
+    assert out["total_rows_in_range"] == 9
+    assert out["returned_rows"] == 9
+    assert [r["price"] for r in out["rows"]] == [1.0, 1.0, 2.0, 2.0, 2.0, 2.0, 2.0, 4.0, 4.0]
+    assert out["rows"][0]["date"].startswith("2026-09-01T00:03")
+
+
+def test_delta_read_of_a_base_tails_after_concatenating(delta_store):
+    out = server.delta_read(
+        "ticks_live", "AAPL", start="2026-09-01", end="2026-09-04", tail_rows=3
+    )
+    assert out["total_rows_in_range"] == 15
+    assert out["returned_rows"] == 3
+    assert [r["price"] for r in out["rows"]] == [4.0, 4.0, 4.0]
+
+
+def test_delta_read_of_a_window_with_no_day_tables_is_empty_not_404(delta_store):
+    out = server.delta_read("ticks_live", "AAPL", start="2026-10-01", end="2026-10-31")
+    assert out == {
+        "library": "ticks_live", "symbol": "AAPL",
+        "total_rows_in_range": 0, "returned_rows": 0, "rows": [],
+    }
+
+
+def test_delta_read_timestamp_as_of_skips_a_day_table_committed_later(delta_store):
+    # deltalake 1.6.3 does NOT raise on an as_of earlier than a table's first
+    # commit -- it quietly loads version 0. A day table written after the
+    # chosen instant did not exist then, so it must contribute nothing.
+    from deltalake import DeltaTable
+
+    first = DeltaTable(f"{delta_store}/ticks_live/AAPL_2026_09_04").history()[-1]["timestamp"]
+    before = pd.Timestamp(first - 1, unit="ms", tz="UTC").isoformat()
+    at = pd.Timestamp(first, unit="ms", tz="UTC").isoformat()
+
+    out = server.delta_read("ticks_live", "AAPL", start="2026-09-04", end="2026-09-04", as_of=before)
+    assert out["returned_rows"] == 0
+    out = server.delta_read("ticks_live", "AAPL", start="2026-09-04", end="2026-09-04", as_of=at)
+    assert out["returned_rows"] == 5
 
 
 def test_delta_describe_reports_metadata_without_reading_rows(delta_store, monkeypatch):
