@@ -45,7 +45,7 @@ shows them raw.
 - Changing the store layout. Migrating `ticks_live` to day partitions is a
   separate 11.x decision (approach C in the brainstorm).
 - Any change to the generic param panel, the table, or the chart.
-- A calendar or trading-session grammar. `T-1d` is 24 hours of wall clock.
+- A calendar or trading-session grammar. `T-1d` is one calendar day (D3), not a trading session.
 
 ## Decisions
 
