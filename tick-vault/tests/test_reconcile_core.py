@@ -84,14 +84,14 @@ def _build_day_ticks():
 # ---------------------------------------------------------------------------
 
 def test_policy_constant():
-    assert BAR_INCLUSION_POLICY == "BAR_INCL_V1"
+    assert BAR_INCLUSION_POLICY == "BAR_INCL_V2"
 
 
 def test_ineligible_flags_built_from_decode_table():
     assert "SOLD_OUT_OF_SEQUENCE" in INELIGIBLE_FLAGS
     assert "EXTENDED_HOURS" in INELIGIBLE_FLAGS
     assert "REGULAR" not in INELIGIBLE_FLAGS
-    assert "ODD_LOT" not in INELIGIBLE_FLAGS
+    assert "ODD_LOT" in INELIGIBLE_FLAGS  # V2: odd lots are volume-only
 
 
 # ---------------------------------------------------------------------------
@@ -105,13 +105,15 @@ def test_aggregate_bars_1d_excludes_out_of_seq_extended_hours_and_cancelled():
     assert len(bars) == 1
     row = bars.iloc[0]
     assert row["trade_date"] == TRADE_DATE
-    # Included: seq 1 (100.00), 2 (100.50), 3 (101.00), 4 (99.50), 8 (102.00, late add).
-    # Excluded: seq 5 (out-of-seq @Z), 6 (extended-hours pre-open), 7 (cancelled).
+    # Price: seq 1 (100.00), 2 (100.50), 3 (101.00), 4 (99.50), 8 (102.00, late add).
+    # Price excludes seq 5 (out-of-seq @Z), 6 (pre-open), 7 (cancelled).
     assert row["open"] == 100.00     # earliest by (trade_ts_ms, session_seq) -> seq 1
     assert row["high"] == 102.00     # late add's price is the day's high
     assert row["low"] == 99.50
     assert row["close"] == 99.50     # latest by time -> seq 4 (15:59:59.999)
-    assert row["volume"] == 100 + 50 + 200 + 150 + 300  # seq 1,2,3,4,8 sizes
+    # BAR_INCL_V2 volume: every volume-eligible print of the day, any hour,
+    # out-of-sequence included (vendor EOD volume) - only the cancel is out.
+    assert row["volume"] == 100 + 50 + 200 + 150 + 300 + 9999 + 500
 
 
 def test_aggregate_bars_1d_late_add_included_at_market_time():
@@ -211,7 +213,7 @@ def test_aggregate_bars_exact_close_regular_print_included_in_final_bucket():
 def test_aggregate_bars_closing_print_grace_window_included_as_close():
     payload = [
         _tick(1, 15, 59, 0, 100.00, 100),
-        _tick(2, 16, 3, 0, 110.00, 50, sl="M   "),  # CLOSING_PRINT, 16:03 - within grace
+        _tick(2, 16, 3, 0, 110.00, 50, sl=" 6  "),  # CLOSING_PRINT, 16:03 - within grace
     ]
     df = parse_tick_payload(
         payload, capture_id="cap_x", listing_id="lst_a", instrument_id="ins_a", observed_at=OBS
@@ -241,14 +243,14 @@ def test_aggregate_bars_regular_print_in_grace_window_still_excluded():
 
     bars_1d = aggregate_bars(df, interval="1d")
     assert len(bars_1d) == 1
-    assert bars_1d.iloc[0]["close"] == 100.00
-    assert bars_1d.iloc[0]["volume"] == 100
+    assert bars_1d.iloc[0]["close"] == 100.00   # not a price print...
+    assert bars_1d.iloc[0]["volume"] == 150     # ...but still daily volume (V2)
 
 
 def test_aggregate_bars_closing_print_past_grace_window_excluded():
     payload = [
         _tick(1, 15, 59, 0, 100.00, 100),
-        _tick(2, 16, 11, 0, 999.00, 50, sl="M   "),  # CLOSING_PRINT but past 16:10 grace
+        _tick(2, 16, 11, 0, 999.00, 50, sl=" 6  "),  # CLOSING_PRINT but past 16:10 grace
     ]
     df = parse_tick_payload(
         payload, capture_id="cap_x", listing_id="lst_a", instrument_id="ins_a", observed_at=OBS
@@ -256,8 +258,8 @@ def test_aggregate_bars_closing_print_past_grace_window_excluded():
 
     bars_1d = aggregate_bars(df, interval="1d")
     assert len(bars_1d) == 1
-    assert bars_1d.iloc[0]["close"] == 100.00
-    assert bars_1d.iloc[0]["volume"] == 100
+    assert bars_1d.iloc[0]["close"] == 100.00   # past the grace window: no price...
+    assert bars_1d.iloc[0]["volume"] == 150     # ...but still daily volume (V2)
 
 
 # ---------------------------------------------------------------------------
@@ -481,14 +483,27 @@ def test_gate_waiver_row_threads_listing_id_and_trade_date():
     assert details["reason"] == "known vendor outage 2026-07-01"
 
 
-def test_flag_helpers_accept_delta_numpy_arrays():
-    # Delta hands list<string> columns back as numpy arrays; truth-testing one
-    # crashed the Phase-0 calibration on its first symbol (2026-09-14).
-    import numpy as np
-    from tick_vault.reconcile import _is_closing_print, _is_eligible_flags
 
-    assert _is_closing_print(np.array(["ODD_LOT", "CLOSING_PRINT"]))
-    assert not _is_closing_print(np.array(["ODD_LOT", "REGULAR"]))
-    assert _is_eligible_flags(np.array(["REGULAR", "ODD_LOT"]))
-    assert not _is_eligible_flags(np.array(["ODD_LOT", "SOLD_OUT_OF_SEQUENCE"]))
-    assert _is_eligible_flags(np.array([], dtype=object))
+def test_aggregate_bars_v2_odd_lots_volume_only_and_official_close_record_excluded():
+    # Phase-0 (2026-09-15): off-exchange odd lots ~4% below market set AAPL's
+    # daily low under V1; the official-close summary record ('M') is not a trade.
+    payload = [
+        _tick(1, 10, 0, 0, 100.00, 100),
+        _tick(2, 11, 0, 0, 96.00, 3, sl="@  I"),     # odd lot, far below market
+        _tick(3, 15, 0, 0, 101.00, 200),
+        _tick(4, 16, 0, 0, 101.00, 5000, sl="   M"), # market-center official close record
+    ]
+    df = parse_tick_payload(
+        payload, capture_id="cap_x", listing_id="lst_a", instrument_id="ins_a", observed_at=OBS
+    )
+    row = aggregate_bars(df, interval="1d").iloc[0]
+    assert row["low"] == 100.00                 # odd lot does not set the low
+    assert row["volume"] == 100 + 3 + 200       # ...but counts; the M record does not
+
+
+def test_reconcile_tranche_flags_high_low_divergence():
+    ours = _daily_bars(close=100.00, volume=1000)
+    ours.loc[0, "low"] = 96.00                  # a bad print that close/volume cannot see
+    report = reconcile_tranche({"listing_id": "lst_a"}, ours, _ref_eod(close=100.00, volume=1000))
+    assert report.status == "DIVERGENT"
+    assert set(report.diffs_df["field"]) == {"low"}
