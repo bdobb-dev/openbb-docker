@@ -14,6 +14,7 @@ from later chapters is.
 | v1.0.0 | Ep. 1 — Your Own Bloomberg in a Closet | Tailscale sidecar + OpenBB Platform API, Serve-only ingress, provider keys |
 | v2.0.0 | Ep. 2 — The Borrowed Terminal | HTTP Basic auth on the API, Tailscale Funnel (port 443 only) |
 | v3.0.0 | Ep. 3 — (with BDOBB v3.0.0) | key-maint: the transport-tiered key status widget backend |
+| v5.3.0 | Ep. 5 — (with BDOBB v5.3.0) | openbb-trading-calendar: exchange trading calendars (pandas-market-calendars) and the Trading calendar widget |
 
 ## What you get (this release: v5.3.0)
 
@@ -33,6 +34,15 @@ The services sit on a private Docker bridge, so other processes **on this Docker
 host** can reach them directly — but they meet the same HTTP Basic auth as
 everyone else, on every path. Nothing on your LAN can reach them at all, and
 key-maint's admin surface is a unix socket that never touches the bridge.
+
+**New in v5.3.0 (Ep. 5, with BDOBB v5.3.0):** **exchange trading calendars**
+— `openbb-trading-calendar/`, an OpenBB Platform router extension in the
+`openbb-api` image, computed by pandas-market-calendars for XNYS, XLON, XTSE,
+XETR, XTKS and XHKG, 1990–2040. `/api/v1/calendar/trading` answers in EODHD's
+exchange-details v2 shape, which is what BDOBB's period expressions read for
+`trade_date`, the session anchors and business-day offsets. It is not a
+widget. `/api/v1/calendar/trading_table` is: the **Trading calendar** table,
+with an exchange dropdown and a year. See [Trading calendars](#trading-calendars).
 
 **New in v3.0.0 (Ep. 3, with BDOBB v3.0.0):** the **key status widget**
 backend — `key-maint/`, a transport-tiered service where *what you can see
@@ -91,6 +101,38 @@ IMF, ECB and friends. When you add keyed providers, they go in
 injected at container start, empty values skipped. Keep comments on their own
 lines (compose's dotenv parser treats an inline comment after an empty value
 as the value).
+
+## Trading calendars
+
+Both routes take `exchange` (a MIC: `XNYS XLON XTSE XETR XTKS XHKG`) and
+`year` (1990–2040); anything else is a 404. They sit behind the same Basic
+auth as every other path.
+
+```bash
+curl -u openbb:<password> "https://openbb.<your-tailnet>.ts.net/api/v1/calendar/trading?exchange=XNYS&year=2026"
+curl -u openbb:<password> "https://openbb.<your-tailnet>.ts.net/api/v1/calendar/trading_table?exchange=XHKG&year=2026"
+```
+
+**Local demo, no tailnet.** Build the image and run `openbb-api` on its own,
+published on loopback with its Basic-auth env:
+
+```bash
+docker compose build openbb-api
+docker run -d --name openbb-api-demo -p 127.0.0.1:6900:6900 --env-file api-auth.env \
+  openbb-local:5.3.0 openbb-api --host 0.0.0.0 --port 6900
+curl -u openbb:<password> "http://127.0.0.1:6900/api/v1/calendar/trading?exchange=XNYS&year=2026"
+docker rm -f openbb-api-demo      # when done
+```
+
+`--host 0.0.0.0` is inside the container, which a published port needs.
+`-p 127.0.0.1:6900:6900` keeps it off your LAN. OpenBB's default CORS policy admits
+any origin, so BDOBB in browser mode (`http://localhost:1420`) can use
+`http://127.0.0.1:6900` as a backend; the Basic auth still guards every path.
+
+The **Trading calendar** widget's `year` default is set once, from the year
+the API process started — a container that keeps running across New Year
+shows last year's default until it is restarted, though the `year` param can
+always be changed in the widget itself.
 
 ## Notes
 
