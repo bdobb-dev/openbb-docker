@@ -19,8 +19,9 @@ from later chapters is.
 | v9.0.0 | Ep. 9 — The Tape | EODHD provider extension + live-grid streaming service |
 | v10.0.0 | Ep. 10 — The Cache | kdb+ read-through cache (`provider="kdb"`) + tick recording and a unified chart in `live-grid` |
 | v10.1.0 | Ep. 10 — The Cache | the kdb-line follow-ons: tick-log durability, the kdb-ws demo chart, per-bar vwap, the `subscriptions` and `kdb_ticks` widgets; the Ep. 9 and Ep. 10 example dashboards served at each backend's `/apps.json` |
+| v10.1.1 | Ep. 10 — The Cache | point release: every `live_grid` column declares a width, so bdobb can lock the grid's layout instead of re-flowing its columns on every tick |
 
-## What you get (this release: v10.1.0)
+## What you get (this release: v10.1.1)
 
 Eight services across two tailnet nodes, zero exposed ports. The backbone,
 unchanged since Ep. 1:

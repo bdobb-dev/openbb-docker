@@ -14,7 +14,7 @@ keep meaning what they meant when cut.
 | Episode | Covers | Article pins |
 |---|---|---|
 | **9** | EODHD mapped onto the FMP data surface, via REST API calls — the full `openbb-eodhd` parity package (52 fetchers, extension 9.x line) | **v9.1.0** (to cut) |
-| **10** | Websockets, kdb and caching — live-grid service + `live_grid`/`live_chart` (plain streaming candles), kdb cache, `/series`, tick recorder | **v10.1.0** |
+| **10** | Websockets, kdb and caching — live-grid service + `live_grid`/`live_chart` (plain streaming candles), kdb cache, `/series`, tick recorder | **v10.1.1** |
 | **11** | Delta Lake: daily storage, durable ticks, and the read-through cache that minimizes API calls (the fundamentals L2 tier rebuilt on Delta Lake) | **v11.2.0** (to cut) |
 | **12** | Charting/TA tool family + rita-proposed levels | future |
 
@@ -42,6 +42,12 @@ as ep 9 / ep 10 / ep 12 respectively.
   openbb-kdb and kdb-store are 10.1.0. The Ep. 11 store that line also
   carried (MinIO, ArcticDB, eod-dump, stores-explorer, stores-mcp, tick-lab)
   is removed: no ArcticDB services in chapter 10.
+- **v10.1.1** (cut 2026-09-15, branch `release/v10.1.x`): `v10.1.0` + one
+  manifest fix, `f87018a`: every `live_grid` column declares a width (main's
+  widths from `0451153` and `976fafd`). bdobb switches a table to fixed
+  layout only when every visible column is sized, and v10.1.0 sized one, so
+  the grid re-solved its column widths on every tick and visibly stuttered.
+  No code or package version changes.
 - **v11.2.0**: the Delta Lake replacement of the ArcticDB/MinIO store —
   eod-dump flushing to Delta Lake (`a061853`), daily storage, and the
   fundamentals read-through L2 rebuilt on delta-rs (design:
