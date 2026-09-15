@@ -252,12 +252,40 @@ def delta_describe(library: str, symbol: str) -> dict:
     }
 
 
+def _iso_ms(timestamp: str) -> str:
+    """Epoch-millisecond text (what delta-rs's history carries) as ISO UTC.
+
+    Millisecond precision on purpose: the string is what a client sends back
+    as `as_of`, and a commit's own instant must resolve to that commit. Text
+    that is not all digits is left alone -- a test fake, or a future delta-rs
+    that formats for us.
+    """
+    if not timestamp.isdigit():
+        return timestamp
+    from datetime import datetime, timezone
+
+    ms = int(timestamp)
+    dt = datetime.fromtimestamp(ms // 1000, tz=timezone.utc)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{ms % 1000:03d}Z"
+
+
 def delta_history(library: str, symbol: str) -> list[dict]:
-    """Delta versions for a symbol, newest first -- the time-travel choices."""
+    """Delta versions for a symbol, newest first -- the time-travel choices.
+
+    A day-keyed symbol answers the union of its day tables' commits. Version
+    numbers are per table and do not line up across days, so a client that
+    spans tables travels by timestamp; the number is kept for single tables.
+    """
     from openbb_deltalake import describe as D
 
-    store, _ = _require_symbol(library, symbol)
-    return _bounded(D.history, store, symbol)
+    store, raw = _require_symbol(library, symbol)
+    entries = []
+    for key in daykeys.day_keys(raw, symbol):
+        entries.extend(
+            {"version": e["version"], "timestamp": _iso_ms(e["timestamp"])}
+            for e in _bounded(D.history, store, key)
+        )
+    return sorted(entries, key=lambda e: (e["timestamp"], e["version"]), reverse=True)
 
 
 def _committed_by(store, key: str, as_of) -> bool:

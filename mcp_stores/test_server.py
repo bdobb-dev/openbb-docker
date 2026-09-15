@@ -312,6 +312,22 @@ def test_delta_history_and_as_of_return_superseded_data(delta_store):
     assert server.delta_read("ticks", "AAPL", as_of="0")["rows"][-1]["bid"] == 5.0
 
 
+def test_delta_history_formats_timestamps_as_iso_utc_milliseconds(delta_store):
+    entries = server.delta_history("ticks", "AAPL")
+    ts = entries[0]["timestamp"]
+    assert ts.endswith("Z") and "T" in ts and len(ts) == len("2026-09-14T12:38:15.256Z")
+    # The formatted instant travels back to exactly its own commit.
+    assert server.delta_read("ticks", "AAPL", as_of=ts)["rows"][-1]["bid"] == 5.0
+
+
+def test_delta_history_of_a_base_unions_the_days_newest_first(delta_store):
+    entries = server.delta_history("ticks_live", "AAPL")
+    assert len(entries) == 3
+    stamps = [e["timestamp"] for e in entries]
+    assert stamps == sorted(stamps, reverse=True)
+    assert {e["version"] for e in entries} == {0}
+
+
 # ---------- finding 1: credential scrubbing ----------
 
 def test_scrub_redacts_access_and_secret_params():
