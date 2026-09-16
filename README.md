@@ -192,6 +192,13 @@ it from the public repo at the `v8.0.0` tag; the only setup is
 settings). In BDOBB, add a News card and set its **RSS Aggregator Server**
 to the Serve address.
 
+**The service is opt-in.** `docker compose up -d` does not start it; use
+`docker compose --profile feeds up -d` (or set `COMPOSE_PROFILES=feeds`) when
+you want the stack to run the feed pool itself. The reference deployment runs
+the feed server as its own compose project instead, so the stack must not
+start a second one by default. Serve keeps its `:8088` route either way, so
+that port answers 502 while the service is down.
+
 *Upgrading from the token-era ticker* (a stack that ran rss-ticker with
 users and keys):
 

@@ -517,6 +517,12 @@ services:
     build: https://github.com/artcashin/rss-feedhandler.git#v8.0.0
     image: rss-feedhandler:8.0.0
     container_name: openbb-rss-ticker
+    # Opt-in: this service only starts with `--profile feeds` (or
+    # COMPOSE_PROFILES=feeds). The reference deployment runs the feed server
+    # as its own compose project on the NAS, so the stack must not start a
+    # second one by default. Serve keeps its :8088 route; with the service
+    # down that port answers 502 rather than silently pointing elsewhere.
+    profiles: ["feeds"]
     restart: unless-stopped
     networks:
       - openbb-internal
