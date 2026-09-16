@@ -66,6 +66,7 @@ the previous file; 0 disables).
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import logging
 import os
@@ -163,7 +164,11 @@ def _get_json(url: str, timeout: int = 1800, tries: int = 3):
             if e.code == 404:
                 raise NotFound(f"HTTP 404: unknown symbol or no coverage") from e
             raise RuntimeError(f"HTTP {e.code}: {body!r}") from e
-        except (TimeoutError, OSError) as e:
+        except (TimeoutError, OSError, http.client.HTTPException) as e:
+            # IncompleteRead is an HTTPException, not an OSError: a big payload
+            # truncated mid-stream (ORCL 72 MB, PLTR 18 MB on 2026-09-16).
+            # Retry it like a timeout, and on the last attempt raise
+            # RuntimeError so fetch_span halves the span instead of failing.
             if attempt < tries:
                 time.sleep(5 * attempt)
                 continue
