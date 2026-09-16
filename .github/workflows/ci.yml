@@ -105,3 +105,32 @@ jobs:
           assert data["OperatingMIC"] == "XNYS", data
           assert data["ExchangeHolidays"]["2026-07-03"]["Type"] == "Official", data
           print("XNYS 2026 served")'
+      - name: Fundamentals extension tests (inside the image)
+        run: |
+          # As for the trading calendar: in the image, so the router tests boot
+          # the real app with the stack's own openbb-core. SEC is a stand-in in
+          # tests/conftest.py; nothing here touches the network.
+          docker run --rm -v "$PWD:/repo" -w /repo/openbb-fundamentals \
+            -e PIP_CONSTRAINT=/repo/extension-constraints.txt \
+            --entrypoint sh openbb-local:ci \
+            -c 'pip install -q --root-user-action=ignore -e ".[dev]" && pytest -q'
+      - name: The fiscal year end route answers, behind auth, and is not a widget
+        run: |
+          # The CI container has no SEC_USER_AGENT, so the route must answer 404
+          # without asking SEC. That proves it is mounted and guarded, and keeps
+          # CI off the network. The live SEC answer is checked by hand (README,
+          # "Fiscal year end").
+          probe() { docker exec api curl -s -o /dev/null -w '%{http_code}' "$@"; }
+          ep="http://127.0.0.1:6900/api/v1/fundamentals/fiscal_year_end?symbol=AAPL"
+          test "$(probe "$ep")" = "401"
+          test "$(probe -u ci:ci-secret "$ep")" = "404"
+          docker exec api curl -sS -u ci:ci-secret "$ep" | python3 -c '
+          import json, sys
+          body = json.load(sys.stdin)
+          assert body == {"detail": "No fiscal year end for AAPL"}, body
+          print("fiscal_year_end: 404 without SEC_USER_AGENT")'
+          docker exec api curl -fsS -u ci:ci-secret http://127.0.0.1:6900/widgets.json | python3 -c '
+          import json, sys
+          widgets = json.load(sys.stdin)
+          assert not any(w.get("endpoint") == "/api/v1/fundamentals/fiscal_year_end" for w in widgets.values())
+          print("fiscal_year_end excluded from widgets.json")'

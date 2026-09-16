@@ -220,6 +220,20 @@ RUN python -c "import ast; ast.parse(open('/usr/local/lib/python3.12/site-packag
 COPY openbb-trading-calendar /opt/openbb-trading-calendar
 RUN pip install /opt/openbb-trading-calendar
 
+# Fiscal year end per ticker (v5.4.0, Ep. 5, with BDOBB v5.4.0): an OpenBB
+# router extension serving /api/v1/fundamentals/fiscal_year_end, the month
+# BDOBB resolves fiscal quarters and years with for a single-ticker widget. SEC
+# EDGAR only, so it knows SEC filers only; it needs SEC_USER_AGENT (see
+# credentials.env.example) and answers 404 for every symbol without it. See
+# openbb-fundamentals/.
+#
+# Same placement as the calendar extension, for the same reasons: after the
+# rest_api.py patches so editing it rebuilds only these last layers, before
+# openbb.build() so the static package includes it (obb.fundamentals). No new
+# dependency: it reaches SEC with the standard library's urllib.
+COPY openbb-fundamentals /opt/openbb-fundamentals
+RUN pip install /opt/openbb-fundamentals
+
 # Pre-compile the static package so the first run is instant, and verify the
 # platform registers at build time.
 RUN python -c "import openbb; openbb.build(); from openbb import obb; \

@@ -15,8 +15,9 @@ from later chapters is.
 | v2.0.0 | Ep. 2 — The Borrowed Terminal | HTTP Basic auth on the API, Tailscale Funnel (port 443 only) |
 | v3.0.0 | Ep. 3 — (with BDOBB v3.0.0) | key-maint: the transport-tiered key status widget backend |
 | v5.3.0 | Ep. 5 — (with BDOBB v5.3.0) | openbb-trading-calendar: exchange trading calendars (pandas-market-calendars) and the Trading calendar widget |
+| v5.4.0 | Ep. 5 — (with BDOBB v5.4.0) | openbb-fundamentals: fiscal year end per ticker, from SEC EDGAR only, so for US-listed SEC filers only |
 
-## What you get (this release: v5.3.0)
+## What you get (this release: v5.4.0)
 
 Two containers, one tailnet node, zero exposed ports:
 
@@ -34,6 +35,15 @@ The services sit on a private Docker bridge, so other processes **on this Docker
 host** can reach them directly — but they meet the same HTTP Basic auth as
 everyone else, on every path. Nothing on your LAN can reach them at all, and
 key-maint's admin surface is a unix socket that never touches the bridge.
+
+**New in v5.4.0 (Ep. 5, with BDOBB v5.4.0):** **fiscal year end per ticker**
+— `openbb-fundamentals/`, a second router extension in the `openbb-api` image.
+`/api/v1/fundamentals/fiscal_year_end?symbol=AAPL` answers
+`{"fiscalYearEnd": "September"}`, which BDOBB uses to resolve fiscal quarters
+and years (`FQ0`, `FY-1`) for a single-ticker widget. It is **SEC-only**, so it
+knows US-listed SEC filers only and answers 404 for anything else. It needs
+`SEC_USER_AGENT` in `credentials.env`. It is not a widget. See
+[Fiscal year end](#fiscal-year-end).
 
 **New in v5.3.0 (Ep. 5, with BDOBB v5.3.0):** **exchange trading calendars**
 — `openbb-trading-calendar/`, an OpenBB Platform router extension in the
@@ -119,7 +129,7 @@ published on loopback with its Basic-auth env:
 ```bash
 docker compose build openbb-api
 docker run -d --name openbb-api-demo -p 127.0.0.1:6900:6900 --env-file api-auth.env \
-  openbb-local:5.3.0 openbb-api --host 0.0.0.0 --port 6900
+  openbb-local:5.4.0 openbb-api --host 0.0.0.0 --port 6900
 curl -u openbb:<password> "http://127.0.0.1:6900/api/v1/calendar/trading?exchange=XNYS&year=2026"
 docker rm -f openbb-api-demo      # when done
 ```
@@ -133,6 +143,52 @@ The **Trading calendar** widget's `year` default is set once, from the year
 the API process started — a container that keeps running across New Year
 shows last year's default until it is restarted, though the `year` param can
 always be changed in the widget itself.
+
+## Fiscal year end
+
+`GET /api/v1/fundamentals/fiscal_year_end?symbol=<TICKER>` answers the month a
+company's fiscal year ends in: `{"fiscalYearEnd": "September"}`. BDOBB reads
+it; it is not in widgets.json. It sits behind the same Basic auth as every
+other path.
+
+- **SEC only, so US filers only.** It knows the tickers in SEC's
+  `company_tickers.json`: US-listed issuers, including ADRs and foreign
+  companies listed in the US. Only a `.US` suffix is dropped (`AAPL.US` is
+  looked up as `AAPL`); any other exchange suffix is a 404, because a non-US
+  listing's root can belong to an unrelated US ticker on SEC (`VOW3.XETRA`,
+  `7203.T`, `TSCO.LSE` — Tesco, not the unrelated US ticker `TSCO` — all
+  404). Case does not matter. Class shares take SEC's dash: `BRK-B`, not
+  `BRK.B`.
+- **`SEC_USER_AGENT` is required.** SEC's fair-access policy refuses requests
+  that do not name a contact. Set it in `credentials.env` as
+  `Your Name you@example.com`, without quotes. Unset or empty, the route
+  answers 404 for every symbol and never calls SEC.
+- **Answers.** 200 with the English month name. 404
+  `No fiscal year end for <TICKER>` when SEC does not know the ticker or has
+  no usable year end. 502 when SEC cannot be reached or refuses. Answers and
+  404s are kept in memory until the container restarts, and so is SEC's
+  ticker-to-CIK map itself: a ticker that starts trading or is renamed after
+  the container starts still answers 404 until the next restart. A 502 is
+  not kept, so the next request asks again.
+- **52/53-week years.** SEC records the year's actual last day. A day in the
+  first week of a month counts as the month before, so Deere and Broadcom,
+  whose years end in late October or early November and which SEC records as
+  `1101`, get October.
+
+```bash
+curl -u openbb:<password> "https://openbb.<your-tailnet>.ts.net/api/v1/fundamentals/fiscal_year_end?symbol=AAPL"
+```
+
+**Local demo, no tailnet.** As for trading calendars, with `credentials.env`
+as well, for `SEC_USER_AGENT`:
+
+```bash
+docker compose build openbb-api
+docker run -d --name openbb-api-demo -p 127.0.0.1:6900:6900 --env-file api-auth.env --env-file credentials.env \
+  openbb-local:5.4.0 openbb-api --host 0.0.0.0 --port 6900
+curl -u openbb:<password> "http://127.0.0.1:6900/api/v1/fundamentals/fiscal_year_end?symbol=AAPL"
+docker rm -f openbb-api-demo      # when done
+```
 
 ## Notes
 

@@ -161,6 +161,7 @@ PROVIDERS: dict[str, Provider] = {
 IGNORE: frozenset[str] = frozenset(
     {
         "TRADIER_ACCOUNT_TYPE",
+        "SEC_USER_AGENT",  # openbb-fundamentals' SEC contact (v5.4.0), not a key
         "KDB_CONTAINER",
         "KDB_HOST",
         "S3_CONTAINER",

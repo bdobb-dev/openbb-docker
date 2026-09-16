@@ -1,0 +1,35 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openbb-fundamentals"
+version = "5.4.0"
+description = "OpenBB Platform router serving company fundamentals from SEC EDGAR"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+# SEC is reached with the standard library's urllib, so openbb-core is the only
+# dependency, and it is already in the image; naming it keeps the import honest
+# for anyone installing the package elsewhere.
+dependencies = [
+    "openbb-core",
+]
+
+[project.optional-dependencies]
+# httpx is FastAPI TestClient's transport; the image does not ship it.
+dev = ["pytest", "httpx"]
+
+# openbb_core's RouterLoader mounts every router in this group at
+# /<entry-point name> under the API prefix, so the name `fundamentals` IS the
+# /api/v1/fundamentals path segment.
+[project.entry-points.openbb_core_extension]
+fundamentals = "openbb_fundamentals.router:router"
+
+[tool.setuptools]
+packages = ["openbb_fundamentals"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
