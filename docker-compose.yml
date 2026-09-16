@@ -36,10 +36,10 @@ services:
       - TS_HOSTNAME=openbb
       # MANDATORY. The image defaults to userspace networking, where tailscaled
       # terminates inbound tailnet connections itself and forwards them to
-      # 127.0.0.1 — which would make the API reachable AROUND Serve at
-      # <node-ip>:6900. Kernel mode (this, plus the tun device and NET_ADMIN
-      # below) makes the tailnet IP a real interface, so the 127.0.0.1 socket
-      # below is genuinely unreachable from other peers.
+      # 127.0.0.1 — this container's OWN loopback, where nothing listens: the
+      # services are on the bridge, not in this namespace. Kernel mode (this,
+      # plus the tun device and NET_ADMIN below) gives the node a real interface
+      # and lets Serve proxy to each service by name over openbb-internal.
       - TS_USERSPACE=false
       - TS_STATE_DIR=/var/lib/tailscale
       - TS_SERVE_CONFIG=/config/serve.json
@@ -62,7 +62,9 @@ services:
     networks:
       - openbb-internal
 
-  # OpenBB Platform REST API. Binds 127.0.0.1 so only Serve can reach it.
+  # OpenBB Platform REST API. On the openbb-internal bridge with no host port
+  # published (see the Bridge migration note on its command below), so from
+  # the tailnet only Serve reaches it.
   openbb-api:
     build: .
     # 4.7.2 = the skill-built image (OpenBB 4.7.2, openbb-eodhd 9.5.0 with the
