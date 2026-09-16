@@ -19,7 +19,9 @@ rows carry only {date, symbol} — no amount or pay/record dates — so the
 widget would be an empty shell. Revisit if EODHD enriches the rows.
 """
 
+import warnings
 from datetime import date as dateType
+from datetime import timedelta
 from typing import Any
 
 from openbb_core.app.model.abstract.error import OpenBBError
@@ -39,6 +41,7 @@ from openbb_core.provider.standard_models.economic_calendar import (
 from openbb_core.provider.utils.errors import EmptyDataError, UnauthorizedError
 from pydantic import Field
 
+from openbb_eodhd.economic_taxonomy import classify
 from openbb_eodhd.models._client import get_client, raise_sdk_error
 
 
@@ -60,6 +63,20 @@ def _datetime(v):
 
 def _iso(v: dateType | None) -> str | None:
     return v.isoformat() if v else None
+
+
+def _row_date(row: dict) -> str:
+    """Civil date (YYYY-MM-DD) an /economic-events row falls on.
+
+    EODHD's `date` field is `"YYYY-MM-DD HH:MM:SS"`; the civil date is
+    always its first 10 characters, so this needs no parsing.
+    """
+    return str(row.get("date") or "")[:10]
+
+
+def _prev_day(iso_date: str) -> str:
+    """The civil date before `iso_date` (`YYYY-MM-DD`)."""
+    return (_date(iso_date) - timedelta(days=1)).isoformat()
 
 
 def _unwrap(resp: Any, key: str, context: str) -> list[dict]:
@@ -324,10 +341,13 @@ class EODHDEconomicCalendarQueryParams(EconomicCalendarQueryParams):
     comparison: str | None = Field(
         default=None, description="Filter by comparison basis: mom, qoq or yoy."
     )
-    # ponytail: single page capped at the API max (1000); add offset paging if
-    # a real query ever needs more than 1000 events.
-    limit: int = Field(
-        default=1000, description="Maximum number of events (API cap 1000)."
+    limit: int | None = Field(
+        default=None,
+        description=(
+            "Maximum number of events to return; None means every event in "
+            "the range. EODHD answers at most 1,000 per request, so the "
+            "range is fetched in date windows and merged."
+        ),
     )
 
 
@@ -353,6 +373,12 @@ class EODHDEconomicCalendarFetcher(
 ):
     """EODHD economic events calendar."""
 
+    # A pathological range (or an EODHD change that stops the walk from ever
+    # shrinking) must not spin forever; 20 requests covers 20,000 rows at the
+    # API's page cap, far past any real three-month window.
+    _MAX_REQUESTS = 20
+    _PAGE_LIMIT = 1000
+
     @staticmethod
     def transform_query(params: dict[str, Any]) -> EODHDEconomicCalendarQueryParams:
         return EODHDEconomicCalendarQueryParams(**params)
@@ -362,35 +388,108 @@ class EODHDEconomicCalendarFetcher(
         from asyncio import to_thread
 
         def _sync():
-            resp = _fetch(
-                credentials,
-                lambda c: c.get_economic_events_data(
-                    date_from=_iso(query.start_date),
-                    date_to=_iso(query.end_date),
-                    country=query.country,
-                    comparison=query.comparison,
-                    limit=query.limit,
-                ),
-                "economic calendar",
-            )
-            if isinstance(resp, dict):  # /economic-events answers a bare list
-                raise UnauthorizedError(
-                    f"EODHD (economic calendar): {resp.get('message') or resp.get('error') or resp}"
-                )
-            if not resp:
-                raise EmptyDataError("EODHD returned no economic calendar data.")
-            return resp
+            return EODHDEconomicCalendarFetcher._fetch_windowed(query, credentials)
 
         return await to_thread(_sync)
+
+    @staticmethod
+    def _fetch_windowed(query, credentials) -> list[dict]:
+        """Fetch every row in the range, windowing past EODHD's 1,000-row cap.
+
+        EODHD returns each page sorted by date descending and silently drops
+        anything past `limit` (max 1,000). A full page may therefore be
+        truncated, so only the rows strictly newer than the page's oldest
+        date are trustworthy; the oldest date is re-requested whole as the
+        next window's `date_to`. That re-fetch is what makes the join exact
+        without guessing at `offset` or de-duplicating by row identity — the
+        boundary day is simply never taken from the truncated page.
+
+        The one exception is a full page that is entirely one civil date:
+        that single day has over 1,000 events, so it is paged by `offset`
+        (verified against the live API: `offset` returns the next 1,000 with
+        no overlap) until a short page closes it out, and only then does the
+        date window step back a day.
+        """
+        date_from = _iso(query.start_date)
+        cur_to = _iso(query.end_date)
+        collected: list[dict] = []
+        offset = 0
+        paging_day: str | None = None  # set while offset-paging a single day
+        requests = 0
+
+        while True:
+            if requests >= EODHDEconomicCalendarFetcher._MAX_REQUESTS:
+                warnings.warn(
+                    "EODHD economic calendar: stopped after "
+                    f"{EODHDEconomicCalendarFetcher._MAX_REQUESTS} requests; "
+                    "the requested range may be incompletely fetched.",
+                    stacklevel=2,
+                )
+                break
+            requests += 1
+
+            def _call(c, _to=cur_to, _offset=offset):
+                call_kwargs = {
+                    "date_from": date_from,
+                    "date_to": _to,
+                    "country": query.country,
+                    "comparison": query.comparison,
+                    "limit": EODHDEconomicCalendarFetcher._PAGE_LIMIT,
+                }
+                if _offset:
+                    call_kwargs["offset"] = _offset
+                return c.get_economic_events_data(**call_kwargs)
+
+            page = _fetch(credentials, _call, "economic calendar")
+            if isinstance(page, dict):  # /economic-events answers a bare list
+                raise UnauthorizedError(
+                    f"EODHD (economic calendar): {page.get('message') or page.get('error') or page}"
+                )
+
+            if not page:
+                if not collected:
+                    raise EmptyDataError("EODHD returned no economic calendar data.")
+                break
+
+            if len(page) < EODHDEconomicCalendarFetcher._PAGE_LIMIT:
+                collected.extend(page)
+                if paging_day is None:
+                    break  # short page: the window is fully covered
+                # the single day just finished; the range may still hold
+                # earlier days, so keep walking from the day before it
+                cur_to = _prev_day(paging_day)
+                offset = 0
+                paging_day = None
+                continue
+
+            earliest, latest = _row_date(page[-1]), _row_date(page[0])
+            if earliest == latest:  # over 1,000 events on one civil date
+                collected.extend(page)
+                cur_to = earliest
+                offset += EODHDEconomicCalendarFetcher._PAGE_LIMIT
+                paging_day = earliest
+                continue
+
+            collected.extend(r for r in page if _row_date(r) > earliest)
+            cur_to = earliest
+            offset = 0
+            paging_day = None
+
+        collected.sort(key=lambda r: str(r.get("date") or ""))  # ascending
+        return collected[: query.limit] if query.limit else collected
 
     @staticmethod
     def transform_data(query, data: list[dict], **kwargs) -> list[EODHDEconomicCalendarData]:  # pylint: disable=unused-argument
         rows = []
         for it in data:
+            event = it.get("type")
+            source, category = classify(event)
             rows.append(EODHDEconomicCalendarData.model_validate({
                 "date": _datetime(it.get("date")),
                 "country": it.get("country"),
-                "event": it.get("type"),
+                "event": event,
+                "source": source,
+                "category": category,
                 "consensus": it.get("estimate"),
                 "previous": it.get("previous"),
                 "actual": it.get("actual"),

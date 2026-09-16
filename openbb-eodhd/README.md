@@ -45,6 +45,15 @@ predates the SDK's typed errors, request timeouts, and the fundamentals
 - Fundamentals require a paid EODHD plan for most tickers (the `demo` token
   covers `AAPL.US`).
 
+### Economic calendar
+- `obb.economy.calendar(..., provider="eodhd")` rows carry `source` (publisher,
+  e.g. "BLS") and `category` (release, e.g. "Producer Prices"), resolved from
+  a static three-level taxonomy of EODHD's event names; unrecognized names
+  resolve to `None`.
+- EODHD's `/economic-events` caps every request at 1,000 rows; a range with
+  more events than that is fetched in successive date windows and merged, so
+  a busy three-month window returns every row instead of being cut off.
+
 ## Symbols
 
 EODHD symbols are `SYMBOL.EXCHANGE` (e.g. `AAPL.US`, `VOD.LSE`). Pass a bare
