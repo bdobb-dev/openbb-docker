@@ -84,7 +84,7 @@ def _build_day_ticks():
 # ---------------------------------------------------------------------------
 
 def test_policy_constant():
-    assert BAR_INCLUSION_POLICY == "BAR_INCL_V2"
+    assert BAR_INCLUSION_POLICY == "BAR_INCL_V3"
 
 
 def test_ineligible_flags_built_from_decode_table():
@@ -522,3 +522,27 @@ def test_reconcile_tranche_unadjusts_split_adjusted_vendor_volume():
     assert reconcile_tranche(item, ours, theirs, splits_df=later_split).status == "PASS"
     same_day = later_split.assign(date=TRADE_DATE)  # the split session is already post-split
     assert reconcile_tranche(item, ours, theirs, splits_df=same_day).status == "DIVERGENT"
+
+
+def test_aggregate_bars_v3_collapses_repeated_block_reports_in_volume_only():
+    # L 2026-09-03: one 387,477-share block on venue D re-reported three times,
+    # none cancelled; the vendor's EOD volume counts it once.
+    block = dict(price=110.04, shares=387_477, sl="  TB")
+    payload = [
+        _tick(1, 10, 0, 0, 110.00, 100),
+        _tick(2, 16, 0, 9, block["price"], block["shares"], sl=block["sl"]),
+        _tick(3, 16, 51, 39, block["price"], block["shares"], sl=block["sl"]),
+        _tick(4, 16, 52, 54, block["price"], block["shares"], sl=block["sl"]),
+        _tick(5, 11, 0, 0, 110.00, 9_999),   # below the block threshold...
+        _tick(6, 11, 5, 0, 110.00, 9_999),   # ...so an identical pair still counts twice
+    ]
+    df = parse_tick_payload(
+        payload, capture_id="cap_x", listing_id="lst_a", instrument_id="ins_a", observed_at=OBS
+    )
+    bars, stats = aggregate_bars(df, interval="1d", return_stats=True)
+    row = bars.iloc[0]
+    assert stats.deduped_block_rows == 2
+    assert row["volume"] == 100 + block["shares"] + 9_999 + 9_999
+    # prices are never deduped, and the block's own price still can't set one
+    # (TB = extended hours + average price, both price-ineligible)
+    assert row["high"] == 110.00 and row["close"] == 110.00

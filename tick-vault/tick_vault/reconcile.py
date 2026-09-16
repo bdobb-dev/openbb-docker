@@ -67,6 +67,13 @@ which is how vendor EOD volume is defined. Intraday (`1m`/`5m`) bucket
 volume sums only the volume-eligible prints inside the session window,
 so intraday buckets do not add up to the daily volume.
 
+V3 additionally collapses REPEATED BLOCK REPORTS in that sum: prints of
+`BLOCK_DEDUP_MIN_SIZE` shares or more that are identical in
+`_BLOCK_KEY` (date, price, size, venue, conditions) count once, earliest
+kept. This is a heuristic about what a repeat means - silver keeps every
+report, `BarStats.deduped_block_rows` says how many the sum dropped, and
+prices are never deduped.
+
 Bars are analytics output, not the bitemporal system of record: OHLCV
 values are plain Python floats/ints even when the input frame carries
 `Decimal` price/size columns (as real silver rows do) - precision loss at
@@ -93,7 +100,16 @@ import pandas as pd
 from tick_vault.ids import new_id
 from tick_vault.sl_conditions import _TABLE as _SL_TABLE, decode_sl
 
-BAR_INCLUSION_POLICY = "BAR_INCL_V2"
+BAR_INCLUSION_POLICY = "BAR_INCL_V3"
+
+# Block dedup (V3): the same large block re-reported minutes apart, every copy
+# uncancelled in the tick feed (L 2026-09-03: 387,477 sh @ 110.04 on venue D at
+# 16:00:09, 16:51:39 and 16:52:54). The vendor's EOD volume counts it once.
+# Only prints at or above this size are collapsed - small identical trades are
+# ordinary. Measured on the calibration week: 36 of 45 over-count days fixed,
+# 2 of 300 passing days broken.
+BLOCK_DEDUP_MIN_SIZE = 10_000
+_BLOCK_KEY = ["trade_date", "price", "size", "venue_code_raw", "sale_condition_raw"]
 
 _NY_TZ = ZoneInfo("America/New_York")
 
@@ -156,8 +172,10 @@ class BarStats:
     show up in the bars frame itself. `null_size_rows` counts
     contributing rows (post session/eligibility filtering) whose `size`
     was `None`/null - those rows contribute 0 to `volume` rather than
-    being silently skipped."""
+    being silently skipped. `deduped_block_rows` counts repeated block
+    reports the volume sum collapsed (see `BLOCK_DEDUP_MIN_SIZE`)."""
     null_size_rows: int = 0
+    deduped_block_rows: int = 0
 
 
 def aggregate_bars(
@@ -247,6 +265,15 @@ def aggregate_bars(
     g = price_rows.groupby(["trade_date", "_bucket"], sort=True)["_px"]
     bars = pd.DataFrame({"open": g.first(), "high": g.max(), "low": g.min(), "close": g.last()})
 
+    # Block dedup: the same large block re-reported minutes apart counts once
+    # in the volume sum (prices above are already computed and untouched).
+    vol_rows = vol_rows.sort_values(["trade_ts_ms", "session_seq"])
+    big = vol_rows[vol_rows["size"].fillna(0).astype(float) >= BLOCK_DEDUP_MIN_SIZE]
+    repeats = big.index[big.duplicated(subset=_BLOCK_KEY, keep="first")]
+    deduped_block_rows = len(repeats)
+    if deduped_block_rows:
+        vol_rows = vol_rows.drop(index=repeats)
+
     # Null-size accounting: a None size contributes 0 to volume rather
     # than being dropped by pandas' default skipna sum.
     sizes = vol_rows["size"]
@@ -261,7 +288,9 @@ def aggregate_bars(
 
     bars = bars.reset_index().rename(columns={"_bucket": "bucket_start"})[BAR_COLUMNS]
     if return_stats:
-        return bars, BarStats(null_size_rows=null_size_rows)
+        return bars, BarStats(
+            null_size_rows=null_size_rows, deduped_block_rows=deduped_block_rows
+        )
     return bars
 
 
