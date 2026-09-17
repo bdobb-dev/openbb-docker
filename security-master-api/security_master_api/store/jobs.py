@@ -32,11 +32,15 @@ def _now() -> datetime:
 
 
 def _events_table(settings: Settings, where: str, params: list) -> list[dict]:
-    # `event_id` breaks the tie: two workers appending at once can mint the same `seq`, and an
-    # arbitrary order between them would let BOTH of them read themselves as the first
-    # `fetching` event and both believe they hold the claim.
+    # Two workers appending at once can mint the same `seq`, and an arbitrary order between
+    # the tied rows would let BOTH read themselves as the first `fetching` event and both
+    # believe they hold the claim. `at` breaks the tie by what actually happened first, and
+    # `event_id` only settles rows written in the same microsecond - a random uuid must never
+    # be what decides which of two events is the later one.
     with open_session(settings, parse_context(_SNAPSHOT), ["ops.job_events"]) as s:
-        return s.run(f"SELECT * FROM ops.job_events WHERE {where} ORDER BY seq, event_id",
+        # `at` is quoted: bare, DuckDB reads it as the AT keyword and the ORDER BY fails to
+        # parse.
+        return s.run(f'SELECT * FROM ops.job_events WHERE {where} ORDER BY seq, "at", event_id',
                      params).to_pylist()
 
 
@@ -62,6 +66,9 @@ def job(settings: Settings, job_id: str) -> dict:
     evs = events(settings, job_id)
     latest = evs[-1] if evs else None
     row = rows[0]
+    # The EVENT log decides the state, not the job row: an event appended by any writer -
+    # including one that never touched `ops.jobs` - is still something that happened to this
+    # job. The row carries the summary and is the state of record when no event exists yet.
     return {
         "job_id": row["job_id"], "kind": row["kind"], "fingerprint": row["fingerprint"],
         "state": latest["stage"] if latest else row["state"],
@@ -110,12 +117,26 @@ def append_event(settings: Settings, job_id: str, stage: str, detail: dict | Non
     if stage not in ALL_STAGES:
         raise DomainError("QUERY_REJECTED", f"unknown stage {stage}", {"stage": stage})
     seq = len(_events_table(settings, "job_id = ?", [job_id]))
+    now = _now()
+    encoded = json.dumps(detail or {}, sort_keys=True, default=str)
     row = {"event_id": "ev_" + uuid.uuid4().hex[:12], "job_id": job_id, "seq": seq,
-           "stage": stage, "at": _now(),
-           "detail": json.dumps(detail or {}, sort_keys=True, default=str),
-           "worker_id": worker_id}
+           "stage": stage, "at": now, "detail": encoded, "worker_id": worker_id}
     append(settings, "ops.job_events", [row])
+    _record(settings, job_id, stage, encoded, now)
     return {**{k: iso_utc(v) for k, v in row.items()}, "detail": detail or {}}
+
+
+def _record(settings: Settings, job_id: str, stage: str, encoded: str, now: datetime) -> None:
+    """Carry the job's own row forward, so `ops.jobs` states what happened without replaying
+    the event log. A TERMINAL stage's detail is the job's summary - how it ended is the only
+    detail that answers "what came of this job"; an intermediate stage leaves it alone."""
+    rows = _jobs_table(settings, "job_id = ?", [job_id])
+    if not rows:
+        return
+    row = rows[0]
+    append(settings, "ops.jobs", [{**row, "seq": row["seq"] + 1, "state": stage,
+                                   "updated_at": now,
+                                   "summary": encoded if stage in TERMINAL else row["summary"]}])
 
 
 def claim(settings: Settings, job_id: str, worker_id: str) -> bool:

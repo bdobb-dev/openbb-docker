@@ -78,6 +78,13 @@ def test_events_stream_replays_history(client):
     assert "event: queued" in text and "event: failed" in text
 
 
+def test_an_unknown_lookup_policy_is_refused(client):
+    r = client.post(f"{V1}/resolve",
+                    json={"identifier": "AAPL", "context": {}, "lookup_policy": "fetch"})
+    assert r.status_code == 422 and r.json()["error"]["code"] == "QUERY_REJECTED"
+    assert r.json()["error"]["details"]["supported"] == ["cache_only", "review"]
+
+
 def test_read_through_lookup_reports_review_required(client):
     r = client.post(f"{V1}/resolve",
                     json={"identifier": "ZZZZ", "context": {}, "lookup_policy": "review"})

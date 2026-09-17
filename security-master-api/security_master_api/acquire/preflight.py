@@ -65,11 +65,14 @@ def _missing_ranges(settings: Settings, ctx: Context, listing_id: str, start: da
                     policy: str) -> list[dict]:
     """The spans of [start, end] a fetch would have to cover for one listing.
 
-    A WEEKDAY the store has no row for opens a span; a day the store DOES hold closes it. A
-    weekend does neither: it is not missing evidence, and splitting a range across every
-    Saturday would turn one provider call into ten.
+    Under `missing_only` a WEEKDAY the store has no row for opens a span; a day the store DOES
+    hold closes it. A weekend does neither: it is not missing evidence, and splitting a range
+    across every Saturday would turn one provider call into ten.
+
+    `refresh` and `force` both re-fetch the WHOLE requested range - that is what they are for,
+    and pricing them off the gaps would quote a caller a fraction of the fetch they asked for.
     """
-    if policy == "force":
+    if policy in ("refresh", "force"):
         return [{"listing_id": listing_id, "start": start.isoformat(), "end": end.isoformat()}]
     with open_session(settings, ctx, ["gold.price_daily"]) as s:
         have = {r["market_date"] for r in s.run(
@@ -163,6 +166,10 @@ def preflight(settings: Settings, ctx: Context, request: dict) -> dict:
         for identity in identities:
             missing += _missing_ranges(settings, ctx, identity["listing_id"], start, end, policy)
         calendar, warnings = _calendar(settings, ctx, request.get("calendar_id"), start, end)
+        if policy == "force":
+            # `force` is the caller saying the calendar is not the question: it fetches the
+            # range whatever the sessions say, so a warning it cannot act on is noise.
+            warnings = []
     # One provider call per LISTING, not per range: an EOD endpoint answers a whole date span
     # for a symbol in a single request, so several gaps in one listing still cost one call.
     expected = (len({r["listing_id"] for r in missing}) if dataset == "price_daily"

@@ -32,6 +32,8 @@
     }
   ],
   "state": "cancel_pending",
-  "summary": {},
+  "summary": {
+    "requested_by": "api"
+  },
   "updated_at": "2026-09-17T00:00:00Z"
 }

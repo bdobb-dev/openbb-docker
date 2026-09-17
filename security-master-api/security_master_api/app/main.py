@@ -11,10 +11,12 @@ import time
 from pathlib import Path
 from typing import Any
 
+import anyio
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 import security_master_api
 from security_master_api.acquire.preflight import preflight, verify_token
@@ -50,6 +52,9 @@ from security_master_api.store.tables import history, latest_version, open_table
 # site-packages and the routes 500.
 HERE = Path(security_master_api.__file__).resolve().parent
 V1 = "/security-master/v1"
+# What /resolve may be asked to do when the store has no match: answer from the store alone,
+# or offer the bounded lookup for review. Anything else is a typo, not a policy.
+LOOKUP_POLICIES = ("cache_only", "review")
 
 
 class Page(BaseModel):
@@ -306,6 +311,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post(f"{V1}/resolve")
     def resolve_route(body: ResolveBody, request: Request) -> dict:
+        if body.lookup_policy is not None and body.lookup_policy not in LOOKUP_POLICIES:
+            raise DomainError("QUERY_REJECTED", f"unknown lookup_policy {body.lookup_policy!r}",
+                              {"supported": list(LOOKUP_POLICIES)})
         ctx = parse_context(body.context)
         try:
             out = run_resolve(settings, ctx, body.identifier, body.identifier_type,
@@ -412,26 +420,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return job(settings, job_id)
 
     @app.get(f"{V1}/acquisitions/{{job_id}}/events")
-    def acquisitions_events(job_id: str, replay: str = "0") -> StreamingResponse:
+    async def acquisitions_events(job_id: str, replay: str = "0") -> StreamingResponse:
         # The path MUST end in /events: that suffix is what lets auth accept the credential
         # from the query string, and an EventSource cannot send a header.
-        job(settings, job_id)
+        #
+        # ASYNC on purpose. A sync generator runs on a threadpool worker and holds it for the
+        # whole stream - up to 300 s of mostly sleeping - so a handful of open streams would
+        # starve every other request of threads. The blocking reads go to the pool one at a
+        # time; the sleeping happens on the event loop, which costs nothing.
+        await run_in_threadpool(job, settings, job_id)
         # `replay=1` starts from the first event, so a client that connects late still sees
         # the whole history; without it the stream carries only what happens from now on.
         # Either way a terminal stage ends the stream - there is nothing further to send.
-        start = 0 if replay == "1" else len(events(settings, job_id))
+        emitted: set[str] = set()
+        if replay != "1":
+            evs = await run_in_threadpool(events, settings, job_id)
+            emitted = {e["event_id"] for e in evs}
 
-        def stream():
-            seen = start
+        async def stream():
+            # Sent events are tracked by ID, never by position: a late-arriving event can sort
+            # BEFORE one already sent (same seq, earlier clock), and an index would then skip
+            # it and re-send its neighbour.
             deadline = time.monotonic() + 300
             while True:
-                evs = events(settings, job_id)
-                for event in evs[seen:]:
-                    yield f"event: {event['stage']}\ndata: {json.dumps(event)}\n\n"
-                seen = len(evs)
+                evs = await run_in_threadpool(events, settings, job_id)
+                for event in evs:
+                    if event["event_id"] not in emitted:
+                        emitted.add(event["event_id"])
+                        yield f"event: {event['stage']}\ndata: {json.dumps(event)}\n\n"
                 if (evs and evs[-1]["stage"] in TERMINAL) or time.monotonic() >= deadline:
                     return
-                time.sleep(2)
+                await anyio.sleep(2)
 
         return StreamingResponse(stream(), media_type="text/event-stream")
 

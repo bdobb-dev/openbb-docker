@@ -47,6 +47,25 @@ def test_token_rejects_modified_request_and_expiry(settings):
         verify_token(settings, out["token"], REQ)
 
 
+def test_refresh_prices_the_whole_requested_range(settings):
+    """`refresh` re-fetches what is already stored, so the gap scan is the wrong price for it."""
+    out = preflight(settings, parse_context(None), {**REQ, "policy": "refresh"})
+    assert out["missing_ranges"] == [
+        {"listing_id": "lst_apple", "start": "2026-09-01", "end": "2026-09-16"}]
+    assert out["expected_requests"] == 1
+
+
+def test_force_takes_the_whole_range_and_drops_calendar_warnings(settings):
+    req = {"dataset": "price_daily", "identifiers": ["AAPL"], "start_date": "2027-03-01",
+           "end_date": "2027-03-31", "policy": "force", "price_basis": "raw",
+           "calendar_id": "cal_tadawul"}
+    out = preflight(settings, parse_context({"mode": "known_at",
+                                             "known_at": "2027-03-09T19:00:00Z"}), req)
+    assert out["missing_ranges"] == [
+        {"listing_id": "lst_apple", "start": "2027-03-01", "end": "2027-03-31"}]
+    assert out["warnings"] == []
+
+
 def test_unresolved_identifier_is_reported_not_guessed(settings):
     with pytest.raises(DomainError) as exc:
         preflight(settings, parse_context(None), {**REQ, "identifiers": ["ZZZZ"]})
