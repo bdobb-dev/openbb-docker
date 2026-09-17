@@ -92,6 +92,23 @@ def test_market_calendar_projection_and_receipt(settings):
     assert any(d["relation"] == "silver.calendar_exceptions" for d in deps)
 
 
+def test_equity_search_matches_symbol_and_name(settings):
+    out = project(settings, parse_context(None), "EquitySearch", {"query": "MET"}, "req")
+    assert "lst_000042" in {r["listing_id"] for r in out["results"]}
+    assert [c["name"] for c in out["columns"]][:2] == ["symbol", "name"]
+
+
+def test_include_closed_drops_closed_sessions(settings):
+    # current_corrected, not known_at: under known_at a range whose every session is closed
+    # empties the projection, and an empty known_at result is NO_LOCAL_EVIDENCE by design.
+    ctx = parse_context(None)
+    params = {"calendar_id": "cal_tadawul", "start_date": "2027-03-01", "end_date": "2027-03-31"}
+    closed = project(settings, ctx, "MarketCalendar", {**params, "include_closed": True}, "req")
+    assert "2027-03-11" in {str(r["session_date"]) for r in closed["results"]}
+    open_only = project(settings, ctx, "MarketCalendar", params, "req")
+    assert "2027-03-11" not in {str(r["session_date"]) for r in open_only["results"]}
+
+
 def test_market_calendar_needs_an_unambiguous_calendar(settings):
     with pytest.raises(DomainError) as exc:
         project(settings, parse_context(None), "MarketCalendar",
