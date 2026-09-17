@@ -6,6 +6,7 @@ from security_master_api.config import Settings
 from security_master_api.errors import DomainError
 from security_master_api.resolver.context import parse_context
 from security_master_api.sql.executions import Executions, decode_cursor, encode_cursor
+from security_master_api.sql.preview import build_preview_sql
 from security_master_api.store.seed import seed
 from security_master_api.store.tables import open_table
 
@@ -67,3 +68,61 @@ def test_per_principal_budget(settings):
 
 def test_cancel_unknown_is_false(settings):
     assert Executions(settings).cancel("qry_nope") is False
+
+
+def test_timed_out_acquire_releases_only_the_per_principal_count(settings):
+    # scan_slots=1 and a tiny timeout: holding the one slot on "a" must make every other
+    # principal's acquire fail fast, and a failed acquire must not free the slot "a" holds.
+    ex = Executions(Settings(root=settings.root, preflight_secret="k", scan_slots=1,
+                             timeout_ms=50))
+    ex._acquire("a")
+    with pytest.raises(DomainError) as exc:
+        ex._acquire("b")
+    assert exc.value.code == "QUERY_BUDGET_EXCEEDED"
+    # If the timed-out acquire above had released the semaphore it never acquired, this
+    # third acquire would wrongly succeed - it must still see the slot as held.
+    with pytest.raises(DomainError) as exc:
+        ex._acquire("c")
+    assert exc.value.code == "QUERY_BUDGET_EXCEEDED"
+    ex._release("a", True)
+    ex._acquire("c")  # the slot is free again now that its actual holder released it
+
+
+def test_contains_underscore_matches_nothing_a_matches_aapl(settings):
+    ex = Executions(settings)
+    sql, params = build_preview_sql("silver.listings", ["symbol"],
+        [{"field": "symbol", "operator": "contains", "value": "_"}], [])
+    none = ex.start(parse_context(None), ["silver.listings"], sql, params, "sql", "req", "user",
+                    page_size=100)
+    assert none["rows"] == []
+
+    sql, params = build_preview_sql("silver.listings", ["symbol"],
+        [{"field": "symbol", "operator": "contains", "value": "A"}], [])
+    some = ex.start(parse_context(None), ["silver.listings"], sql, params, "sql", "req", "user",
+                    page_size=100)
+    assert any(r["symbol"] == "AAPL" for r in some["rows"])
+
+
+def test_count_quality_exact_when_not_truncated(settings):
+    ex = Executions(settings)
+    out = ex.start(parse_context(None), ["silver.listings"],
+                   "SELECT * FROM silver.listings", [], "sql", "req", "user", page_size=100)
+    assert out["count"] == {"value": 4, "quality": "exact"}
+
+
+def test_count_quality_estimated_when_truncated_at_max_rows(settings):
+    ex = Executions(settings)
+    out = ex.start(parse_context(None), ["silver.listings"],
+                   "SELECT a.* FROM silver.listings a, silver.listings b",
+                   [], "sql", "req", "user", page_size=100)
+    assert out["count"] == {"value": 5, "quality": "estimated"}
+
+
+def test_cancel_on_finished_execution_then_page_is_rejected(settings):
+    ex = Executions(settings)
+    first = ex.start(parse_context(None), ["silver.listings"],
+                     "SELECT symbol FROM silver.listings ORDER BY symbol", [], "sql", "req", "user")
+    assert ex.cancel(first["execution_id"]) is True
+    with pytest.raises(DomainError) as exc:
+        ex.page(first["next_cursor"])
+    assert exc.value.code == "QUERY_REJECTED"

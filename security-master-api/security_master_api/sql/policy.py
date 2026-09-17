@@ -21,7 +21,8 @@ ALLOWED_FUNCTIONS = frozenset({
     "upper", "lower", "length", "len", "trim", "ltrim", "rtrim", "substr", "substring",
     "left", "right", "concat", "concat_ws", "||", "replace", "contains", "starts_with",
     "ends_with", "prefix", "suffix", "strip_accents", "regexp_matches", "regexp_replace",
-    "regexp_extract", "like", "~~", "!~~", "ilike", "~~*", "split_part", "string_split",
+    "regexp_extract", "like", "~~", "!~~", "ilike", "~~*", "ilike_escape", "split_part",
+    "string_split",
     "format", "printf", "repeat", "reverse", "lpad", "rpad", "instr", "strpos", "position",
     # dates and times
     "date_trunc", "date_part", "datepart", "date_diff", "datediff", "date_add", "date_sub",

@@ -13,8 +13,15 @@ def test_structured_preview_is_bound_not_interpolated():
          {"field": "symbol", "operator": "contains", "value": "AA"}],
         [{"field": "symbol", "direction": "asc"}])
     assert sql == ('SELECT "listing_id", "symbol" FROM gold."security_master" '
-                   'WHERE "status" = ? AND "symbol" ILIKE ? ORDER BY "symbol" ASC')
+                   'WHERE "status" = ? AND "symbol" ILIKE ? ESCAPE \'\\\' ORDER BY "symbol" ASC')
     assert params == ["active", "%AA%"]
+
+
+def test_contains_escapes_like_wildcards():
+    sql, params = build_preview_sql("silver.listings", None,
+        [{"field": "symbol", "operator": "contains", "value": "A_B"}], [])
+    assert "ESCAPE '\\'" in sql
+    assert params == ["%A\\_B%"]
 
 
 def test_all_columns_when_none_named():

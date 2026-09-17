@@ -11,8 +11,10 @@ from security_master_api.errors import DomainError
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 OPERATORS = {
     "eq": '"{f}" = ?', "ne": '"{f}" <> ?', "lt": '"{f}" < ?', "lte": '"{f}" <= ?',
-    "gt": '"{f}" > ?', "gte": '"{f}" >= ?', "contains": '"{f}" ILIKE ?',
-    "starts_with": '"{f}" ILIKE ?', "in": '"{f}" IN ({ph})', "between": '"{f}" BETWEEN ? AND ?',
+    "gt": '"{f}" > ?', "gte": '"{f}" >= ?',
+    "contains": "\"{f}\" ILIKE ? ESCAPE '\\'",
+    "starts_with": "\"{f}\" ILIKE ? ESCAPE '\\'",
+    "in": '"{f}" IN ({ph})', "between": '"{f}" BETWEEN ? AND ?',
     "is_null": '"{f}" IS NULL', "not_null": '"{f}" IS NOT NULL',
 }
 
@@ -21,6 +23,13 @@ def _ident(name: str, what: str) -> str:
     if not isinstance(name, str) or not _IDENT.match(name):
         raise DomainError("QUERY_REJECTED", f"invalid {what} name", {what: str(name)[:40]})
     return name
+
+
+def _escape_like(value) -> str:
+    """Backslash-escape the ILIKE wildcards so a literal `%`/`_` in a filter value
+    can't be mistaken for one, matching the `ESCAPE '\\'` clause emitted above."""
+    text = str(value)
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def build_preview_sql(relation: str, columns: list[str] | None, filters: list[dict],
@@ -62,9 +71,9 @@ def build_preview_sql(relation: str, columns: list[str] | None, filters: list[di
                 raise DomainError("QUERY_REJECTED", f"{op} needs a scalar value")
             clauses.append(OPERATORS[op].format(f=field))
             if op == "contains":
-                params.append(f"%{value}%")
+                params.append(f"%{_escape_like(value)}%")
             elif op == "starts_with":
-                params.append(f"{value}%")
+                params.append(f"{_escape_like(value)}%")
             else:
                 params.append(value)
     if clauses:

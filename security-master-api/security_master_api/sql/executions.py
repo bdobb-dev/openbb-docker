@@ -71,16 +71,16 @@ class Executions:
                                   {"limit": self.settings.per_principal_queries})
             self._per_principal[principal] = active + 1
         if not self._scan.acquire(timeout=self.settings.timeout_ms / 1000):
-            self._release(principal)
+            # The scan slot was never granted - only give back the per-principal count,
+            # never the semaphore, or a timed-out caller would free a slot nobody holds.
+            self._release(principal, scan_acquired=False)
             raise DomainError("QUERY_BUDGET_EXCEEDED", "the service scan budget is exhausted")
 
-    def _release(self, principal: str) -> None:
+    def _release(self, principal: str, scan_acquired: bool) -> None:
         with self._lock:
             self._per_principal[principal] = max(0, self._per_principal.get(principal, 1) - 1)
-        try:
+        if scan_acquired:
             self._scan.release()
-        except ValueError:
-            pass
 
     def _expire(self) -> None:
         cutoff = time.monotonic() - RESULT_TTL_S
@@ -133,7 +133,7 @@ class Executions:
                     entry = self._by_id.get(receipt["execution_id"])
                     if entry is not None:
                         entry.session = None
-            self._release(principal)
+            self._release(principal, scan_acquired=True)
         return self._page(ex, 0)
 
     def page(self, cursor: str) -> dict:
