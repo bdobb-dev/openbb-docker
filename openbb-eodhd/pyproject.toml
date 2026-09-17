@@ -7,13 +7,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openbb-eodhd"
-version = "9.0.0"
+version = "9.5.0"
 description = "EODHD provider extension for OpenBB (equity/crypto/currency historical, fundamentals, corporate actions, ownership, insider trading, analyst estimates)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 dependencies = [
-    "openbb-core>=1.5.8",
+    "openbb-core>=1.5.8,<2",
     # Official EODHD SDK, pinned to a GitHub commit (main, 2026-07-28): the
     # PyPI release (1.0.32) predates the SDK's typed errors (it can sys.exit()
     # on API errors), request timeouts, and the fundamentals `filter` param.
@@ -28,7 +28,7 @@ eodhd = "openbb_eodhd:eodhd_provider"
 include = ["openbb_eodhd*"]
 
 [project.optional-dependencies]
-dev = ["ruff", "pytest"]
+dev = ["ruff==0.15.22", "pytest"]
 
 [tool.ruff]
 target-version = "py310"

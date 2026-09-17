@@ -56,6 +56,8 @@ def test_single_flight_coalesces_concurrent_calls(monkeypatch):
         return BUNDLE
 
     monkeypatch.setattr(F, "_fetch_sync", fake_fetch_sync)
+    monkeypatch.setattr(F, "_l2_get", lambda sym: None)   # isolate L1 + fetch
+    monkeypatch.setattr(F, "_l2_put", lambda sym, b: None)
 
     async def go():
         return await asyncio.gather(
@@ -71,6 +73,8 @@ def test_ttl_expiry_refetches(monkeypatch):
     calls = {"n": 0}
     clock = {"t": 1000.0}
     monkeypatch.setattr(F, "_fetch_sync", lambda s, c: (calls.__setitem__("n", calls["n"] + 1) or BUNDLE))
+    monkeypatch.setattr(F, "_l2_get", lambda sym: None)
+    monkeypatch.setattr(F, "_l2_put", lambda sym, b: None)
     monkeypatch.setattr(F.time, "monotonic", lambda: clock["t"])
 
     async def go():
@@ -82,9 +86,49 @@ def test_ttl_expiry_refetches(monkeypatch):
     assert calls["n"] == 2
 
 
+def test_l2_hit_within_ttl_skips_eodhd(monkeypatch):
+    """A fresh ArcticDB entry is served without any EODHD call."""
+    calls = {"n": 0}
+    monkeypatch.setattr(F, "_fetch_sync", lambda s, c: (calls.__setitem__("n", calls["n"] + 1) or BUNDLE))
+    monkeypatch.setattr(F, "_l2_get", lambda sym: BUNDLE)     # L2 fresh hit
+    monkeypatch.setattr(F, "_l2_put", lambda sym, b: None)
+
+    out = asyncio.run(F.get_bundle("AAPL", "US", {"eodhd_api_key": "k"}))
+    assert out is BUNDLE
+    assert calls["n"] == 0
+
+
+def test_l2_miss_fetches_and_writes_back(monkeypatch):
+    """L2 miss -> one EODHD fetch -> written back to L2."""
+    calls = {"fetch": 0, "put": 0}
+    monkeypatch.setattr(F, "_fetch_sync", lambda s, c: (calls.__setitem__("fetch", calls["fetch"] + 1) or BUNDLE))
+    monkeypatch.setattr(F, "_l2_get", lambda sym: None)       # L2 miss
+    monkeypatch.setattr(F, "_l2_put", lambda sym, b: calls.__setitem__("put", calls["put"] + 1))
+
+    out = asyncio.run(F.get_bundle("AAPL", "US", {"eodhd_api_key": "k"}))
+    assert out is BUNDLE
+    assert calls == {"fetch": 1, "put": 1}
+
+
+def test_arctic_library_passes_resolved_uri_not_none(monkeypatch):
+    # The L2 tier soft-imports openbb_arcticdb and self-disables without it;
+    # this test is exactly as optional as the code it exercises (ep-11 dep).
+    U = pytest.importorskip("openbb_arcticdb.utils")
+    captured = {}
+    monkeypatch.setattr(U, "resolve_config",
+        lambda uri=None, library=None, credentials=None: ("lmdb:///tmp/eodhd-test", library))
+    monkeypatch.setattr(U, "get_library",
+        lambda uri, library, create_if_missing=True: captured.update(uri=uri, library=library) or "LIB")
+    assert F._arctic_library() == "LIB"
+    assert captured["uri"] == "lmdb:///tmp/eodhd-test"   # regression guard: never None
+    assert captured["library"] == "eodhd_fundamentals_cache"
+
+
 def test_expired_entries_swept_on_next_populate(monkeypatch):
     """An expired symbol's L1 entry is dropped when a different symbol is fetched."""
     monkeypatch.setattr(F, "_fetch_sync", lambda s, c: BUNDLE)
+    monkeypatch.setattr(F, "_l2_get", lambda sym: None)
+    monkeypatch.setattr(F, "_l2_put", lambda sym, b: None)
     monkeypatch.setattr(F.time, "monotonic", lambda: 1000.0)
 
     asyncio.run(F.get_bundle("AAAA", "US", {"eodhd_api_key": "k"}))
@@ -95,3 +139,17 @@ def test_expired_entries_swept_on_next_populate(monkeypatch):
 
     assert "AAAA.US" not in F._cache
     assert "BBBB.US" in F._cache
+
+
+def test_l2_unavailable_falls_back_to_live_fetch(monkeypatch):
+    """If ArcticDB can't be reached, get/put no-op and the request still succeeds."""
+    calls = {"n": 0}
+    monkeypatch.setattr(F, "_arctic_library", lambda: None)   # ArcticDB absent
+    monkeypatch.setattr(F, "_fetch_sync", lambda s, c: (calls.__setitem__("n", calls["n"] + 1) or BUNDLE))
+
+    out = asyncio.run(F.get_bundle("AAPL", "US", {"eodhd_api_key": "k"}))
+    assert out is BUNDLE
+    assert calls["n"] == 1
+    # _l2_get / _l2_put must swallow the missing library rather than raise
+    assert F._l2_get("AAPL.US") is None
+    F._l2_put("AAPL.US", BUNDLE)  # no exception

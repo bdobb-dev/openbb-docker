@@ -303,6 +303,8 @@ def test_three_statements_one_symbol_share_one_fetch(monkeypatch):
         "Cash_Flow": {"yearly": {"2025-09-30": {"date": "2025-09-30", "netIncome": 3}}, "quarterly": {}},
     }}
     monkeypatch.setattr(F, "_fetch_sync", lambda s, c: (calls.__setitem__("n", calls["n"] + 1) or bundle))
+    monkeypatch.setattr(F, "_l2_get", lambda sym: None)   # isolate L1 + fetch from real ArcticDB
+    monkeypatch.setattr(F, "_l2_put", lambda sym, b: None)
     creds = {"eodhd_api_key": "k"}
 
     async def go():

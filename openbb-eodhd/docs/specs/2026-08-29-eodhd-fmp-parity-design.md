@@ -133,11 +133,11 @@ index, government trades, insider Form-4) each hit their specific EODHD endpoint
 | OpenBB standard model | EODHD endpoint |
 |---|---|
 | EquityQuote | `/real-time/{symbol}` (live/delayed) |
-| MarketSnapshots | `/real-time` bulk / exchange snapshot *(verify shape)* |
+| MarketSnapshots | `/real-time` bulk / exchange snapshot — **deferred (verified 2026-09-01):** `/real-time` takes only an explicit symbol list; EODHD has no whole-market snapshot endpoint on the core plan, so the standard model's semantics can't be met |
 | CompanyNews | `/news?s={symbol}` |
 | WorldNews | `/news?t={topic}` (general feed, no symbol) |
 | CalendarEarnings | `/calendar/earnings` (upcoming) |
-| CalendarDividend | upcoming dividends calendar |
+| CalendarDividend | upcoming dividends calendar — **deferred (verified 2026-09-01):** `/calendar/dividends` requires `filter[symbol]` or `filter[date_eq]` (no open range sweep) and rows carry only `{date, symbol}` — no amount/pay/record dates. Revisit if EODHD enriches the rows |
 | CalendarIpo | `/calendar/ipos` |
 | CalendarSplits | `/calendar/splits` |
 | EconomicCalendar | `/economic-events` |
@@ -200,21 +200,43 @@ Low value and approximate; excluded from the default scope per design review:
 Each phase: model files + tests + register in `__init__.py` + container rebuild +
 verify every new provider registers and returns non-empty for `AAPL.US`.
 
+**Release scoping (2026-09-01, final):** the whole parity set IS **episode 9**
+— "mapping EODHD to do the FMP data via API calls" — so the per-phase 9.x
+version bumps below are already chapter-matched; no rename at release.
+bdobb-v2's v3–v8 rebuild uses standard providers only (yfinance, fmp, the
+reference backend). Episode 10 is websockets/kdb/caching; episode 11 is Delta
+Lake daily storage plus the read-through cache that minimizes API calls —
+which is where this design's ArcticDB L2 tier gets rebuilt on Delta Lake.
+
 1. **Gap-fillers** — InstitutionalOwnership, EquityOwnership, InsiderTrading,
    HistoricalEps, AnalystEstimates, ForwardEpsEstimates, PriceTarget,
    PriceTargetConsensus. (Removes the FMP-402 wall immediately.)
-2. **Company core** — EquityInfo, EquityQuote, KeyMetrics, FinancialRatios,
-   ShareStatistics, KeyExecutives, CompanyNews, EsgScore(deprecated).
-3. **Calendars / discovery / market data** — CalendarEarnings/Dividend/Ipo/Splits,
+2. **Company core** — **shipped 2026-09-01 (v9.4.0)**: EquityInfo, EquityQuote,
+   KeyMetrics, FinancialRatios, ShareStatistics, KeyExecutives, CompanyNews,
+   EsgScore(deprecated). KeyMetrics/FinancialRatios are single-snapshot rows
+   (`fiscal_period: TTM`) per the point-in-time risk note.
+3. **Calendars / discovery / market data** — **shipped 2026-09-01 (v9.2.0 + v9.3.0)**
+   minus the deferrals noted in the mapping tables (CalendarDividend,
+   MarketSnapshots) and IndexConstituents (marketplace 403, build last per the
+   risk note). GovernmentTrades landed on the core `/congressional-trades`
+   endpoint via the shared `rest_json` helper — the SDK has no wrapper yet.
+   Original scope: CalendarEarnings/Dividend/Ipo/Splits,
    EconomicCalendar, HistoricalMarketCap, EquityScreener, EquitySearch,
    EtfSearch/CryptoSearch, CurrencyPairs/Snapshots, AvailableIndices,
    IndexConstituents, IndexHistorical, TreasuryRates, YieldCurve, GovernmentTrades,
    WorldNews, MarketSnapshots, EtfInfo/Holdings/Sectors/Countries,
    TrailingDividendYield. (The estimate additions — ForwardSalesEstimates,
    ForwardPeEstimates — ship with the Phase 1/2 estimates + metrics clusters.)
-4. **Beyond-FMP extras** — OptionsChains (verify marketplace subscription first;
-   document EOD/partial-greeks) and the macro cluster (EconomicIndicators,
-   CountryProfile, GdpReal, GdpNominal, ConsumerPriceIndex, Unemployment).
+4. **Beyond-FMP extras** — macro cluster **shipped 2026-09-01 (v9.5.0)**:
+   EconomicIndicators, CountryProfile (assembled, six calls/country), GdpReal
+   (= `gdp_growth_annual`, a growth-percent series), GdpNominal
+   (`gdp_current_usd`), ConsumerPriceIndex, Unemployment. Correction to the
+   macro-semantics risk note below: EODHD **does** carry the CPI index level
+   (`consumer_price_index`, 2010 = 100) alongside the inflation rate, so the
+   fetcher honors both `transform="index"` and `transform="yoy"`.
+   Still open: OptionsChains (verify marketplace subscription first; document
+   EOD/partial-greeks) and IndexConstituents — both 403 until the add-ons are
+   purchased.
 
 ## Testing
 
