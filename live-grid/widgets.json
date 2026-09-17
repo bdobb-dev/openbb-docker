@@ -464,11 +464,122 @@
    "kdb+"
   ]
  },
- "advanced_chart": {
-  "name": "Advanced Chart",
-  "description": "Live candles from the kdb+ tick cache with server-computed studies, drawing tools and anchored VWAP. Requires the stack on the same machine as the app.",
+ "arts_charts": {
+  "name": "Art's Charts — Live grid",
+  "description": "Live grid: candles from the kdb+ tick cache with server-computed studies, drawing tools and anchored VWAP. Requires the stack on the same machine as the app.",
   "category": "Live",
-  "type": "advanced_chart",
+  "type": "arts_charts",
+  "endpoint": "series",
+  "wsEndpoint": "ta_series_ws",
+  "gridData": {
+   "w": 40,
+   "h": 24
+  },
+  "params": [
+   {
+    "paramName": "symbol",
+    "type": "text",
+    "value": "AAPL",
+    "label": "Symbol"
+   },
+   {
+    "paramName": "interval",
+    "type": "text",
+    "value": "1m",
+    "label": "Interval",
+    "options": [
+     {
+      "label": "1 second",
+      "value": "1s"
+     },
+     {
+      "label": "1 minute",
+      "value": "1m"
+     },
+     {
+      "label": "5 min",
+      "value": "5m"
+     },
+     {
+      "label": "15 min",
+      "value": "15m"
+     },
+     {
+      "label": "30 min",
+      "value": "30m"
+     },
+     {
+      "label": "1 hour",
+      "value": "1h"
+     },
+     {
+      "label": "1 day",
+      "value": "1d"
+     }
+    ]
+   },
+   {
+    "paramName": "macro",
+    "type": "text",
+    "value": "none",
+    "label": "Macro",
+    "description": "A saved pane layout. Options are filled in from the macro directory.",
+    "options": [
+     {
+      "label": "None",
+      "value": "none"
+     }
+    ]
+   },
+   {
+    "paramName": "indicators",
+    "type": "text",
+    "value": "",
+    "label": "Indicators",
+    "description": "Comma separated, e.g. rsi:period=14,ichimoku,supertrend:period=10"
+   },
+   {
+    "paramName": "basis",
+    "type": "text",
+    "value": "adjusted",
+    "label": "Price basis",
+    "description": "Adjusted or raw close for the indicators. Tick-derived candles carry no adjustment data and are unadjusted either way.",
+    "options": [
+     {
+      "label": "Adjusted",
+      "value": "adjusted"
+     },
+     {
+      "label": "Raw",
+      "value": "raw"
+     }
+    ]
+   },
+   {
+    "paramName": "start",
+    "type": "date",
+    "label": "Start",
+    "value": "",
+    "description": "First day the Custom range button zooms to, and the first day the studies are computed from. Blank: everything loaded, and a year of studies."
+   },
+   {
+    "paramName": "end",
+    "type": "date",
+    "label": "End",
+    "value": "",
+    "description": "Last day the Custom range button zooms to, inclusive. Blank: the live edge."
+   }
+  ],
+  "source": [
+   "EODHD",
+   "kdb+"
+  ]
+ },
+ "arts_charts_eodhd": {
+  "name": "Art's Charts — EODHD",
+  "description": "EODHD: candles and studies both served by EODHD, with drawing tools. Requires the stack on the same machine as the app.",
+  "category": "Live",
+  "type": "arts_charts",
   "endpoint": "series",
   "wsEndpoint": "ta_series_ws",
   "gridData": {
@@ -541,14 +652,10 @@
    {
     "paramName": "source",
     "type": "text",
-    "value": "local",
+    "value": "eodhd",
     "label": "Source",
-    "description": "local computes here; eodhd uses their pre-calculated values",
+    "description": "This widget's bars and studies both come from EODHD.",
     "options": [
-     {
-      "label": "Local",
-      "value": "local"
-     },
      {
       "label": "EODHD",
       "value": "eodhd"

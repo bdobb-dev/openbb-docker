@@ -297,15 +297,18 @@ def test_ta_registry_entry_shape_for_bbands_and_avwap():
     assert [p["name"] for p in bb["params"]] == ["period", "k"]
     assert bb["windows"] == ["period"]
     assert bb["params"][0] == {
-        "name": "period", "default": 20, "text": False, "float": False, "window": True}
+        "name": "period", "default": 20, "text": False, "float": False, "window": True,
+        "label": "Length"}
     # bbands' k is a standard-deviation multiple, not a bars lookback -- not a
     # window, unlike stoch's k (registry.py Indicator.windows docstring).
     assert bb["params"][1] == {
-        "name": "k", "default": 2.0, "text": False, "float": True, "window": False}
+        "name": "k", "default": 2.0, "text": False, "float": True, "window": False,
+        "label": "StdDev multiplier", "step": 0.5}
     assert bb["eodhd"]["function"] == "bbands" and "adjusted" in bb["eodhd"]["note"]
     av = entries["avwap"]
     assert av["params"][0] == {
-        "name": "anchor", "default": None, "text": True, "float": False, "window": False}
+        "name": "anchor", "default": None, "text": True, "float": False, "window": False,
+        "label": "Anchor"}
     assert av["eodhd"] is None
     assert entries["sar"]["render"] == "dots"
     assert entries["rsi"]["guides"] == [30, 70]
