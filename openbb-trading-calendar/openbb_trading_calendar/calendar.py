@@ -1,4 +1,4 @@
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 
 """Exchange trading calendars from pandas-market-calendars, in EODHD v2 shape.
