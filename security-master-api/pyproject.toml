@@ -31,7 +31,7 @@ dev = [
 include = ["security_master_api*"]
 
 [tool.setuptools.package-data]
-security_master_api = ["fixtures/*.json", "odp_registry.json"]
+security_master_api = ["fixtures/*.json", "*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

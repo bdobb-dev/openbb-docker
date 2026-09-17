@@ -35,7 +35,7 @@
   ],
   "receipt": {
     "availability_policy": "local_as_ingested",
-    "created_at": "2026-09-17T12:02:23.457749Z",
+    "created_at": "2026-09-17T00:00:00Z",
     "dependencies": [
       {
         "delta_version": 9,
@@ -47,12 +47,12 @@
       }
     ],
     "effective_at": null,
-    "execution_id": "qry_8c68aeeda6084bdd",
+    "execution_id": "qry_contract",
     "kind": "lineage",
     "known_at": null,
     "projection_version": "security-master-projection/1",
-    "request_id": "req_2f487f73c9e8",
-    "sql_fingerprint": "",
+    "request_id": "req_contract",
+    "sql_fingerprint": "contract",
     "temporal_mode": "delta_snapshot"
   }
 }

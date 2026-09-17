@@ -3,6 +3,6 @@
     "code": "QUERY_REJECTED",
     "details": {},
     "message": "parser: syntax error at or near \"TABLE\"",
-    "request_id": "req_877ba5d20671"
+    "request_id": "req_contract"
   }
 }

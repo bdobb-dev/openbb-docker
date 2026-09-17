@@ -19,6 +19,10 @@ STATUS_BY_CODE: dict[str, int] = {
     "PROVIDER_RATE_LIMITED": 429,
     "PROVIDER_ENTITLEMENT_DENIED": 403,
     "PROMOTION_VALIDATION_FAILED": 422,
+    # Not a spec code a caller can provoke deliberately: the envelope an unhandled
+    # exception is wrapped in, so a crash answers in the same shape as every other
+    # failure and still carries its request id.
+    "INTERNAL_ERROR": 500,
 }
 CODES = tuple(STATUS_BY_CODE)
 

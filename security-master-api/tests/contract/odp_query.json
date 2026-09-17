@@ -44,7 +44,7 @@
   "extra": {
     "security_master_receipt": {
       "availability_policy": "local_as_ingested",
-      "created_at": "2026-09-17T12:02:19.065176Z",
+      "created_at": "2026-09-17T00:00:00Z",
       "dependencies": [
         {
           "delta_version": 4,
@@ -72,12 +72,12 @@
         }
       ],
       "effective_at": "2026-09-14T20:00:00Z",
-      "execution_id": "qry_e25e3c2662e44623",
+      "execution_id": "qry_contract",
       "kind": "odp",
       "known_at": "2026-09-15T09:20:00Z",
       "projection_version": "security-master-projection/1",
-      "request_id": "req_c012ac59e5cc",
-      "sql_fingerprint": "d4843d9bb9d1a2d0",
+      "request_id": "req_contract",
+      "sql_fingerprint": "contract",
       "temporal_mode": "known_at"
     }
   },

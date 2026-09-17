@@ -13,11 +13,11 @@
     "quality": "exact",
     "value": 4
   },
-  "execution_id": "qry_b8a001b05bc74261",
-  "next_cursor": "eyJlIjogInFyeV9iOGEwMDFiMDViYzc0MjYxIiwgIm8iOiAzLCAiZiI6ICI3M2ZlNmU2MWM0NGZmNzYxIn0",
+  "execution_id": "qry_contract",
+  "next_cursor": "eyJlIjogInFyeV9jb250cmFjdCIsICJvIjogMywgImYiOiAiY29udHJhY3QifQ",
   "receipt": {
     "availability_policy": "local_as_ingested",
-    "created_at": "2026-09-17T12:02:19.802541Z",
+    "created_at": "2026-09-17T00:00:00Z",
     "dependencies": [
       {
         "delta_version": 4,
@@ -41,12 +41,12 @@
       }
     ],
     "effective_at": null,
-    "execution_id": "qry_b8a001b05bc74261",
+    "execution_id": "qry_contract",
     "kind": "preview",
     "known_at": null,
     "projection_version": "security-master-projection/1",
-    "request_id": "req_3b752cfa3a00",
-    "sql_fingerprint": "73fe6e61c44ff761",
+    "request_id": "req_contract",
+    "sql_fingerprint": "contract",
     "temporal_mode": "current_corrected"
   },
   "rows": [

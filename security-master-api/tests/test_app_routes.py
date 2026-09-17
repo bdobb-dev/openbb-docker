@@ -3,20 +3,59 @@
 import json
 from pathlib import Path
 
+import pyarrow as pa
 import pytest
+from deltalake import write_deltalake
 from fastapi.testclient import TestClient
 
 from security_master_api.app.main import create_app
 from security_master_api.config import Settings
+from security_master_api.sql.executions import decode_cursor, encode_cursor
 from security_master_api.store.seed import seed
 
 CONTRACT = Path(__file__).parent / "contract"
 V1 = "/security-master/v1"
 
 
+# Every value here is minted fresh on each run (a uuid, a clock reading, a hash of a
+# per-run temp path). Left alone, running the suite rewrites all 17 committed fixtures and
+# `git status` is never clean. Part B parses these files for SHAPE, so a constant is as good
+# as the real thing -- and a constant is reproducible.
+# `timestamp` is beyond the four the review named, but it is the Delta commit clock in
+# versions.json and breaks a re-run exactly the same way.
+VOLATILE = {"execution_id": "qry_contract", "request_id": "req_contract",
+            "created_at": "2026-09-17T00:00:00Z", "sql_fingerprint": "contract",
+            "timestamp": "2026-09-17T00:00:00Z"}
+
+
+def scrub_cursor(token):
+    """A cursor is opaque, but it ENCODES an execution_id and a fingerprint.
+
+    Substituting it as a constant would leave the fixture self-inconsistent -- a cursor
+    decoding to an execution the same payload does not name. Re-encode it instead, so the
+    recorded cursor still decodes to the recorded execution.
+    """
+    if not token:
+        return token
+    _, offset, _ = decode_cursor(token)
+    return encode_cursor(VOLATILE["execution_id"], offset, VOLATILE["sql_fingerprint"])
+
+
+def scrub(payload):
+    """Replace every volatile field, at any depth, with its fixed stand-in."""
+    if isinstance(payload, dict):
+        return {k: VOLATILE[k] if k in VOLATILE else
+                (scrub_cursor(v) if k == "next_cursor" else scrub(v))
+                for k, v in payload.items()}
+    if isinstance(payload, list):
+        return [scrub(v) for v in payload]
+    return payload
+
+
 def record(name: str, payload) -> None:
     CONTRACT.mkdir(exist_ok=True)
-    (CONTRACT / f"{name}.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    text = json.dumps(scrub(payload), indent=2, sort_keys=True) + "\n"
+    (CONTRACT / f"{name}.json").write_text(text)
 
 
 @pytest.fixture
@@ -184,3 +223,63 @@ def test_widgets_and_apps(client):
     assert [p["paramName"] for p in w["security_master_browser"]["params"]] == [
         "listing_id", "effective_date", "known_at", "layer", "temporal_mode"]
     assert isinstance(client.get("/apps.json").json(), list)
+
+
+def test_scrubbing_makes_a_recording_reproducible():
+    """Two runs must write byte-identical fixtures, or `git status` is never clean."""
+    def payload(n):
+        return {"execution_id": f"qry_{n}", "next_cursor": encode_cursor(f"qry_{n}", 3, f"{n}"),
+                "receipt": {"created_at": f"2026-09-17T00:00:0{n}Z", "timestamp": f"t{n}",
+                            "sql_fingerprint": f"{n}" * 16, "manifest": {"silver.listings": 1}},
+                "rows": [{"request_id": f"req_{n}", "symbol": "AAPL"}]}
+    assert scrub(payload(1)) == scrub(payload(2))
+    clean = scrub(payload(1))
+    assert clean["execution_id"] == "qry_contract"
+    assert clean["receipt"]["sql_fingerprint"] == "contract"
+    assert clean["rows"][0] == {"request_id": "req_contract", "symbol": "AAPL"}
+    assert clean["receipt"]["manifest"] == {"silver.listings": 1}  # non-volatile survives
+    # The recorded cursor decodes to the recorded execution, not the one that was replaced.
+    assert decode_cursor(clean["next_cursor"]) == ("qry_contract", 3, "contract")
+    assert scrub({"next_cursor": None}) == {"next_cursor": None}
+
+
+def test_sql_does_not_fan_out_over_external_tables(tmp_path, monkeypatch):
+    """There can be thousands of `bronze.<library>.<symbol>`; SQL must not open them all."""
+    monkeypatch.setenv("OPENBB_API_AUTH", "false")
+    bucket = tmp_path / "bucket"
+    write_deltalake(str(bucket / "openbb" / "AAPL"),
+                    pa.table({"symbol": ["AAPL"], "close": [1.0]}), mode="error")
+    s = Settings(root=str(bucket / "security_master"), delta_base=str(bucket),
+                 preflight_secret="k")
+    seed(s)
+    c = TestClient(create_app(s))
+    # The catalog still advertises it: it is excluded from the SQL fan-out, not from the world.
+    names = {f"{r['layer']}.{r['name']}" for r in c.get(f"{V1}/catalog").json()["relations"]}
+    assert "bronze.openbb.AAPL" in names
+    plan = c.post(f"{V1}/sql/plan", json={"sql": "SELECT 1 AS n",
+                                          "context": {"mode": "delta_snapshot"}}).json()
+    assert not [k for k in plan["manifest"] if k.startswith("bronze.openbb.")]
+
+
+def test_an_unhandled_exception_is_still_an_envelope(client):
+    """A crash answers in the same shape as every other failure, request id and all."""
+    app = client.app
+
+    @app.get(f"{V1}/boom")
+    def boom() -> dict:
+        raise RuntimeError("the database fell over")
+
+    crash = TestClient(app, raise_server_exceptions=False).get(f"{V1}/boom")
+    assert crash.status_code == 500
+    assert crash.json()["error"]["code"] == "INTERNAL_ERROR"
+    assert crash.json()["error"]["message"] == "the service failed to answer this request"
+    # Nothing of the exception leaks into the body...
+    assert "database fell over" not in crash.text
+    # ...and the id the client would quote in a bug report is on the response.
+    assert crash.headers["x-request-id"] == crash.json()["error"]["request_id"]
+
+
+def test_views_have_no_versions(client):
+    bad = client.get(f"{V1}/relations/gold/security_master/versions")
+    assert bad.status_code == 422
+    assert bad.json()["error"]["message"] == "views have no versions; see their dependencies"

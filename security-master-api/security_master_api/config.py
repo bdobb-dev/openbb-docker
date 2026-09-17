@@ -22,7 +22,7 @@ class Settings:
     first_page: int = 100
     max_rows: int = 10_000
     timeout_ms: int = 15_000
-    per_principal_queries: int = 2
+    per_principal_queries: int = 8
     scan_slots: int = 4
     memory_limit: str = "1GB"
     threads: int = 2
@@ -70,7 +70,7 @@ def settings_from_env(env: Mapping[str, str] | None = None) -> Settings:
         first_page=_int(e, "SECURITY_MASTER_FIRST_PAGE", 100),
         max_rows=_int(e, "SECURITY_MASTER_MAX_ROWS", 10_000),
         timeout_ms=_int(e, "SECURITY_MASTER_TIMEOUT_MS", 15_000),
-        per_principal_queries=_int(e, "SECURITY_MASTER_PER_PRINCIPAL_QUERIES", 2),
+        per_principal_queries=_int(e, "SECURITY_MASTER_PER_PRINCIPAL_QUERIES", 8),
         scan_slots=_int(e, "SECURITY_MASTER_SCAN_SLOTS", 4),
         memory_limit=str(e.get("SECURITY_MASTER_MEMORY_LIMIT", "1GB")).strip() or "1GB",
         threads=_int(e, "SECURITY_MASTER_THREADS", 2),

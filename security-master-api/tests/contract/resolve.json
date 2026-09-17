@@ -20,7 +20,7 @@
   ],
   "receipt": {
     "availability_policy": "local_as_ingested",
-    "created_at": "2026-09-17T12:02:23.349860Z",
+    "created_at": "2026-09-17T00:00:00Z",
     "dependencies": [
       {
         "delta_version": 4,
@@ -44,12 +44,12 @@
       }
     ],
     "effective_at": "2022-06-07T00:00:00Z",
-    "execution_id": "qry_d17d0db2fa2147fa",
+    "execution_id": "qry_contract",
     "kind": "resolve",
     "known_at": null,
     "projection_version": "security-master-projection/1",
-    "request_id": "req_90cc406cc353",
-    "sql_fingerprint": "",
+    "request_id": "req_contract",
+    "sql_fingerprint": "contract",
     "temporal_mode": "effective_on"
   }
 }

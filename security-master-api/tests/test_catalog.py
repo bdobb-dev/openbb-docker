@@ -4,6 +4,7 @@ import pytest
 
 from security_master_api.config import Settings
 from security_master_api.errors import DomainError
+from security_master_api.resolver import catalog as catalog_module
 from security_master_api.resolver.catalog import catalog, check_modes, expand, relation
 from security_master_api.resolver.context import parse_context
 from security_master_api.resolver.manifest import resolve_manifest
@@ -71,3 +72,13 @@ def test_manifest_pins_latest_or_requested_versions(settings):
     with pytest.raises(DomainError) as exc:
         resolve_manifest(settings, bad, ["silver.listings"])
     assert exc.value.code == "VERSION_NOT_RETAINED"
+
+
+def test_one_request_builds_the_catalog_once(settings, monkeypatch):
+    """`external_relations` lists an object store; a fan-out over relations must not repeat it."""
+    calls = []
+    real = catalog_module.external_relations
+    monkeypatch.setattr(catalog_module, "external_relations",
+                        lambda s: (calls.append(s), real(s))[1])
+    resolve_manifest(settings, parse_context(None), ["gold.security_master"])
+    assert len(calls) <= 1

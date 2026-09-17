@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 from pathlib import Path
@@ -13,8 +14,8 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from starlette.middleware import Middleware
 
+import security_master_api
 from security_master_api.app.auth import BasicAuthMiddleware, credential_of
 from security_master_api.app.errors import install, request_id
 from security_master_api.config import Settings, settings_from_env
@@ -34,7 +35,10 @@ from security_master_api.store.receipts import new_receipt, record_receipt
 from security_master_api.store.seed import golden_fixtures
 from security_master_api.store.tables import history, latest_version, open_table
 
-HERE = Path(__file__).resolve().parent.parent.parent
+# widgets.json and apps.json are PACKAGE DATA, not repository files: a non-editable install
+# copies the package and nothing above it, so a path out of the package resolves into
+# site-packages and the routes 500.
+HERE = Path(security_master_api.__file__).resolve().parent
 V1 = "/security-master/v1"
 
 
@@ -121,16 +125,16 @@ def _scenario_for(model_id: str) -> dict | None:
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or settings_from_env()
     app = FastAPI(title="security-master-api", version="0.2.0")
+    # ORDER MATTERS, and add_middleware inserts at index 0, where index 0 is OUTERMOST -- so
+    # these three lines read backwards: auth first makes it INNERMOST, and the stack ends up
+    # [stamp, CORS, auth]. Auth must be inside CORS because a browser preflight carries no
+    # credentials by definition: outside, every cross-origin caller -- OpenBB Workspace
+    # included -- would get a bare 401 with no Access-Control-Allow-* headers. curl never sends
+    # a preflight, so no amount of curl testing catches it; tests/test_app_auth.py does.
+    app.add_middleware(BasicAuthMiddleware)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
                        allow_headers=["*"], expose_headers=["x-request-id"])
     install(app)
-    # APPEND, do not add_middleware. Starlette's add_middleware inserts at index 0 and index 0
-    # is OUTERMOST, so calling it here would put auth outside CORS. A browser preflight carries
-    # no credentials by definition, so it would get a bare 401 with no Access-Control-Allow-*
-    # headers and every cross-origin caller -- OpenBB Workspace included -- would be locked out.
-    # curl never sends a preflight, so no amount of curl testing catches it. Appending makes
-    # auth INNERMOST, which still covers every path: middleware wraps the whole app.
-    app.user_middleware.append(Middleware(BasicAuthMiddleware))
     executions = Executions(settings)
     app.state.settings = settings
     app.state.executions = executions
@@ -198,7 +202,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def get_versions(layer: str, name: str) -> dict:
         full = f"{layer}.{name}"
-        cat.relation(settings, full)
+        if cat.relation(settings, full).kind == "view":
+            raise DomainError("QUERY_REJECTED", "views have no versions; see their dependencies",
+                              {"relation": full})
         return {"relation": full,
                 "versions": [{**h, "retained": True} for h in history(settings, full)]}
 
@@ -226,8 +232,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # fingerprint THIS request implies and let the execution refuse a mismatch. A page
             # two of a different question is a new question.
             execution_id, offset, _ = decode_cursor(body.page.cursor)
-            return executions.page(encode_cursor(execution_id, offset,
-                                                 fingerprint(ctx, sql, params)))
+            return executions.page(
+                encode_cursor(execution_id, offset, fingerprint(ctx, sql, params)),
+                _principal(request))
         return executions.start(ctx, [body.relation], sql, params, "preview", request_id(request),
                                 _principal(request), page_size=body.page.limit)
 
@@ -236,9 +243,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise DomainError("QUERY_REJECTED", "SQL is disabled by policy", {"policy": "sql"})
 
     def _relations_in(ctx: Context) -> list[str]:
-        # Register every declared relation eligible for the mode; the policy then
-        # rejects any BASE_TABLE outside that set. Views are cheap until scanned.
-        return [r.full for r in cat.catalog(settings) if ctx.mode in r.modes and r.layer != "ops"]
+        # Register every DECLARED relation eligible for the mode; the policy then rejects any
+        # BASE_TABLE outside that set. Views are cheap until scanned. External Delta tables are
+        # excluded deliberately: there can be thousands of `bronze.<library>.<symbol>`, each one
+        # a table open, and nothing registers them into a session for free. A caller who wants
+        # one names it through /preview.
+        return [r.full for r in cat.catalog(settings)
+                if r.kind != "external_delta" and ctx.mode in r.modes and r.layer != "ops"]
 
     @app.post(f"{V1}/sql/plan")
     def sql_plan(body: SqlBody) -> dict:
@@ -259,15 +270,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 timeout_ms=body.budgets.get("timeout_ms"))
 
     @app.get(f"{V1}/sql/executions/{{execution_id}}/pages")
-    def sql_pages(execution_id: str, cursor: str) -> dict:
-        page = executions.page(cursor)
+    def sql_pages(execution_id: str, cursor: str, request: Request) -> dict:
+        page = executions.page(cursor, _principal(request))
         if page["execution_id"] != execution_id:
             raise DomainError("QUERY_REJECTED", "cursor belongs to another execution")
         return page
 
     @app.delete(f"{V1}/sql/executions/{{execution_id}}", status_code=204)
-    def sql_cancel(execution_id: str) -> Response:
-        if not executions.cancel(execution_id):
+    def sql_cancel(execution_id: str, request: Request) -> Response:
+        if not executions.cancel(execution_id, _principal(request)):
             raise DomainError("NO_MATCHING_FACTS", "unknown execution",
                               {"execution_id": execution_id})
         return Response(status_code=204)
@@ -342,12 +353,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     return app
 
 
+@functools.cache
+def _app() -> FastAPI:
+    return create_app()
+
+
 def __getattr__(name: str):
     """`security_master_api.app.main:app` builds the app on first access, not on import.
 
     Module-level construction would read the environment when a test merely imports
     `create_app`, and settings_from_env raises without the service's own variables set.
+    Cached, because `__getattr__` runs on EVERY attribute access: without it each mention of
+    `main.app` would build a second application with its own Executions and its own budget.
     """
     if name == "app":
-        return create_app()
+        return _app()
     raise AttributeError(name)

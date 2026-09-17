@@ -11,7 +11,7 @@ def test_local_root_wins_and_defaults_apply(tmp_path):
     assert s.storage_options == {}
     assert s.delta_base is None
     assert (s.first_page, s.max_rows, s.timeout_ms) == (100, 10_000, 15_000)
-    assert (s.per_principal_queries, s.scan_slots) == (2, 4)
+    assert (s.per_principal_queries, s.scan_slots) == (8, 4)
     assert (s.sql_policy, s.acquisition_policy) == ("enabled", "review")
     assert s.openbb_url == "http://openbb-api:6900"
 

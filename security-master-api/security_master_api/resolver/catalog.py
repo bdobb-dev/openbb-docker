@@ -120,25 +120,39 @@ def catalog(settings: Settings) -> list[Relation]:
     return _declared() + external_relations(settings)
 
 
-def relation(settings: Settings, full: str) -> Relation:
-    for rel in catalog(settings):
-        if rel.full == full:
-            return rel
-    raise DomainError("QUERY_REJECTED", f"unknown relation: {full}", {"relation": full})
+def catalog_index(settings: Settings) -> dict[str, Relation]:
+    """The catalog keyed by full name, built once and passed down.
+
+    `external_relations` lists a remote object store, so building the catalog is the
+    expensive part of a lookup. Every function below takes this index so one request pays
+    for it once instead of once per relation it happens to mention.
+    """
+    return {rel.full: rel for rel in catalog(settings)}
 
 
-def expand(settings: Settings, relations: Iterable[str]) -> set[str]:
+def relation(settings: Settings, full: str, index: dict[str, Relation] | None = None) -> Relation:
+    rel = (index if index is not None else catalog_index(settings)).get(full)
+    if rel is None:
+        raise DomainError("QUERY_REJECTED", f"unknown relation: {full}", {"relation": full})
+    return rel
+
+
+def expand(settings: Settings, relations: Iterable[str],
+           index: dict[str, Relation] | None = None) -> set[str]:
+    index = catalog_index(settings) if index is None else index
     out: set[str] = set()
     for full in relations:
-        rel = relation(settings, full)
+        rel = relation(settings, full, index)
         out.add(full)
         out |= set(rel.depends_on)
     return out
 
 
-def check_modes(settings: Settings, ctx: Context, relations: Iterable[str]) -> None:
+def check_modes(settings: Settings, ctx: Context, relations: Iterable[str],
+                index: dict[str, Relation] | None = None) -> None:
+    index = catalog_index(settings) if index is None else index
     for full in relations:
-        rel = relation(settings, full)
+        rel = relation(settings, full, index)
         if ctx.mode not in rel.modes:
             raise DomainError(
                 "TEMPORAL_MODE_UNSUPPORTED",

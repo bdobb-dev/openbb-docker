@@ -23,7 +23,7 @@
   ],
   "left_receipt": {
     "availability_policy": "local_as_ingested",
-    "created_at": "2026-09-17T12:02:23.572473Z",
+    "created_at": "2026-09-17T00:00:00Z",
     "dependencies": [
       {
         "delta_version": 3,
@@ -35,17 +35,17 @@
       }
     ],
     "effective_at": null,
-    "execution_id": "qry_40399f3cba9c4c7a",
+    "execution_id": "qry_contract",
     "kind": "compare",
     "known_at": "2026-09-14T20:05:00Z",
     "projection_version": "security-master-projection/1",
-    "request_id": "req_790da703f973",
-    "sql_fingerprint": "",
+    "request_id": "req_contract",
+    "sql_fingerprint": "contract",
     "temporal_mode": "known_at"
   },
   "right_receipt": {
     "availability_policy": "local_as_ingested",
-    "created_at": "2026-09-17T12:02:23.572485Z",
+    "created_at": "2026-09-17T00:00:00Z",
     "dependencies": [
       {
         "delta_version": 3,
@@ -57,12 +57,12 @@
       }
     ],
     "effective_at": null,
-    "execution_id": "qry_b89c894c81314d17",
+    "execution_id": "qry_contract",
     "kind": "compare",
     "known_at": "2026-09-15T09:20:00Z",
     "projection_version": "security-master-projection/1",
-    "request_id": "req_790da703f973",
-    "sql_fingerprint": "",
+    "request_id": "req_contract",
+    "sql_fingerprint": "contract",
     "temporal_mode": "known_at"
   }
 }

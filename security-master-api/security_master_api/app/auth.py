@@ -16,9 +16,10 @@ begins `if scope["type"] != "http": await self.app(...); return`, so it never
 runs for websockets -- and a guard that covers only HTTP would leave any future
 streaming surface wide open while every HTTP test passed.
 
-Two differences from live-grid's copy: the credential may also arrive in the
-`authorization` QUERY PARAMETER, because an EventSource cannot set headers; and
-the liveness path is open, because a health check has no credential to offer.
+Two differences from live-grid's copy: on the SSE routes ONLY, the credential
+may also arrive in the `authorization` query parameter, because an EventSource
+cannot set headers; and the liveness path is open, because a health check has
+no credential to offer.
 """
 
 import base64
@@ -59,10 +60,18 @@ def credentials_ok(header: str | None) -> bool:
 
 
 def credential_of(scope) -> str | None:
-    """The Basic credential this connection offers, header first, then query string."""
+    """The Basic credential this connection offers, header first, then query string.
+
+    The QUERY STRING is honoured only on the SSE routes. A credential in the query string is
+    a credential in uvicorn's access log, in any proxy's log and in the browser's history, so
+    it is allowed exactly where the transport leaves no choice: an EventSource cannot set
+    headers. Every other path must present the header.
+    """
     for key, value in scope.get("headers") or []:
         if key == b"authorization":
             return value.decode("latin-1")
+    if not str(scope.get("path", "")).endswith("/events"):
+        return None
     query = parse_qs(scope.get("query_string", b"").decode())
     return query.get("authorization", [None])[0]
 

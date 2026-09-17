@@ -39,3 +39,15 @@ def install(app: FastAPI) -> None:
                           {"errors": [{"loc": [str(p) for p in e.get("loc", [])],
                                        "msg": e.get("msg")} for e in exc.errors()]})
         return JSONResponse(status_code=422, content=err.envelope(request_id(request)))
+
+    @app.exception_handler(Exception)
+    async def _unhandled(request: Request, exc: Exception):
+        # A handler for Exception runs OUTSIDE the `_stamp` middleware -- Starlette's
+        # ServerErrorMiddleware is the outermost layer -- so this response never passes
+        # through the stamping code and must set `x-request-id` itself. The message says
+        # nothing about `exc`: a traceback or a driver's string is not the client's business.
+        # The exception still reaches the server log through Starlette's own re-raise path.
+        rid = request_id(request)
+        err = DomainError("INTERNAL_ERROR", "the service failed to answer this request")
+        return JSONResponse(status_code=500, content=err.envelope(rid),
+                            headers={"x-request-id": rid})

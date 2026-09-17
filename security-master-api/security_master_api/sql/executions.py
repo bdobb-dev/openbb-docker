@@ -136,7 +136,7 @@ class Executions:
             self._release(principal, scan_acquired=True)
         return self._page(ex, 0)
 
-    def page(self, cursor: str) -> dict:
+    def page(self, cursor: str, principal: str | None = None) -> dict:
         execution_id, offset, fingerprint = decode_cursor(cursor)
         with self._lock:
             ex = self._by_id.get(execution_id)
@@ -145,13 +145,19 @@ class Executions:
                               {"execution_id": execution_id})
         if fingerprint != ex.fingerprint:
             raise DomainError("QUERY_REJECTED", "cursor does not match the execution's context")
+        # A cursor is a bearer token for someone else's result set. When the caller is known,
+        # it must be the caller who started the execution.
+        if principal is not None and principal != ex.principal:
+            raise DomainError("QUERY_REJECTED", "cursor belongs to another principal")
         return self._page(ex, offset)
 
-    def cancel(self, execution_id: str) -> bool:
+    def cancel(self, execution_id: str, principal: str | None = None) -> bool:
         with self._lock:
             ex = self._by_id.get(execution_id)
         if ex is None:
             return False
+        if principal is not None and principal != ex.principal:
+            raise DomainError("QUERY_REJECTED", "execution belongs to another principal")
         if ex.session is not None:
             ex.session.cancel()
         with self._lock:
