@@ -11,14 +11,14 @@ from later chapters is.
 
 | Release | Episode | What it adds |
 |---|---|---|
-| v1.0.0 | Ep. 1 — Your Own Bloomberg in a Closet | Tailscale sidecar + OpenBB Platform API, Serve-only ingress, provider keys |
+| v1.0.0 | Ep. 1 — Your Own Bloomberg in a Cabinet | Tailscale sidecar + OpenBB Platform API, Serve-only ingress, provider keys |
 | v2.0.0 | Ep. 2 — The Borrowed Terminal | HTTP Basic auth on the API, Tailscale Funnel (port 443 only) |
 | v3.0.0 | Ep. 3 — (with BDOBB v3.0.0) | key-maint: the transport-tiered key status widget backend |
 | v6.0.0 | Ep. 6 — The Analyst | OpenBB MCP server (tool-discovery mode), agent deploy configs |
 | v8.0.0 | Ep. 8 — All the News That Fits, We Print | rss-ticker news wire joins the stack |
 | v9.0.0 | Ep. 9 — The Tape | EODHD provider extension + live-grid streaming service |
 
-## What you get (this release: v9.0.0)
+## What you get (this release: v9.0.1)
 
 Six containers, one tailnet node, zero exposed ports:
 
