@@ -70,7 +70,7 @@ bdobb-v2, branch `claude/security-master-browser-v11` from `release/v11`:
   build with a clean-tree check, scrub, Chromium e2e, reference backend).
   No lint gate exists on the line and none is added.
 
-Deployment: NAS compose directory `/share/Container/openbb`; images built
+Deployment: NAS compose directory (the live stack's project directory; docker is not on PATH there, use the container-station binary); images built
 on the Mac for `linux/amd64` and shipped with `docker save | ssh nas
 docker load`; each service recreated with `docker compose up -d
 --no-deps`, after 4 PM ET; seeding runs once with `docker compose run

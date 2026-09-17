@@ -8888,9 +8888,9 @@ Invoke `superpowers:requesting-code-review` on each branch's whole diff (spec, p
 # on the Mac, from the merged release/v11.2.x checkout
 docker build --platform linux/amd64 -f security-master-api/Dockerfile -t openbb-security-master:11.4.0 .
 docker build --platform linux/amd64 --build-arg OPENBB_VERSION=4.7.2 -t openbb-local:11.4.0 .
-docker save openbb-security-master:11.4.0 | gzip -1 | ssh nas 'gunzip | /share/ZFS530_DATA/.qpkg/container-station/bin/docker load'
-docker save openbb-local:11.4.0 | gzip -1 | ssh nas 'gunzip | /share/ZFS530_DATA/.qpkg/container-station/bin/docker load'
-# on the NAS, in /share/Container/openbb
+docker save openbb-security-master:11.4.0 | gzip -1 | ssh nas 'gunzip | docker load'
+docker save openbb-local:11.4.0 | gzip -1 | ssh nas 'gunzip | docker load'
+# on the NAS, in the live compose project directory
 cp docker-compose.yml docker-compose.yml.pre-security-master
 # copy the two new service blocks and the openbb-api SECURITY_MASTER_URL line into docker-compose.yml;
 # write security-master.env from security-master.env.example with a real secret;
