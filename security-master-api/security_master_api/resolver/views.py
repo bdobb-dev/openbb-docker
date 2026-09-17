@@ -28,6 +28,8 @@ def knowledge_filters(ctx: Context) -> tuple[str, str]:
                 f"available_at <= {k} AND (system_to IS NULL OR system_to > {k})")
     if ctx.mode in ("current_corrected", "effective_on"):
         return ("TRUE", "system_to IS NULL AND assertion_status = 'current'")
+    if ctx.mode == "captured_by":
+        return ("TRUE", f"observed_at <= {_ts(ctx.known_at)}")
     return ("TRUE", "TRUE")
 
 
@@ -38,15 +40,24 @@ def effective_filter(ctx: Context) -> str:
     return f"effective_from <= {e} AND (effective_to IS NULL OR effective_to > {e})"
 
 
-def assertions_sql(relation: str, ctx: Context) -> str:
+def assertions_sql(relation: str, ctx: Context, effective: bool = True) -> str:
+    """Current-per-context rows of one Silver relation.
+
+    `effective` gates whether the effective-dated interval filter applies. It holds for
+    interval-shaped state relations (issuers, instruments, securities, listings, identifiers,
+    exchanges, universe_membership) and is exempt for event/period-shaped relations whose own
+    date column is the effective axis (prices_normalized, fundamental_facts, corporate_actions,
+    calendar_exceptions, market_sessions, session_interruptions).
+    """
     layer, _, name = relation.partition(".")
     pre, post = knowledge_filters(ctx)
+    eff = effective_filter(ctx) if effective else "TRUE"
     return (f'SELECT * FROM (SELECT * FROM {layer}."{name}" WHERE {pre} {LATEST_PER_ASSERTION}) '
-            f"WHERE {post} AND {effective_filter(ctx)}")
+            f"WHERE {post} AND {eff}")
 
 
-def _a(relation: str, ctx: Context, alias: str) -> str:
-    return f"({assertions_sql(relation, ctx)}) AS {alias}"
+def _a(relation: str, ctx: Context, alias: str, effective: bool = True) -> str:
+    return f"({assertions_sql(relation, ctx, effective)}) AS {alias}"
 
 
 def gold_sql(name: str, ctx: Context) -> str:
@@ -66,15 +77,13 @@ def gold_sql(name: str, ctx: Context) -> str:
             SELECT p.listing_id, p.market_date, p.open, p.high, p.low, p.close, p.volume,
                    p.price_basis, p.assertion_id, p.capture_id, p.available_at, p.system_from,
                    p.supersedes_assertion_id
-            FROM (SELECT * FROM (SELECT * FROM silver."prices_normalized"
-                  WHERE {knowledge_filters(ctx)[0]} {LATEST_PER_ASSERTION})
-                  WHERE {knowledge_filters(ctx)[1]}) AS p
+            FROM {_a("silver.prices_normalized", ctx, "p", effective=False)}
         """
     if name == "corporate_actions":
         return f"""
             SELECT c.listing_id, c.action_type, c.ex_date, c.ratio, c.amount, c.currency,
                    c.assertion_id, c.capture_id, c.available_at
-            FROM {_a("silver.corporate_actions", ctx, "c")}
+            FROM {_a("silver.corporate_actions", ctx, "c", effective=False)}
         """
     if name == "universe_membership":
         return f"""
@@ -83,6 +92,7 @@ def gold_sql(name: str, ctx: Context) -> str:
             FROM {_a("silver.universe_membership", ctx, "u")}
         """
     if name == "odp_equity_info":
+        facts = assertions_sql("silver.fundamental_facts", ctx, effective=False)
         return f"""
             SELECT l.listing_id, l.symbol, l.name, l.issuer_id, l.mic, l.currency,
                    f.value AS shares_outstanding, f.period_end, f.filing_kind,
@@ -91,28 +101,26 @@ def gold_sql(name: str, ctx: Context) -> str:
                    l.assertion_id, l.capture_id
             FROM {_a("silver.listings", ctx, "l")}
             LEFT JOIN (
-                SELECT * FROM (SELECT * FROM (SELECT * FROM silver."fundamental_facts"
-                    WHERE {knowledge_filters(ctx)[0]} {LATEST_PER_ASSERTION})
-                    WHERE {knowledge_filters(ctx)[1]} AND fact = 'shares_outstanding')
+                SELECT * FROM ({facts}) WHERE fact = 'shares_outstanding'
                 QUALIFY row_number() OVER (PARTITION BY issuer_id ORDER BY period_end DESC,
                                            available_at DESC) = 1
             ) AS f ON f.issuer_id = l.issuer_id
         """
     if name == "market_calendar":
-        pre, post = knowledge_filters(ctx)
-        ex = (f"(SELECT * FROM (SELECT * FROM silver.\"calendar_exceptions\" WHERE {pre} "
-              f"{LATEST_PER_ASSERTION}) WHERE {post})")
+        ex = f"({assertions_sql('silver.calendar_exceptions', ctx, effective=False)})"
         return f"""
             WITH holiday AS (
                 SELECT * FROM {ex} WHERE assertion_domain = 'holiday_date'
                 QUALIFY row_number() OVER (PARTITION BY calendar_id, session_date
-                                           ORDER BY available_at DESC, system_from DESC) = 1
+                                           ORDER BY available_at DESC, system_from DESC,
+                                           assertion_id DESC) = 1
             ), market AS (
                 SELECT * FROM {ex} WHERE assertion_domain = 'market_session'
                 QUALIFY row_number() OVER (PARTITION BY calendar_id, session_date
-                                           ORDER BY available_at DESC, system_from DESC) = 1
+                                           ORDER BY available_at DESC, system_from DESC,
+                                           assertion_id DESC) = 1
             ), sessions AS (
-                SELECT * FROM {_a("silver.market_sessions", ctx, "s")}
+                SELECT * FROM {_a("silver.market_sessions", ctx, "s", effective=False)}
             ), days AS (
                 SELECT calendar_id, session_date FROM holiday
                 UNION SELECT calendar_id, session_date FROM market
@@ -126,6 +134,7 @@ def gold_sql(name: str, ctx: Context) -> str:
                              THEN 'special'
                         WHEN m.market_effect = 'interrupted' THEN 'interrupted'
                         WHEN m.market_effect IS NULL AND h.calendar_id IS NOT NULL THEN 'unknown'
+                        WHEN m.market_effect = 'open' THEN 'open'
                         WHEN m.market_effect = 'none' OR s.calendar_id IS NOT NULL THEN 'open'
                         ELSE 'unknown' END AS session_status,
                    coalesce(h.calendar_system, m.calendar_system, 'gregorian') AS calendar_system,
@@ -145,7 +154,7 @@ def gold_sql(name: str, ctx: Context) -> str:
                    coalesce(m.authority_type, h.authority_type) AS authority_type,
                    coalesce(m.authority_name, h.authority_name) AS authority_name,
                    coalesce(m.authority_verified_at, h.authority_verified_at) AS authority_verified_at,
-                   coalesce(m.source_kind, h.source_kind, s.source_version) AS source_kind,
+                   coalesce(m.source_kind, h.source_kind, 'pandas_rule') AS source_kind,
                    coalesce(m.source_version, h.source_version, s.source_version) AS source_version,
                    coalesce(m.rule_id, h.rule_id, s.rule_id) AS rule_id,
                    coalesce(m.supersedes_assertion_id, h.supersedes_assertion_id) AS supersedes_assertion_id,

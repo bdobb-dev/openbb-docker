@@ -4,9 +4,10 @@ import pytest
 
 from security_master_api.config import Settings
 from security_master_api.resolver.context import parse_context
-from security_master_api.resolver.views import GOLD_NAMES, assertions_sql, gold_sql
+from security_master_api.resolver.views import GOLD_NAMES, assertions_sql, gold_sql, knowledge_filters
 from security_master_api.sql.session import open_session
 from security_master_api.store.seed import seed
+from security_master_api.store.tables import append
 
 
 @pytest.fixture
@@ -78,6 +79,42 @@ def test_ticker_change_is_one_listing(settings):
     with open_session(settings, parse_context(None), ["gold.price_daily"]) as s:
         n = s.run("SELECT count(*) AS n FROM gold.price_daily WHERE listing_id = 'lst_000042'").to_pylist()
     assert n[0]["n"] == 2
+
+
+def test_captured_by_knowledge_filters():
+    ctx = parse_context({"mode": "captured_by", "known_at": "2026-09-15T00:00:00Z"})
+    assert knowledge_filters(ctx) == ("TRUE",
+                                      "observed_at <= TIMESTAMPTZ '2026-09-15T00:00:00+00:00'")
+
+
+def test_corporate_actions_exempt_from_effective_filter(settings):
+    # effective_from lands AFTER the effective_on cutoff below: under the effective filter this
+    # row would be hidden (effective_from <= effective_at fails), but corporate_actions is an
+    # event-shaped relation whose own ex_date is the effective axis, so it must still appear.
+    append(settings, "silver.corporate_actions", [{
+        "listing_id": "lst_apple",
+        "action_type": "split",
+        "ex_date": "2026-06-01",
+        "ratio": 2.0,
+        "amount": None,
+        "currency": None,
+        "effective_from": "2026-06-01T00:00:00Z",
+        "effective_to": None,
+        "observed_at": "2026-05-01T00:00:00Z",
+        "available_at": "2026-05-01T00:00:00Z",
+        "system_from": "2026-05-01T00:00:00Z",
+        "system_to": None,
+        "capture_id": "cap_test_split",
+        "assertion_id": "as_test_split",
+        "assertion_status": "current",
+        "supersedes_assertion_id": None,
+    }])
+    ctx = parse_context({"mode": "effective_on", "effective_at": "2026-01-01T00:00:00Z"})
+    with open_session(settings, ctx, ["gold.corporate_actions"]) as s:
+        rows = s.run("SELECT ex_date FROM gold.corporate_actions "
+                     "WHERE assertion_id = 'as_test_split'").to_pylist()
+    assert len(rows) == 1
+    assert str(rows[0]["ex_date"]) == "2026-06-01"
 
 
 def test_gold_sql_names_only_declared_dependencies():

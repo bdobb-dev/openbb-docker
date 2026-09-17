@@ -82,6 +82,20 @@ def test_india_bakri_eid_correction(settings):
     assert late["2023-06-29"]["market_effect"] == "closed"
 
 
+def session_status_current(settings, calendar_id, session_date):
+    ctx = parse_context({"mode": "current_corrected"})
+    with open_session(settings, ctx, ["gold.market_calendar"]) as s:
+        out = s.run(
+            "SELECT session_status FROM gold.market_calendar WHERE calendar_id = ? "
+            "AND session_date = ?", [calendar_id, session_date]).to_pylist()
+    return out[0]["session_status"] if out else None
+
+
+def test_confirmed_open_day_has_open_session_status(settings):
+    assert session_status_current(settings, "cal_xnse", "2023-06-28") == "open"
+    assert session_status_current(settings, "cal_xdfm", "2024-04-15") == "open"
+
+
 def test_dubai_branches_are_retained(settings):
     ctx = parse_context({"mode": "known_at", "known_at": "2024-04-08T20:00:05Z",
                          "effective_at": "2024-04-08T00:00:00Z"})
