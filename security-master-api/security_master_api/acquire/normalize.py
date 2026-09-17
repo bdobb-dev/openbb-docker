@@ -31,6 +31,35 @@ def _num(value) -> float | None:
         return None
 
 
+def _has_results_list(payload) -> bool:
+    """True for the well-formed 200-body shape: a JSON object with a `results` list, however
+    many items it holds (including zero). False covers a JSON parse failure (`payload is
+    None`), a non-dict top level, and a `results` that is missing, a string, or a dict."""
+    return isinstance(payload, dict) and isinstance(payload.get("results"), list)
+
+
+def _has_exchange_holidays(payload) -> bool:
+    """True for the well-formed exchange_calendar shape: a `results` object carrying an
+    `ExchangeHolidays` dict, however many entries it holds (including zero)."""
+    results = payload.get("results") if isinstance(payload, dict) else None
+    return isinstance(results, dict) and isinstance(results.get("ExchangeHolidays"), dict)
+
+
+_WELL_FORMED = {"price_daily": _has_results_list, "shares_outstanding": _has_results_list,
+                "exchange_calendar": _has_exchange_holidays}
+
+
+def is_malformed_payload(kind: str, payload) -> bool:
+    """A 200 body is malformed when it doesn't have the shape this dataset kind reads from -
+    unparseable JSON, the wrong top-level type, or a missing results container. A well-formed
+    but EMPTY payload (an empty `results` list, a calendar with no holidays) is not malformed:
+    `validate` catches that as "no rows" and the worker ends it `partial`, Bronze retained
+    either way. A kind with no shape check here (e.g. `security_lookup`, never normalized)
+    is never malformed by this function."""
+    check = _WELL_FORMED.get(kind)
+    return check is not None and not check(payload)
+
+
 def _midnight(day: date) -> datetime:
     return datetime.combine(day, datetime.min.time(), tzinfo=UTC)
 

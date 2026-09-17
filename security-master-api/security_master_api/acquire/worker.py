@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 
 from security_master_api.acquire.client import OpenbbClient, classify
 from security_master_api.acquire.normalize import (
+    is_malformed_payload,
     normalize_exchange_calendar,
     normalize_price_daily,
     normalize_shares_outstanding,
@@ -203,11 +204,23 @@ def process(settings: Settings, client: OpenbbClient, job_id: str, worker_id: st
             captures.append((capture_id, resp.json, ident))
         append_event(settings, job_id, "bronze_retained", {"captures": len(captures)}, worker_id)
         append_event(settings, job_id, "normalizing", {}, worker_id)
-        relation, rows = None, []
+        relation, rows, malformed = None, [], False
         for capture_id, payload, ident in captures:
+            if is_malformed_payload(kind, payload):
+                # A body that doesn't parse as JSON, or has no `results` container at all, is
+                # not "the provider said nothing" - it's "we can't tell what the provider
+                # said". That is a validation failure, not a partial answer, even though it
+                # also normalizes to zero rows: Bronze already has the raw evidence for an
+                # operator to inspect.
+                malformed = True
+                continue
             relation, part = _normalize(kind, payload, ident, capture_id, now, req)
             rows += part
         append_event(settings, job_id, "validating", {"rows": len(rows)}, worker_id)
+        if malformed:
+            append_event(settings, job_id, "validation_failed",
+                         {"problems": ["malformed payload"]}, worker_id)
+            return
         problems = validate(relation, rows) if relation else ["nothing to promote"]
         if problems == ["no rows"]:
             # A provider that answers 200 with nothing to say is not a validation failure: the

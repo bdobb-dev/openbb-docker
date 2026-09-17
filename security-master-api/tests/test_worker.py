@@ -91,16 +91,17 @@ def test_validation_failure_keeps_bronze(settings, stub):
     assert any(c["job_id"] == j["job_id"] for c in caps)
 
 
-def test_malformed_payload_ends_partial_with_bronze_kept(settings, stub):
-    """A 200 that normalizes to nothing - malformed JSON included - is an empty answer, not a
-    validation failure: the capture is honest evidence, there is simply nothing in it."""
+def test_malformed_payload_fails_cleanly(settings, stub):
+    """A 200 body that doesn't parse as JSON - or has no `results` container at all - is not
+    the provider saying nothing; it's a shape the worker can't read. That's a validation
+    failure, distinct from a well-formed but empty answer (see the `partial` test below).
+    Bronze still keeps the raw evidence."""
     stub.routes["/api/v1/equity/price/historical"] = (200, "not json{", {})
     j = make_job(settings)
     run_once(settings, OpenbbClient(stub.url, "u", "p"), "w1")
     done = job(settings, j["job_id"])
-    assert done["state"] == "partial"
-    assert done["stage_history"][-1]["detail"]["problems"] == ["no rows"]
-    assert done["stage_history"][-1]["detail"]["captures"]
+    assert done["state"] == "validation_failed"
+    assert done["stage_history"][-1]["detail"]["problems"] == ["malformed payload"]
     caps = open_table(settings, "bronze.source_captures").to_pyarrow_table().to_pylist()
     assert any(c["job_id"] == j["job_id"] for c in caps)
 
