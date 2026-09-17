@@ -18,6 +18,8 @@ import re
 from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 
+import polars as pl
+
 from app.classify import classify
 
 #: Regular session per feed: (IANA zone, open, close). Half-open [open, close)
@@ -32,6 +34,16 @@ SESSIONS: dict[str, tuple[str, str, str]] = {
 # shape rather than the list so a new bucket width needs no edit here. Case
 # matters: `1m` is a minute, `1M` would be a month.
 _INTRADAY = re.compile(r"^\d+[smh]$")
+
+
+def is_intraday(interval: str) -> bool:
+    """True when one bar is shorter than a session.
+
+    Both session questions turn on this -- which bars are inside the regular
+    window, and whether a `bd` window means sessions or bars -- so they ask
+    it in one place rather than each matching the shape themselves.
+    """
+    return bool(_INTRADAY.match(str(interval).strip()))
 
 
 def _naive_utc(raw) -> datetime | None:
@@ -61,7 +73,7 @@ def regular_only(bars: list[dict], symbol: str, interval: str = "1m") -> list[di
     the same calendar file.
     """
     session = SESSIONS.get(classify(symbol))
-    if session is None or not _INTRADAY.match(str(interval).strip()):
+    if session is None or not is_intraday(interval):
         return bars
     zone, open_at, close_at = session
     tz = ZoneInfo(zone)
@@ -74,6 +86,70 @@ def regular_only(bars: list[dict], symbol: str, interval: str = "1m") -> list[di
         if dt is None:
             kept.append(bar)
             continue
+        # ponytail: weekends are not excluded -- no us bars exist on them
+        # today, so a time-of-day filter is the whole test; one weekday() < 5
+        # test closes it if a feed ever ticks on a Saturday.
         if opens <= dt.replace(tzinfo=timezone.utc).astimezone(tz).time() < closes:
             kept.append(bar)
     return kept
+
+
+#: The column `session_closes` groups by and `LocalSource` joins back on.
+SESSION_DATE = "session_date"
+
+
+def session_date(feed: str) -> pl.Expr:
+    """Each bar's session, as the exchange-local calendar date.
+
+    ponytail: the session's date IS the local calendar date. That holds for
+    every feed in SESSIONS -- a US session, extended hours included, runs
+    04:00-20:00 ET and never crosses local midnight -- and for the UTC
+    fallback. A feed whose session straddles midnight (futures at 18:00-17:00
+    ET) would need the session's own open to roll the date. Upgrade path:
+    offset by the open before taking the date.
+
+    ponytail: a feed with no session (crypto, forex) has no exchange clock, so
+    a business day there is a UTC calendar day -- the same boundary the tick
+    plane already stamps its bars against. Upgrade path: a per-feed "day
+    starts at" when one of them grows a settlement hour that matters.
+    """
+    zone = SESSIONS.get(feed, ("UTC", "", ""))[0]
+    return (
+        pl.col("date").cast(pl.Datetime).dt.replace_time_zone("UTC")
+        .dt.convert_time_zone(zone).dt.date().alias(SESSION_DATE)
+    )
+
+
+def session_closes(frame: pl.DataFrame, feed: str = "us") -> pl.DataFrame:
+    """One row per session: that session's bars rolled up into its close.
+
+    This is the series a `bd` window is computed on -- `sma:period=50bd` is
+    fifty BUSINESS DAYS, not fifty bars, so on an intraday chart it has to see
+    one value per session. `date` is the session's LAST bar time and `close`
+    its last close, so the current (partial) session is present and carries
+    the running bar: 49 prior closes plus today, exactly as the spec asks.
+
+    Columns the frame does not carry are simply not aggregated -- a
+    tick-derived frame may have no `adj_close`, and a missing column is not a
+    reason to refuse the whole roll-up.
+    """
+    if frame.height == 0 or "date" not in frame.columns:
+        return frame
+    # open first, high max, low min, close last, volume sum, vwap last: the
+    # session's own bar, built from its minutes.
+    aggregates = {
+        "date": pl.col("date").last(),
+        "open": pl.col("open").first(),
+        "high": pl.col("high").max(),
+        "low": pl.col("low").min(),
+        "close": pl.col("close").last(),
+        "adj_close": pl.col("adj_close").last(),
+        "volume": pl.col("volume").sum(),
+        "vwap": pl.col("vwap").last(),
+    }
+    return (
+        frame.with_columns(session_date(feed))
+        .group_by(SESSION_DATE)
+        .agg(*(expr for name, expr in aggregates.items() if name in frame.columns))
+        .sort(SESSION_DATE)
+    )

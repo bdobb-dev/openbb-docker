@@ -46,11 +46,31 @@ class ChartParams:
     session: str = "extended"
 
 
-def _coerce(key: str, raw: str):
+#: Units a numeric parameter may wear on the wire. `bd` = business days: the
+#: window counts SESSIONS rather than bars and is computed on the session
+#: closes (app.ta.session.session_closes). A bare number is bars, as always.
+_UNITS = ("bd",)
+
+
+def _coerce(key: str, raw: str) -> tuple:
+    """The parameter's value, and the unit it wore -- `("50bd")` -> `(50, "bd")`.
+
+    Stripped here rather than inside resolve() because a unit is grammar, not
+    a parameter: any numeric parameter may wear one, and none of them may
+    reach an indicator's build() as a string. An unrecognised suffix is left
+    on and float() raises, which is what should happen -- `period=50bx` is a
+    typo, and silently reading it as 50 bars draws the wrong line with no
+    error anywhere.
+    """
     if key not in _NUMERIC:
-        return raw
-    value = float(raw)
-    return int(value) if value.is_integer() and key != "k" else value
+        return raw, None
+    text = raw.strip()
+    unit = next((u for u in _UNITS
+                 if text.lower().endswith(u) and text[:-len(u)].strip()), None)
+    if unit is not None:
+        text = text[:-len(unit)].strip()
+    value = float(text)
+    return (int(value) if value.is_integer() and key != "k" else value), unit
 
 
 def with_anchor(indicators: str, anchor: str | None) -> str:
@@ -88,11 +108,15 @@ def parse_indicators(raw: str) -> list[Req]:
             else:
                 pairs[-1] += ":" + part
         params = {}
+        units: dict[str, str] = {}
         for pair in pairs:
             if "=" not in pair:
                 continue
             key, value = pair.split("=", 1)
-            params[key.strip()] = _coerce(key.strip(), value.strip())
+            key = key.strip()
+            params[key], unit = _coerce(key, value.strip())
+            if unit is not None:
+                units[key] = unit
         # `source` rides in the same colon grammar but is NOT an indicator
         # parameter -- it is the request's own Local/EODHD routing choice. It
         # has to come out before resolve(), which raises on any key the
@@ -103,7 +127,7 @@ def parse_indicators(raw: str) -> list[Req]:
         if source is not None and source not in ("local", "eodhd"):
             raise ValueError(
                 f"source must be 'local' or 'eodhd', got {source!r}")
-        reqs.append(resolve(name.strip(), source, **params))
+        reqs.append(resolve(name.strip(), source, units, **params))
     return reqs
 
 
@@ -202,7 +226,8 @@ async def build_payload(
     annotations: list = []
     computed = frame
     if local:
-        computed = LocalSource().series(computed, local).frame
+        computed = LocalSource().series(
+            computed, local, params.interval, params.symbol).frame
     if vendor and eodhd_source is not None:
         last_closed = str(frame["date"][-1]) if frame.height else ""
         result = await eodhd_source.series(
@@ -212,7 +237,8 @@ async def build_payload(
     elif vendor:
         # No vendor client configured: compute locally and say so, exactly as
         # an intraday request is answered.
-        computed = LocalSource().series(computed, vendor).frame
+        computed = LocalSource().series(
+            computed, vendor, params.interval, params.symbol).frame
         annotations = [Annotation(col, "local", "no EODHD source configured")
                        for r in vendor for col in columns_of(r)]
 

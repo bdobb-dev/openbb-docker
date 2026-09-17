@@ -76,7 +76,15 @@ def _series_of(
                 # `style` is presentation carried from a macro, not part of
                 # the request's identity -- a client matching a study to its
                 # series must not have to strip it.
-                "params": {k: v for k, v in series.req.params.items() if k != "style"},
+                #
+                # A parameter that wore a unit goes back in its WIRE form:
+                # the client sent `period=3bd` and matches the series on what
+                # it sent, so a bare 3 here reads as a different study and the
+                # line never finds the instance that asked for it.
+                "params": {
+                    k: f"{v}{series.req.units[k]}" if k in series.req.units else v
+                    for k, v in series.req.params.items() if k != "style"
+                },
                 "source": series.req.source,
             },
             "render": render,

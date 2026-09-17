@@ -30,11 +30,26 @@ class Req:
     `source` (v12.3.0) is the request's own Local/EODHD choice, or None to
     take the chart-wide default; it is part of the request's identity, so
     the same SMA asked of both sources is two requests, not one.
+
+    `units` (v12.3.0) says which parameters were asked for in something other
+    than bars: `{"period": "bd"}` is `period=50bd`, fifty BUSINESS DAYS. The
+    unit is kept beside the value rather than folded into it because the
+    number still has to reach an indicator's build() as a number -- what the
+    unit changes is the FRAME the indicator is computed on (see
+    app.ta.session.session_closes), not the arithmetic. It is part of the
+    request's identity for the same reason `source` is: 50 bars and 50
+    sessions are two different lines.
+
+    A plain dict, exactly like `params`: this dataclass is frozen for intent
+    rather than for hashing (nothing hashes a Req -- panes._key builds a
+    tuple), and a second idiom for the same kind of field would be one more
+    thing to remember.
     """
 
     name: str
     params: dict[str, Any]
     source: str | None = None
+    units: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -104,14 +119,16 @@ def get(name: str) -> Indicator:
         raise KeyError(f"unknown indicator {name!r}") from None
 
 
-def resolve(name: str, source: str | None = None, **overrides: Any) -> Req:
+def resolve(name: str, source: str | None = None,
+            units: dict[str, str] | None = None, **overrides: Any) -> Req:
     """Defaults from the registry, overridden by keyword. Unknown keys raise.
 
     `style` is accepted for every indicator: it is per-series presentation
     carried from a macro, not an indicator parameter, so it is not in
     `Indicator.params`. `source` is the same kind of thing one level up -- a
     routing choice, not a parameter -- so it is a named argument rather than
-    an override, and never reaches `params`.
+    an override, and never reaches `params`. `units` is the third of these:
+    grammar attached to a parameter's value, not a parameter of its own.
     """
     ind = get(name)
     # Validated HERE and not only in parse_indicators: the macro loader calls
@@ -130,7 +147,8 @@ def resolve(name: str, source: str | None = None, **overrides: Any) -> Req:
                 f"unknown parameter {key!r} for {name!r}; "
                 f"expected one of {sorted(ind.params)}"
             )
-    return Req(name, {**ind.params, "style": style, **overrides}, source)
+    return Req(name, {**ind.params, "style": style, **overrides}, source,
+               dict(units or {}))
 
 
 def col_suffix(req: Req) -> str:
@@ -147,8 +165,12 @@ def col_suffix(req: Req) -> str:
     which nothing reads, and the eodhd-labelled series would ship the local
     numbers. A request that names NO source keeps the historic column name
     exactly, so nothing already on the wire moves.
+
+    A parameter's UNIT is part of the signature too: `period=50bd` (fifty
+    sessions) and `period=50` (fifty bars) are different lines and must land
+    in different columns, or the second collapses onto the first.
     """
-    parts = [f"{k}={v}" for k, v in sorted(req.params.items())
+    parts = [f"{k}={v}{req.units.get(k, '')}" for k, v in sorted(req.params.items())
              if k != "style" and v is not None]
     if req.source is not None:
         parts.append(f"source={req.source}")

@@ -3,8 +3,10 @@
 
 """Source adapters. Both engines must emit identical column names."""
 
+import polars as pl
 import pytest
 
+from app.ta.payload import bars_to_frame, parse_indicators
 from app.ta.registry import resolve
 from app.ta.sources import (
     CALLS_PER_REQUEST,
@@ -13,6 +15,7 @@ from app.ta.sources import (
     eodhd_query,
 )
 from tests.ta_helpers import col, cols, fixture_frame
+from tests.test_ta_session import session_bars
 
 
 def test_local_source_produces_the_registry_column_names():
@@ -172,3 +175,54 @@ async def test_an_intraday_chart_never_asks_eodhd_and_says_why():
     assert [(a.column, a.note) for a in result.annotations] == [
         (sma, "EODHD has no intraday data")
     ]
+
+
+# --- business-day (`bd`) windows -------------------------------------------
+#
+# A `bd` window counts SESSIONS, not bars: `sma:period=3bd` on a 1m chart is
+# the mean of the two prior session closes and the running one, held flat
+# across every bar of its session.
+
+def _intraday(*sessions) -> pl.DataFrame:
+    bars = []
+    for day, closes in sessions:
+        bars.extend(session_bars(day, closes))
+    return bars_to_frame(bars)
+
+
+THREE_SESSIONS = (("2024-01-03", [10.0, 11.0, 12.0]),
+                  ("2024-01-04", [20.0, 21.0, 22.0]),
+                  ("2024-01-05", [30.0, 31.0, 32.0]))
+
+
+def test_a_bd_window_computes_on_session_closes_and_broadcasts_to_the_bars():
+    req = parse_indicators("sma:period=3bd")[0]
+    frame = LocalSource().series(
+        _intraday(*THREE_SESSIONS), [req], "1m", "AAPL").frame
+    values = frame[cols(req)[0]].to_list()
+    # The first two sessions have no three closes behind them yet.
+    assert values[:6] == [None] * 6
+    # mean(12, 22, 32) -- and the same value on every bar of the session.
+    assert values[6:] == [22.0, 22.0, 22.0]
+
+
+def test_the_running_session_moves_every_bar_of_that_session():
+    req = parse_indicators("sma:period=3bd")[0]
+    running = (*THREE_SESSIONS[:2], ("2024-01-05", [30.0, 31.0, 32.0, 42.0]))
+    frame = LocalSource().series(_intraday(*running), [req], "1m", "AAPL").frame
+    # The session's close is now the new running bar: mean(12, 22, 42).
+    assert frame[cols(req)[0]].to_list()[6:] == pytest.approx([76 / 3] * 4)
+
+
+def test_bars_and_business_days_are_two_columns_side_by_side():
+    reqs = parse_indicators("sma:period=3,sma:period=3bd")
+    frame = LocalSource().series(
+        _intraday(*THREE_SESSIONS), reqs, "1m", "AAPL").frame
+    assert frame[cols(reqs[0])[0]].to_list()[-1] == 31.0   # 30, 31, 32
+    assert frame[cols(reqs[1])[0]].to_list()[-1] == 22.0   # 12, 22, 32
+
+
+def test_on_a_daily_frame_a_business_day_is_a_bar():
+    bars, days = parse_indicators("sma:period=3,sma:period=3bd")
+    frame = LocalSource().series(fixture_frame(), [bars, days], "1d").frame
+    assert frame[cols(days)[0]].to_list() == frame[cols(bars)[0]].to_list()

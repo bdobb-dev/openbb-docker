@@ -6,6 +6,7 @@
 import pytest
 
 from app.ta.payload import ChartParams, bars_to_frame, build_payload, parse_indicators
+from app.ta.registry import col_suffix
 from tests.ta_helpers import fixture_frame
 
 BARS = [
@@ -267,3 +268,20 @@ def test_a_source_less_request_keeps_its_historic_column_name():
 
     (plain,) = parse_indicators("sma:period=50")
     assert col_suffix(plain) == "|period=50"
+
+
+def test_parse_indicators_reads_a_business_day_window():
+    """`50bd` is fifty business days: the number is a number, `bd` is a unit."""
+    req = parse_indicators("sma:period=50bd")[0]
+    assert req.params["period"] == 50
+    assert req.units == {"period": "bd"}
+
+
+def test_a_bare_number_wears_no_unit():
+    assert parse_indicators("sma:period=50")[0].units == {}
+
+
+def test_a_business_day_window_names_its_own_column():
+    bars, days = parse_indicators("sma:period=50,sma:period=50bd")
+    assert col_suffix(bars) == "|period=50"
+    assert col_suffix(days) == "|period=50bd"
