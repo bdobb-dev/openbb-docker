@@ -1,0 +1,114 @@
+{
+  "schema_version": "security-master.temporal-fixture.v1",
+  "fixture_id": "XDFM-eid-al-fitr-2024",
+  "exchange_mic": "XDFM",
+  "exchange_name": "Dubai Financial Market",
+  "holiday_family": "Eid Al Fitr",
+  "capture_time_semantics": "synthetic_test_capture",
+  "capture_time_note": "known_from values are deterministic test instants. published_on records the historical source date.",
+  "events": [
+    {
+      "event_id": "dubai-t0-conditional-exchange-circular",
+      "known_from": "2024-04-04T12:00:00Z",
+      "published_on": "2024-04-04",
+      "source_kind": "conditional_exchange_notice",
+      "authority": "Dubai Financial Market",
+      "source_url": "https://assets.dfm.ae/docs/default-source/circulars/dfm/circular-01-2024-eid-al-fitr-holiday---english.pdf?sfvrsn=5c6dd681_0",
+      "assertion": "The exchange published two reopening branches conditional on the first day of Eid."
+    },
+    {
+      "event_id": "dubai-t1-moon-sighting-confirmation",
+      "known_from": "2024-04-08T20:00:00Z",
+      "published_on": "2024-04-08",
+      "source_kind": "religious_authority_notice",
+      "authority": "UAE Moon-sighting Committee",
+      "source_url": "https://www.wam.ae/en/article/b2jxoem-update-uae-announces-wednesday-first-day-eid-fitr",
+      "assertion": "The committee confirmed 2024-04-10 as the first day of Eid Al Fitr."
+    },
+    {
+      "event_id": "dubai-t2-derived-branch-selection",
+      "known_from": "2024-04-08T20:00:05Z",
+      "published_on": "2024-04-08",
+      "source_kind": "derived_calendar_resolution",
+      "authority": "Security Master calendar resolver",
+      "source_url": "https://assets.dfm.ae/docs/default-source/circulars/dfm/circular-01-2024-eid-al-fitr-holiday---english.pdf?sfvrsn=5c6dd681_0",
+      "assertion": "The confirmed April 10 Eid date selects the exchange's April 15 reopening branch."
+    }
+  ],
+  "expected_states": [
+    {
+      "stage": "T0_PROJECTED",
+      "known_from": "2024-04-04T12:00:00Z",
+      "authority_status": "awaiting_moon_sighting",
+      "market_status": "conditional",
+      "summary": "DFM published two possible reopening dates.",
+      "evidence_event_ids": ["dubai-t0-conditional-exchange-circular"],
+      "candidate_branches": [
+        {
+          "condition": "eid_first_day=2024-04-09",
+          "reopen_date": "2024-04-12"
+        },
+        {
+          "condition": "eid_first_day=2024-04-10",
+          "reopen_date": "2024-04-15"
+        }
+      ],
+      "selected_branch": null,
+      "market_dates": []
+    },
+    {
+      "stage": "T1_AUTHORITY_CONFIRMED",
+      "known_from": "2024-04-08T20:00:00Z",
+      "authority_status": "confirmed_by_religious_authority",
+      "market_status": "pending_resolution",
+      "summary": "Moon-sighting authority confirmed April 10; branch resolution pending.",
+      "evidence_event_ids": [
+        "dubai-t0-conditional-exchange-circular",
+        "dubai-t1-moon-sighting-confirmation"
+      ],
+      "candidate_branches": [
+        {
+          "condition": "eid_first_day=2024-04-09",
+          "reopen_date": "2024-04-12"
+        },
+        {
+          "condition": "eid_first_day=2024-04-10",
+          "reopen_date": "2024-04-15"
+        }
+      ],
+      "selected_branch": null,
+      "market_dates": []
+    },
+    {
+      "stage": "T2_MARKET_FINAL",
+      "known_from": "2024-04-08T20:00:05Z",
+      "authority_status": "confirmed_by_religious_authority",
+      "market_status": "final",
+      "summary": "The April 10 condition selected the April 15 reopening branch.",
+      "evidence_event_ids": [
+        "dubai-t0-conditional-exchange-circular",
+        "dubai-t1-moon-sighting-confirmation",
+        "dubai-t2-derived-branch-selection"
+      ],
+      "candidate_branches": [
+        {
+          "condition": "eid_first_day=2024-04-09",
+          "reopen_date": "2024-04-12"
+        },
+        {
+          "condition": "eid_first_day=2024-04-10",
+          "reopen_date": "2024-04-15"
+        }
+      ],
+      "selected_branch": {
+        "condition": "eid_first_day=2024-04-10",
+        "reopen_date": "2024-04-15"
+      },
+      "market_dates": [
+        {"date": "2024-04-12", "session": "closed"},
+        {"date": "2024-04-15", "session": "open"}
+      ]
+    }
+  ]
+}
+

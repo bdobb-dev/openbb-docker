@@ -1,0 +1,28 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "security-master-api"
+version = "0.1.0"
+description = "Temporal security-master service contracts and fixtures"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff==0.15.22"]
+
+[tool.setuptools]
+packages = ["security_master_api"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+

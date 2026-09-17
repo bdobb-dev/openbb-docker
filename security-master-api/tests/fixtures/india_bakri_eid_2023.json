@@ -1,0 +1,90 @@
+{
+  "schema_version": "security-master.temporal-fixture.v1",
+  "fixture_id": "XNSE-bakri-eid-2023",
+  "exchange_mic": "XNSE",
+  "exchange_name": "National Stock Exchange of India",
+  "holiday_family": "Bakri Eid",
+  "capture_time_semantics": "synthetic_test_capture",
+  "capture_time_note": "known_from values are deterministic test instants. published_on records the historical source date.",
+  "events": [
+    {
+      "event_id": "india-t0-exchange-calendar",
+      "known_from": "2022-12-08T18:00:00Z",
+      "published_on": "2022-12-08",
+      "source_kind": "exchange_calendar",
+      "authority": "National Stock Exchange of India",
+      "source_url": "https://archives.nseindia.com/content/circulars/CMTR54757.pdf",
+      "assertion": "The annual calendar listed Bakri Eid on 2023-06-28."
+    },
+    {
+      "event_id": "india-t1-government-notice",
+      "known_from": "2023-06-26T12:00:00Z",
+      "published_on": "2023-06-26",
+      "source_kind": "government_notice",
+      "authority": "Government of Maharashtra",
+      "source_url": "http://sppudocs.unipune.ac.in/sites/circulars/Administrative%20Circulars%20%20Non%20Teaching/Circular%20No.125-2023_27062023.pdf",
+      "assertion": "The state canceled the June 28 holiday and declared June 29 instead."
+    },
+    {
+      "event_id": "india-t2-exchange-clearing-notice",
+      "known_from": "2023-06-27T12:00:00Z",
+      "published_on": "2023-06-27",
+      "source_kind": "exchange_clearing_notice",
+      "authority": "NSE Clearing",
+      "source_url": "https://archives.nseindia.com/content/circulars/CMPT57291.pdf",
+      "assertion": "The exchange opened June 28, closed June 29, revised expiry to June 28, and adjusted settlement dependencies."
+    }
+  ],
+  "expected_states": [
+    {
+      "stage": "T0_PROJECTED",
+      "known_from": "2022-12-08T18:00:00Z",
+      "authority_status": "projected",
+      "market_status": "final",
+      "summary": "Annual exchange calendar: June 28 closed.",
+      "evidence_event_ids": ["india-t0-exchange-calendar"],
+      "market_dates": [
+        {"date": "2023-06-28", "session": "closed"},
+        {"date": "2023-06-29", "session": "open"}
+      ],
+      "expiry_date": "2023-06-29",
+      "settlement_status": "original"
+    },
+    {
+      "stage": "T1_AUTHORITY_CONFIRMED",
+      "known_from": "2023-06-26T12:00:00Z",
+      "authority_status": "confirmed_by_government",
+      "market_status": "pending",
+      "summary": "Government holiday moved to June 29; exchange treatment pending.",
+      "evidence_event_ids": [
+        "india-t0-exchange-calendar",
+        "india-t1-government-notice"
+      ],
+      "market_dates": [
+        {"date": "2023-06-28", "session": "previously_scheduled_closed"},
+        {"date": "2023-06-29", "session": "authority_holiday_pending_exchange"}
+      ],
+      "expiry_date": "pending",
+      "settlement_status": "pending"
+    },
+    {
+      "stage": "T2_MARKET_FINAL",
+      "known_from": "2023-06-27T12:00:00Z",
+      "authority_status": "confirmed_by_government",
+      "market_status": "final",
+      "summary": "June 28 opened; June 29 closed; expiry and settlement revised.",
+      "evidence_event_ids": [
+        "india-t0-exchange-calendar",
+        "india-t1-government-notice",
+        "india-t2-exchange-clearing-notice"
+      ],
+      "market_dates": [
+        {"date": "2023-06-28", "session": "open"},
+        {"date": "2023-06-29", "session": "closed"}
+      ],
+      "expiry_date": "2023-06-28",
+      "settlement_status": "revised"
+    }
+  ]
+}
+
