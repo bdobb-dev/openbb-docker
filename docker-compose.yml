@@ -68,7 +68,7 @@ services:
   # OpenBB Platform REST API. Binds 127.0.0.1 so only Serve can reach it.
   openbb-api:
     build: .
-    image: openbb-local:9.0.0
+    image: openbb-local:9.1.1
     container_name: openbb-api
     restart: unless-stopped
     networks: [openbb-internal]
@@ -97,7 +97,7 @@ services:
   # Endpoint path is /mcp (a request to /mcp/ 307-redirects there).
   openbb-mcp:
     build: .
-    image: openbb-local:9.0.0
+    image: openbb-local:9.1.1
     container_name: openbb-mcp
     restart: unless-stopped
     networks: [openbb-internal]
@@ -134,7 +134,7 @@ services:
   # SSH — no port, no header).
   key-maint:
     build: ./key-maint
-    image: openbb-key-maint:9.0.0
+    image: openbb-key-maint:9.1.1
     container_name: openbb-key-maint
     restart: unless-stopped
     environment:
@@ -168,7 +168,7 @@ services:
   # run untrusted workloads on this host, these two are what to think about.
   live-grid:
     build: ./live-grid
-    image: openbb-live-grid:9.0.0
+    image: openbb-live-grid:9.1.1
     container_name: openbb-live-grid
     restart: unless-stopped
     # live-grid's bind is baked into its Dockerfile CMD as 127.0.0.1:6903.
