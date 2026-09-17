@@ -43,6 +43,7 @@ from app.ta.payload import (
     with_anchor,
 )
 from app.ta.registry import catalog
+from app.ta.session import regular_only
 from app.ta.series_payload import build_series_payload, series_delta
 from app.ta.sources import EodhdSource
 
@@ -459,6 +460,7 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             indicators=with_anchor(query.get("indicators", ""), query.get("anchor")),
             start=s, end=e, provider=query.get("provider", "kdb"),
             basis=query.get("basis", "adjusted"),
+            session=query.get("session", "extended"),
         )
         interval_s = float(os.getenv("TA_PUSH_INTERVAL_MS", "1000")) / 1000.0
         previous: list[str] = []
@@ -487,6 +489,12 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                 except Exception as exc:  # noqa: BLE001
                     log.warning("ta_chart_ws bars unavailable for %s: %s", params.symbol, exc)
                     bars, bars_error = [], exc
+                # Before the frame, so every indicator -- AVWAP's cumulative
+                # sums included -- sees only the session's bars. Filtering the
+                # OUTPUT instead would leave each study carrying the extended
+                # hours it was told to exclude.
+                if params.session == "regular":
+                    bars = regular_only(bars, params.symbol, params.interval)
                 try:
                     figure, panes, frame, annotations = await build_payload(
                         params, bars_to_frame(bars, basis=params.basis), eodhd_source=_eodhd
@@ -549,6 +557,7 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             indicators=with_anchor(query.get("indicators", ""), query.get("anchor")),
             start=s, end=e, provider=query.get("provider", "kdb"),
             basis=query.get("basis", "adjusted"),
+            session=query.get("session", "extended"),
         )
         interval_s = float(os.getenv("TA_PUSH_INTERVAL_MS", "1000")) / 1000.0
         previous: list[str] = []
@@ -567,6 +576,11 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                     log.warning("ta_series_ws bars unavailable for %s: %s",
                                 params.symbol, exc)
                     bars, bars_error = [], exc
+                # Same as ta_chart_ws: the cut happens before the frame, so
+                # every study recomputes on the session's bars rather than
+                # having the extended hours trimmed off its output.
+                if params.session == "regular":
+                    bars = regular_only(bars, params.symbol, params.interval)
                 try:
                     _, panes, frame, annotations = await build_payload(
                         params, bars_to_frame(bars, basis=params.basis), eodhd_source=_eodhd

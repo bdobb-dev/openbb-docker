@@ -38,6 +38,12 @@ class ChartParams:
     end: str | None = None
     provider: str = "kdb"
     basis: str = "adjusted"
+    # "extended" (every bar) or "regular" (the feed's regular session only).
+    # Only the literal "regular" filters; anything else is extended, with no
+    # error -- the socket URL is built by a client that may be newer or older
+    # than this server, and closing the stream on an unrecognised toggle is
+    # worse than showing the whole tape. See app.ta.session.
+    session: str = "extended"
 
 
 def _coerce(key: str, raw: str):
