@@ -76,6 +76,7 @@
                 "interval": "1m",
                 "macro": "classic-momentum",
                 "indicators": "supertrend:period=10,ichimoku",
+                "panels": "0,0,100,70,24,56;70,0,100,30,24,56",
                 "source": "local",
                 "basis": "adjusted"
               }
