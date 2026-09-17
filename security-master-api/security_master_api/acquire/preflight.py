@@ -133,7 +133,12 @@ def preflight(settings: Settings, ctx: Context, request: dict) -> dict:
     for ident in request.get("identifiers", []):
         # resolve() raises IDENTITY_UNRESOLVED rather than guessing, and that refusal is the
         # answer: a preflight that invented a symbol would acquire the wrong security.
-        candidate = resolve(settings, ctx, ident)["candidates"][0]
+        candidates = resolve(settings, ctx, ident)["candidates"]
+        if not candidates:
+            raise DomainError("IDENTITY_UNRESOLVED",
+                              f"{ident} has no candidate under this context",
+                              {"identifier": ident})
+        candidate = candidates[0]
         identities.append({
             "identifier": ident, "listing_id": candidate["listing_id"],
             "instrument_id": candidate["instrument_id"], "security_id": candidate["security_id"],
@@ -144,8 +149,15 @@ def preflight(settings: Settings, ctx: Context, request: dict) -> dict:
     missing: list[dict] = []
     calendar, warnings = None, []
     if dataset == "price_daily":
-        start, end = date.fromisoformat(request["start_date"]), \
-            date.fromisoformat(request["end_date"])
+        # `request` is a free-form dict off the wire. A missing or malformed date is the
+        # caller's mistake and must answer as one, not as an unhandled KeyError/ValueError.
+        try:
+            start = date.fromisoformat(request["start_date"])
+            end = date.fromisoformat(request["end_date"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise DomainError("QUERY_REJECTED",
+                              "price_daily needs start_date and end_date as ISO dates",
+                              {"dataset": dataset}) from exc
         if end < start:
             raise DomainError("QUERY_REJECTED", "end_date precedes start_date")
         for identity in identities:

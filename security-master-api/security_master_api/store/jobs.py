@@ -32,8 +32,11 @@ def _now() -> datetime:
 
 
 def _events_table(settings: Settings, where: str, params: list) -> list[dict]:
+    # `event_id` breaks the tie: two workers appending at once can mint the same `seq`, and an
+    # arbitrary order between them would let BOTH of them read themselves as the first
+    # `fetching` event and both believe they hold the claim.
     with open_session(settings, parse_context(_SNAPSHOT), ["ops.job_events"]) as s:
-        return s.run(f"SELECT * FROM ops.job_events WHERE {where} ORDER BY seq",
+        return s.run(f"SELECT * FROM ops.job_events WHERE {where} ORDER BY seq, event_id",
                      params).to_pylist()
 
 

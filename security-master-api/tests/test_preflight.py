@@ -53,6 +53,18 @@ def test_unresolved_identifier_is_reported_not_guessed(settings):
     assert exc.value.code == "IDENTITY_UNRESOLVED"
 
 
+@pytest.mark.parametrize("bad", [
+    {k: v for k, v in REQ.items() if k != "start_date"},
+    {**REQ, "end_date": "not-a-date"},
+    {**REQ, "dataset": "sentiment"},
+    {**REQ, "policy": "whatever"},
+])
+def test_a_malformed_request_is_refused_not_crashed(settings, bad):
+    with pytest.raises(DomainError) as exc:
+        preflight(settings, parse_context(None), bad)
+    assert exc.value.code == "QUERY_REJECTED"
+
+
 def test_calendar_warning_when_session_evidence_is_not_final(settings):
     req = {"dataset": "price_daily", "identifiers": ["AAPL"], "start_date": "2027-03-01",
            "end_date": "2027-03-31", "policy": "missing_only", "price_basis": "raw",
