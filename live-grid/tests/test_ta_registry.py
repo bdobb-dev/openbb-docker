@@ -9,7 +9,7 @@ import pytest
 from app.ta.compute import compute
 from app.ta.iterative import ITERATIVE
 from app.ta.payload import _NUMERIC
-from app.ta.registry import REGISTRY, get, resolve
+from app.ta.registry import REGISTRY, catalog, get, resolve
 from tests.ta_helpers import col, fixture_frame
 
 
@@ -111,6 +111,31 @@ def test_registry_is_thirty_four_indicators_with_twelve_eodhd_maps():
     assert len(REGISTRY) == 34, sorted(REGISTRY)  # 33 + pivots_standard
     mapped = [n for n, i in REGISTRY.items() if i.eodhd is not None]
     assert len(mapped) == 12, sorted(mapped)  # cci is local-only (see registry)
+
+
+# Studies picker (v12.3.1, studies addendum S3): the six group tabs, verbatim
+# and in this order.
+GROUPS = ["Moving averages", "Bands & channels", "Trend", "Oscillators", "Volume", "Volatility"]
+
+
+def test_catalog_projects_group_title_description_wiki():
+    entries = {e["name"]: e for e in catalog()}
+    assert entries["sma"]["group"] == "Moving averages"
+    assert entries["sma"]["title"] == "Simple Moving Average"
+    assert entries["bbands"]["group"] == "Bands & channels"
+    assert entries["rsi"]["group"] == "Oscillators"
+    assert entries["obv"]["group"] == "Volume"
+    assert entries["atr"]["group"] == "Volatility"
+    assert entries["sar"]["group"] == "Trend"
+    for e in entries.values():
+        assert e["group"] in GROUPS, e["name"]
+        assert e["title"].strip() and e["title"] != e["name"], e["name"]
+        assert len(e["description"].split()) >= 8, e["name"]
+        assert e["wiki"] is None or e["wiki"].startswith("https://en.wikipedia.org/wiki/"), e["name"]
+
+
+def test_every_group_is_used():
+    assert {e["group"] for e in catalog()} == set(GROUPS)
 
 
 def test_resolve_rejects_a_style_that_is_not_a_mapping():
