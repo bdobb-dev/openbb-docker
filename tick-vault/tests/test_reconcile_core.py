@@ -84,7 +84,7 @@ def _build_day_ticks():
 # ---------------------------------------------------------------------------
 
 def test_policy_constant():
-    assert BAR_INCLUSION_POLICY == "BAR_INCL_V3"
+    assert BAR_INCLUSION_POLICY == "BAR_INCL_V4"
 
 
 def test_ineligible_flags_built_from_decode_table():
@@ -543,6 +543,21 @@ def test_aggregate_bars_v3_collapses_repeated_block_reports_in_volume_only():
     row = bars.iloc[0]
     assert stats.deduped_block_rows == 2
     assert row["volume"] == 100 + block["shares"] + 9_999 + 9_999
+    # V4: copies inside BLOCK_DEDUP_MIN_GAP_S are separate prints, not a
+    # re-report - the vendor counts both (MSFT/GOOG/COST were under-counted
+    # by V3, which collapsed them).
+    near = [
+        _tick(1, 10, 0, 0, 110.00, 100),
+        _tick(2, 11, 0, 0, 50_000, 50_000, sl="@ TW"),
+        _tick(3, 11, 0, 1, 50_000, 50_000, sl="@ TW"),   # 1 s later: kept
+        _tick(4, 11, 5, 0, 50_000, 50_000, sl="@ TW"),   # 5 min later: collapsed
+    ]
+    near_df = parse_tick_payload(
+        near, capture_id="cap_y", listing_id="lst_a", instrument_id="ins_a", observed_at=OBS
+    )
+    near_bars, near_stats = aggregate_bars(near_df, interval="1d", return_stats=True)
+    assert near_stats.deduped_block_rows == 1
+    assert near_bars.iloc[0]["volume"] == 100 + 50_000 + 50_000
     # prices are never deduped, and the block's own price still can't set one
     # (TB = extended hours + average price, both price-ineligible)
     assert row["high"] == 110.00 and row["close"] == 110.00

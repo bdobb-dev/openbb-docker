@@ -67,12 +67,15 @@ which is how vendor EOD volume is defined. Intraday (`1m`/`5m`) bucket
 volume sums only the volume-eligible prints inside the session window,
 so intraday buckets do not add up to the daily volume.
 
-V3 additionally collapses REPEATED BLOCK REPORTS in that sum: prints of
-`BLOCK_DEDUP_MIN_SIZE` shares or more that are identical in
-`_BLOCK_KEY` (date, price, size, venue, conditions) count once, earliest
-kept. This is a heuristic about what a repeat means - silver keeps every
-report, `BarStats.deduped_block_rows` says how many the sum dropped, and
-prices are never deduped.
+V3/V4 additionally collapse RE-REPORTED BLOCKS in that sum: prints of
+`BLOCK_DEDUP_MIN_SIZE` shares or more that are identical in `_BLOCK_KEY`
+(date, price, size, venue, conditions) AND land more than
+`BLOCK_DEDUP_MIN_GAP_S` after the group's first copy count once, earliest
+kept. V4 added the gap: V3 collapsed every repeat and so under-counted
+liquid names whose identical blocks print within a second or two of each
+other (the vendor counts those). This is a heuristic about what a repeat
+means - silver keeps every report, `BarStats.deduped_block_rows` says how
+many the sum dropped, and prices are never deduped.
 
 Bars are analytics output, not the bitemporal system of record: OHLCV
 values are plain Python floats/ints even when the input frame carries
@@ -100,7 +103,7 @@ import pandas as pd
 from tick_vault.ids import new_id
 from tick_vault.sl_conditions import _TABLE as _SL_TABLE, decode_sl
 
-BAR_INCLUSION_POLICY = "BAR_INCL_V3"
+BAR_INCLUSION_POLICY = "BAR_INCL_V4"
 
 # Block dedup (V3): the same large block re-reported minutes apart, every copy
 # uncancelled in the tick feed (L 2026-09-03: 387,477 sh @ 110.04 on venue D at
@@ -110,6 +113,14 @@ BAR_INCLUSION_POLICY = "BAR_INCL_V3"
 # 2 of 300 passing days broken.
 BLOCK_DEDUP_MIN_SIZE = 10_000
 _BLOCK_KEY = ["trade_date", "price", "size", "venue_code_raw", "sale_condition_raw"]
+# Only collapse a repeat that lands this many seconds after the group's first
+# copy (`None` collapses regardless of gap). Phase-0 evidence: re-reports arrive
+# minutes later, and several symbols share the same replay timestamps (L and
+# GOOG both at 16:51:39 and 16:52:54 - one off-exchange bulk re-publication),
+# while copies 0-2 s apart are separate prints the vendor counts twice (MSFT
+# '@ TW' pairs 0.1 s apart, GOOG '@ TP' x7 inside one second). Restricting by
+# venue instead does NOT work: the wrongly-dropped copies are on venue D too.
+BLOCK_DEDUP_MIN_GAP_S: "float | None" = 60.0
 
 _NY_TZ = ZoneInfo("America/New_York")
 
@@ -270,6 +281,10 @@ def aggregate_bars(
     vol_rows = vol_rows.sort_values(["trade_ts_ms", "session_seq"])
     big = vol_rows[vol_rows["size"].fillna(0).astype(float) >= BLOCK_DEDUP_MIN_SIZE]
     repeats = big.index[big.duplicated(subset=_BLOCK_KEY, keep="first")]
+    if BLOCK_DEDUP_MIN_GAP_S is not None and len(repeats):
+        first_ts = big.groupby(_BLOCK_KEY, dropna=False)["trade_ts_ms"].transform("first")
+        late = (big["trade_ts_ms"] - first_ts) / 1000.0 > BLOCK_DEDUP_MIN_GAP_S
+        repeats = repeats.intersection(big.index[late])
     deduped_block_rows = len(repeats)
     if deduped_block_rows:
         vol_rows = vol_rows.drop(index=repeats)
