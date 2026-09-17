@@ -42,6 +42,17 @@ Everything else — `openbb-mcp`, `key-maint`, `live-grid`, `rss-ticker`, and
 certificate at `https://openbb.<your-tailnet>.ts.net`, reachable from every
 device on your tailnet and invisible to everything else.
 
+**New in v11.4.0 (Ep. 11 line):** the Security Master Browser. Two new
+services over the same shared store — **`security-master-api`** (temporal
+catalog, guarded DuckDB SQL, ODP projection, receipts, acquisition preflight
+and job state; owns MinIO access so no other reader has to) and
+**`security-master-worker`** (the acquisition worker, which holds no
+provider key of its own — every acquisition goes through `openbb-api` with
+the stack's one Basic credential). Published on Serve `:6905` and as the
+Tailscale Service `svc:openbb-security-master`. See
+[security-master-api/README.md](security-master-api/README.md) and the
+[design doc](docs/superpowers/specs/2026-09-17-security-master-browser-design.md).
+
 **New in v11.0.0 (Ep. 11):** the shared store. **MinIO joins the tailnet as
 its own node**, `minio.<your-tailnet>.ts.net`, with a real Let's Encrypt
 certificate — not a Serve route on the `openbb` node, because S3's SigV4

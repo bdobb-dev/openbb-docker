@@ -353,6 +353,62 @@ services:
       - path: ./minio.env
         required: true
 
+  # security-master-api: the Security Master Browser's service (Ep. 11 line).
+  # Owns MinIO access, DuckDB execution, temporal resolution, ODP projection,
+  # receipts and job state. Read paths never call a provider. Basic auth from
+  # api-auth.env (the stack's one credential), published by Serve on :6905 and
+  # as the Tailscale Service svc:openbb-security-master.
+  security-master-api:
+    build:
+      context: .
+      dockerfile: security-master-api/Dockerfile
+    image: openbb-security-master:11.4.0
+    container_name: openbb-security-master-api
+    restart: unless-stopped
+    networks:
+      - openbb-internal
+    depends_on:
+      - tailscale
+      - minio
+    # --no-access-log: the SSE route (/acquisitions/{job_id}/events) accepts
+    # its credential as a query-string parameter because an EventSource
+    # cannot send a header -- the access log must never record that URL.
+    command: ["uvicorn", "security_master_api.app.main:app", "--host", "0.0.0.0", "--port", "6905", "--no-access-log"]
+    environment:
+      - OPENBB_URL=http://openbb-api:6900
+    env_file:
+      - path: ./api-auth.env
+        required: true
+      - path: ./minio.env
+        required: true
+      - path: ./security-master.env
+        required: true
+
+  # security-master-worker: the acquisition worker from the same image. It
+  # holds no EODHD key: every acquisition goes through openbb-api with the
+  # stack's Basic credential, so entitlement and rate limits stay in one place.
+  security-master-worker:
+    image: openbb-security-master:11.4.0
+    container_name: openbb-security-master-worker
+    restart: unless-stopped
+    networks:
+      - openbb-internal
+    depends_on:
+      - tailscale
+      - minio
+      - openbb-api
+      - security-master-api
+    command: ["python", "-m", "security_master_api.acquire"]
+    environment:
+      - OPENBB_URL=http://openbb-api:6900
+    env_file:
+      - path: ./api-auth.env
+        required: true
+      - path: ./minio.env
+        required: true
+      - path: ./security-master.env
+        required: true
+
   # key-maint: the transport-tiered "key status" widget backend (Ep. 3).
   # One process, two servers: a network server on loopback :8447 (published by
   # Serve on :10000 and as the Tailscale Service svc:openbb-keys — tailnet-only;
