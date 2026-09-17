@@ -58,6 +58,19 @@ def test_cancelling_a_terminal_job_is_refused(client):
     assert r.json()["error"]["details"]["state"] == "failed"
 
 
+def test_security_lookup_jobs_are_refused(client):
+    """security_lookup is preflight-only: a job would burn the one call it costs and have
+    nothing to promote, since normalize() has no writer for it."""
+    req = {"dataset": "security_lookup", "identifiers": [], "query": "AAPL",
+           "policy": "missing_only"}
+    pf = client.post(f"{V1}/acquisitions/preflight", json={"request": req, "context": {}})
+    assert pf.status_code == 200 and pf.json()["token"]
+    r = client.post(f"{V1}/acquisitions", json={"request": req, "token": pf.json()["token"]})
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "QUERY_REJECTED"
+    assert r.json()["error"]["details"]["dataset"] == "security_lookup"
+
+
 def test_acquisition_disabled_by_policy(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENBB_API_AUTH", "false")
     s = Settings(root=str(tmp_path), preflight_secret="k", acquisition_policy="disabled")

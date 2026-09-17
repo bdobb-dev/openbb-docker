@@ -394,6 +394,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise DomainError("ACQUISITION_REVIEW_REQUIRED", "acquisition is disabled by policy",
                               {"policy": "disabled"})
         claims = verify_token(settings, body.token, body.request)
+        if claims["dataset"] == "security_lookup":
+            # security_lookup exists so a caller can PREVIEW a bounded provider lookup before
+            # deciding anything; running it as a job would spend the one call it costs and
+            # still have nothing durable to promote - normalize() has no writer for it.
+            raise DomainError("QUERY_REJECTED",
+                              "security_lookup is preflight-only in this release",
+                              {"dataset": "security_lookup"})
         existing = by_fingerprint(settings, claims["fingerprint"])
         if existing is not None:
             # Not a new job and not an error: the same request arriving twice gets the job it

@@ -46,6 +46,9 @@ _KEYS = {"silver.prices_normalized": ("listing_id", "market_date"),
          "silver.calendar_exceptions": ("calendar_id", "session_date", "assertion_domain")}
 
 
+_MAX_PAYLOAD = 2_000_000
+
+
 def _cancelled(settings: Settings, job_id: str) -> bool:
     return any(e["stage"] == "cancel_pending" for e in events(settings, job_id))
 
@@ -54,21 +57,33 @@ def _capture(settings: Settings, job_id: str, endpoint: str, params: dict, resp,
              attempt: int) -> str:
     """Retain the response verbatim BEFORE anything is made of it. Bronze is what makes a
     later normalizer fix replayable, so it is written for every answer the provider gave -
-    a 403 and a malformed 200 included."""
+    a 403 and a malformed 200 included.
+
+    `content_hash` is taken over the STORED payload, not the wire body: a hash over bytes we
+    then truncate would describe evidence nobody can replay against what is actually on disk.
+    """
     now = datetime.now(UTC)
     capture_id = "cap_" + uuid.uuid4().hex[:12]
     fingerprint = hashlib.sha256(
         json.dumps([endpoint, params], sort_keys=True).encode()).hexdigest()[:16]
+    truncated = len(resp.body) > _MAX_PAYLOAD
+    payload = resp.body[:_MAX_PAYLOAD]
+    if truncated:
+        error = f"payload truncated to {_MAX_PAYLOAD} bytes (original {len(resp.body)})"
+    elif not (200 <= resp.status < 300):
+        error = resp.body[:200]
+    else:
+        error = None
     append(settings, "bronze.source_captures", [{
         "capture_id": capture_id, "provider": "openbb-api/eodhd", "endpoint": endpoint,
         "request_fingerprint": fingerprint, "captured_at": now,
-        "content_hash": hashlib.sha256(resp.body.encode()).hexdigest(), "status": resp.status,
-        "payload": resp.body[:2_000_000], "job_id": job_id,
+        "content_hash": hashlib.sha256(payload.encode()).hexdigest(), "status": resp.status,
+        "payload": payload, "job_id": job_id,
     }])
     append(settings, "bronze.request_log", [{
         "request_id": "rq_" + uuid.uuid4().hex[:12], "job_id": job_id, "capture_id": capture_id,
         "requested_at": now, "response_status": resp.status, "attempt": attempt,
-        "retry_after_s": resp.retry_after_s, "error": None if resp.status else resp.body[:200],
+        "retry_after_s": resp.retry_after_s, "error": error,
     }])
     return capture_id
 
@@ -85,18 +100,28 @@ def _requests_for(settings: Settings, job_row: dict) -> list[tuple[str, dict, di
     out = []
     kind = job_row["kind"]
     if kind == "price_daily":
+        # One call per LISTING, matching what preflight quoted in `expected_requests`: a gap
+        # scan can split one listing into several missing ranges, and fetching each of those
+        # separately would bill the caller more calls than they were priced for. The EOD
+        # endpoint answers a whole span in one request, so the ranges collapse to their outer
+        # bounds before anything is sent.
         by_listing = {i["listing_id"]: i for i in pf["identities"]}
+        spans: dict[str, dict] = {}
         for rng in pf["missing_ranges"]:
-            ident = by_listing[rng["listing_id"]]
+            span = spans.setdefault(rng["listing_id"], {"start": rng["start"], "end": rng["end"]})
+            span["start"] = min(span["start"], rng["start"])
+            span["end"] = max(span["end"], rng["end"])
+        for listing_id, span in spans.items():
+            ident = by_listing[listing_id]
             out.append((_ROUTES[kind], {"symbol": ident["provider_symbol"], "provider": "eodhd",
-                                        "interval": "1d", "start_date": rng["start"],
-                                        "end_date": rng["end"]}, ident))
+                                        "interval": "1d", "start_date": span["start"],
+                                        "end_date": span["end"]}, ident))
     elif kind == "shares_outstanding":
         for ident in pf["identities"]:
             out.append((_ROUTES[kind], {"symbol": ident["provider_symbol"], "provider": "eodhd"},
                         ident))
     elif kind == "exchange_calendar":
-        out.append((_ROUTES[kind], {"code": req["exchange_code"]},
+        out.append((_ROUTES[kind], {"code": req["exchange_code"], "provider": "eodhd"},
                     {"calendar_id": req["calendar_id"]}))
     elif kind == "security_lookup":
         out.append((_ROUTES[kind], {"query": req["query"], "provider": "eodhd"}, {}))
@@ -184,6 +209,12 @@ def process(settings: Settings, client: OpenbbClient, job_id: str, worker_id: st
             rows += part
         append_event(settings, job_id, "validating", {"rows": len(rows)}, worker_id)
         problems = validate(relation, rows) if relation else ["nothing to promote"]
+        if problems == ["no rows"]:
+            # A provider that answers 200 with nothing to say is not a validation failure: the
+            # capture is honest, there is simply no evidence in it. Bronze stays either way.
+            append_event(settings, job_id, "partial",
+                         {"problems": problems, "captures": [c[0] for c in captures]}, worker_id)
+            return
         if problems:
             # Bronze stays. The capture is the evidence an operator needs to decide whether the
             # provider is wrong or this normalizer is, and deleting it would destroy both.
@@ -192,9 +223,10 @@ def process(settings: Settings, client: OpenbbClient, job_id: str, worker_id: st
             return
         closes = (_supersede(settings, relation, rows, now)
                   if req.get("policy") in ("refresh", "force") else [])
-        if closes:
-            append(settings, relation, closes)
-        append(settings, relation, rows)
+        # ONE commit: closing the old assertion and writing the new one as two commits leaves
+        # a window between them where a reader sees the old row closed and the new one not yet
+        # written - a day that, until the second commit lands, is missing from Gold entirely.
+        append(settings, relation, closes + rows)
         append_event(settings, job_id, "silver_ready", {"relation": relation, "rows": len(rows)},
                      worker_id)
         append_event(settings, job_id, "materializing", {}, worker_id)

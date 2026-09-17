@@ -1,17 +1,20 @@
 # Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
+import hashlib
+import json
+
 import pytest
 import requests
 
 from security_master_api.acquire.client import OpenbbClient
-from security_master_api.acquire.preflight import fingerprint_of
+from security_master_api.acquire.preflight import fingerprint_of, preflight
 from security_master_api.acquire.worker import run_once
 from security_master_api.config import Settings
 from security_master_api.resolver.context import parse_context
 from security_master_api.sql.session import open_session
 from security_master_api.store.jobs import append_event, create_job, job
 from security_master_api.store.seed import seed
-from security_master_api.store.tables import open_table
+from security_master_api.store.tables import history, latest_version, open_table
 from tests.stub_openbb import StubOpenbb
 
 REQ = {"dataset": "price_daily", "identifiers": ["AAPL"], "start_date": "2026-09-15",
@@ -88,11 +91,29 @@ def test_validation_failure_keeps_bronze(settings, stub):
     assert any(c["job_id"] == j["job_id"] for c in caps)
 
 
-def test_malformed_payload_fails_cleanly(settings, stub):
+def test_malformed_payload_ends_partial_with_bronze_kept(settings, stub):
+    """A 200 that normalizes to nothing - malformed JSON included - is an empty answer, not a
+    validation failure: the capture is honest evidence, there is simply nothing in it."""
     stub.routes["/api/v1/equity/price/historical"] = (200, "not json{", {})
     j = make_job(settings)
     run_once(settings, OpenbbClient(stub.url, "u", "p"), "w1")
-    assert job(settings, j["job_id"])["state"] == "validation_failed"
+    done = job(settings, j["job_id"])
+    assert done["state"] == "partial"
+    assert done["stage_history"][-1]["detail"]["problems"] == ["no rows"]
+    assert done["stage_history"][-1]["detail"]["captures"]
+    caps = open_table(settings, "bronze.source_captures").to_pyarrow_table().to_pylist()
+    assert any(c["job_id"] == j["job_id"] for c in caps)
+
+
+def test_empty_provider_answer_ends_partial_not_validation_failed(settings, stub):
+    stub.routes["/api/v1/equity/price/historical"] = (200, {"results": []}, {})
+    j = make_job(settings)
+    run_once(settings, OpenbbClient(stub.url, "u", "p"), "w1")
+    done = job(settings, j["job_id"])
+    assert done["state"] == "partial"
+    assert done["stage_history"][-1]["detail"] == {
+        "problems": ["no rows"], "captures": done["stage_history"][-1]["detail"]["captures"]}
+    assert len(done["stage_history"][-1]["detail"]["captures"]) == 1
 
 
 def test_cancel_pending_is_honoured_between_requests(settings, stub):
@@ -129,6 +150,7 @@ def test_refresh_closes_the_assertion_it_replaces(settings, stub):
                            "close": 999.0, "volume": 51230000}]}, {})
     req = {**REQ, "start_date": "2026-09-14", "end_date": "2026-09-14", "policy": "refresh"}
     j = create_job(settings, "price_daily", req, fingerprint_of(settings, req), "th")
+    before = latest_version(settings, "silver.prices_normalized")
     run_once(settings, OpenbbClient(stub.url, "u", "p"), "w1")
     assert job(settings, j["job_id"])["state"] == "gold_ready"
     with open_session(settings, parse_context(None), ["gold.price_daily"]) as s:
@@ -137,3 +159,68 @@ def test_refresh_closes_the_assertion_it_replaces(settings, stub):
                      ).to_pylist()
     assert [r["close"] for r in rows] == [999.0]
     assert rows[0]["supersedes_assertion_id"] == "as_px_apple_20260914_2"
+    # The close and the new row land in ONE commit: two commits would leave a window where the
+    # old row is closed and the new one is not yet written - the day missing from Gold.
+    after = latest_version(settings, "silver.prices_normalized")
+    assert after == before + 1
+    assert history(settings, "silver.prices_normalized")[0]["version"] == after
+
+
+def test_missing_ranges_collapse_to_one_call_per_listing(settings, stub):
+    """A gap in the store can split one listing's request into several missing ranges; the
+    worker must still cost one HTTP call for that listing, matching preflight's quote."""
+    stub.routes["/api/v1/equity/price/historical"] = (200, PRICES, {})
+    req = {**REQ, "start_date": "2026-09-01", "end_date": "2026-09-16"}
+    pf = preflight(settings, parse_context(None), req)
+    assert len(pf["missing_ranges"]) == 2 and pf["expected_requests"] == 1
+    j = create_job(settings, "price_daily", req, fingerprint_of(settings, req), "th")
+    run_once(settings, OpenbbClient(stub.url, "u", "p"), "w1")
+    assert job(settings, j["job_id"])["state"] == "gold_ready"
+    price_reqs = [q for path, q in stub.requests if path == "/api/v1/equity/price/historical"]
+    assert len(price_reqs) == 1
+    assert price_reqs[0]["start_date"] == "2026-09-01" and price_reqs[0]["end_date"] == "2026-09-16"
+
+
+def test_exchange_calendar_request_carries_the_provider(settings, stub):
+    stub.routes["/api/v1/reference/exchange_details"] = (
+        200, {"results": {"Code": "US", "Timezone": "America/New_York", "ExchangeHolidays": {
+            "0": {"Holiday": "Christmas", "Date": "2026-12-25", "Type": "official"}}}}, {})
+    req = {"dataset": "exchange_calendar", "exchange_code": "US", "calendar_id": "cal_xnys",
+           "policy": "missing_only"}
+    j = create_job(settings, "exchange_calendar", req, fingerprint_of(settings, req), "th")
+    run_once(settings, OpenbbClient(stub.url, "u", "p"), "w1")
+    assert job(settings, j["job_id"])["state"] == "gold_ready"
+    cal_reqs = [q for path, q in stub.requests if path == "/api/v1/reference/exchange_details"]
+    assert len(cal_reqs) == 1 and cal_reqs[0]["provider"] == "eodhd" and cal_reqs[0]["code"] == "US"
+
+
+def test_content_hash_covers_the_truncated_payload_with_a_note_in_request_log(settings, stub):
+    """A hash over the full wire body while only 2 MB is stored would describe evidence nobody
+    can replay against what is actually on disk."""
+    big = {"results": [{"date": "2026-09-15", "open": 1, "high": 2, "low": 0.5, "close": 1.5,
+                        "volume": 10, "pad": "x" * 2_200_000}]}
+    body = json.dumps(big)
+    assert len(body) > 2_000_000
+    stub.routes["/api/v1/equity/price/historical"] = (200, big, {})
+    j = make_job(settings)
+    run_once(settings, OpenbbClient(stub.url, "u", "p"), "w1")
+    caps = [c for c in open_table(settings, "bronze.source_captures").to_pyarrow_table().to_pylist()
+           if c["job_id"] == j["job_id"]]
+    assert len(caps) == 1
+    cap = caps[0]
+    assert len(cap["payload"]) == 2_000_000
+    assert cap["content_hash"] == hashlib.sha256(cap["payload"].encode()).hexdigest()
+    logs = [r for r in open_table(settings, "bronze.request_log").to_pyarrow_table().to_pylist()
+           if r["job_id"] == j["job_id"]]
+    assert len(logs) == 1
+    assert logs[0]["error"] == f"payload truncated to 2000000 bytes (original {len(body)})"
+
+
+def test_non_2xx_status_populates_request_log_error(settings, stub):
+    stub.routes["/api/v1/equity/price/historical"] = (500, {"detail": "boom"}, {})
+    j = make_job(settings)
+    run_once(settings, OpenbbClient(stub.url, "u", "p"), "w1")
+    assert job(settings, j["job_id"])["state"] == "failed"
+    logs = [r for r in open_table(settings, "bronze.request_log").to_pyarrow_table().to_pylist()
+           if r["job_id"] == j["job_id"]]
+    assert len(logs) == 1 and logs[0]["error"] is not None
