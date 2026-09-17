@@ -509,9 +509,14 @@
           "type": "boolean"
         },
         {
+          "default": "session_date",
           "name": "session_label",
           "required": false,
-          "type": "string"
+          "type": "string",
+          "values": [
+            "session_date",
+            "trade_date"
+          ]
         },
         {
           "name": "timezone",

@@ -32,9 +32,14 @@ def decode_cursor(token: str) -> tuple[str, int, str]:
     try:
         padded = token + "=" * (-len(token) % 4)
         raw = json.loads(base64.urlsafe_b64decode(padded.encode()))
-        return str(raw["e"]), int(raw["o"]), str(raw["f"])
+        execution_id, offset, fp = str(raw["e"]), int(raw["o"]), str(raw["f"])
     except Exception as exc:  # noqa: BLE001 - any malformed token is one rejection
         raise DomainError("QUERY_REJECTED", "invalid cursor") from exc
+    # A cursor is a server-issued token, so a negative offset is a forged one: `Table.slice`
+    # counts a negative start from the end, which would page rows this cursor never pointed at.
+    if offset < 0:
+        raise DomainError("QUERY_REJECTED", "invalid cursor")
+    return execution_id, offset, fp
 
 
 @dataclass
@@ -88,8 +93,9 @@ class Executions:
             for key in [k for k, v in self._by_id.items() if v.created < cutoff]:
                 del self._by_id[key]
 
-    def plan(self, ctx: Context, relations: Iterable[str], sql: str) -> dict:
-        with open_session(self.settings, ctx, list(relations)) as s:
+    def plan(self, ctx: Context, relations: Iterable[str], sql: str,
+             index: dict | None = None) -> dict:
+        with open_session(self.settings, ctx, list(relations), index=index) as s:
             from security_master_api.sql.policy import validate_sql
 
             info = validate_sql(s.con, sql, s.allowed)
@@ -98,7 +104,7 @@ class Executions:
 
     def start(self, ctx: Context, relations: Iterable[str], sql: str, params, kind: str,
               request_id: str, principal: str, page_size: int | None = None,
-              timeout_ms: int | None = None) -> dict:
+              timeout_ms: int | None = None, index: dict | None = None) -> dict:
         self._expire()
         page = min(page_size or self.settings.first_page, self.settings.max_rows)
         self._acquire(principal)
@@ -111,7 +117,7 @@ class Executions:
         receipt = None
         ex = None
         try:
-            session = open_session(self.settings, ctx, list(relations))
+            session = open_session(self.settings, ctx, list(relations), index=index)
             receipt = new_receipt(self.settings, kind, ctx, session.manifest, request_id,
                                   fingerprint(ctx, sql, params))
             record_receipt(self.settings, receipt)

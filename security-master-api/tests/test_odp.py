@@ -289,3 +289,36 @@ def test_a_malformed_branch_column_is_a_promotion_failure_not_a_crash(settings):
     with pytest.raises(DomainError) as exc:
         project(settings, parse_context(None), "MarketCalendar", CAL, "req")
     assert exc.value.code == "PROMOTION_VALIDATION_FAILED"
+
+
+def test_interruptions_obey_the_knowledge_cutoff(settings):
+    """An interruption is an assertion: a `known_at` caller sees the halts known by then.
+
+    The fixture records one Tadawul interruption available at 09:00 on the day the exchange
+    notice landed. A second before that instant the row does not exist yet, and reading it off
+    the raw table (`system_to IS NULL`) would have shown it anyway.
+    """
+    params = {**CAL, "include_interruptions": True}
+    before = project(settings,
+                     parse_context({"mode": "known_at", "known_at": "2027-03-10T08:59:59Z"}),
+                     "MarketCalendar", params, "req")
+    row = next(r for r in before["results"] if str(r["session_date"]) == "2027-03-11")
+    assert row["interruptions"] == []
+    after = project(settings,
+                    parse_context({"mode": "known_at", "known_at": "2027-03-10T09:00:00Z"}),
+                    "MarketCalendar", params, "req")
+    row = next(r for r in after["results"] if str(r["session_date"]) == "2027-03-11")
+    assert len(row["interruptions"]) == 1
+    assert row["interruptions"][0] == {"start": "2027-03-11T07:30:00Z",
+                                       "end": "2027-03-11T08:15:00Z"}
+
+
+def test_dubai_branches_are_parsed_not_returned_as_json_text(settings):
+    """The Dubai reopening carries both branches and the one the authority selected."""
+    ctx = parse_context({"mode": "known_at", "known_at": "2024-04-08T20:00:05Z"})
+    out = project(settings, ctx, "MarketCalendar",
+                  {"calendar_id": "cal_xdfm", "start_date": "2024-04-01",
+                   "end_date": "2024-04-30", "include_closed": True}, "req")
+    row = next(r for r in out["results"] if str(r["session_date"]) == "2024-04-15")
+    assert isinstance(row["selected_branch"], dict)
+    assert isinstance(row["candidate_branches"], list) and len(row["candidate_branches"]) == 2

@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from security_master_api.app.main import create_app
 from security_master_api.config import Settings
+from security_master_api.resolver import catalog as cat
 from security_master_api.sql.executions import decode_cursor, encode_cursor
 from security_master_api.store.seed import seed
 
@@ -292,3 +293,48 @@ def test_views_have_no_versions(client):
     bad = client.get(f"{V1}/relations/gold/security_master/versions")
     assert bad.status_code == 422
     assert bad.json()["error"]["message"] == "views have no versions; see their dependencies"
+
+
+def test_a_forged_negative_offset_cursor_is_rejected(client):
+    """A cursor is server-issued: a negative offset is a forgery, not a small page.
+
+    `pa.Table.slice` counts a negative start from the END of the table, so the offset would
+    hand back rows this cursor never pointed at.
+    """
+    body = {"relation": "gold.security_master", "context": {"mode": "current_corrected"},
+            "columns": ["listing_id", "symbol"], "page": {"limit": 3}}
+    issued = client.post(f"{V1}/preview", json=body).json()["next_cursor"]
+    execution_id, _, fp = decode_cursor(issued)
+    body["page"]["cursor"] = encode_cursor(execution_id, -1, fp)
+    r = client.post(f"{V1}/preview", json=body)
+    assert r.status_code == 422 and r.json()["error"]["code"] == "QUERY_REJECTED"
+
+
+def test_a_negative_page_limit_is_refused(client):
+    r = client.post(f"{V1}/preview", json={
+        "relation": "gold.security_master", "context": {"mode": "current_corrected"},
+        "page": {"limit": -5}})
+    assert r.status_code == 422 and r.json()["error"]["code"] == "QUERY_REJECTED"
+
+
+def test_a_non_positive_budget_is_refused(client):
+    for budgets in ({"max_rows": 0}, {"timeout_ms": -1}):
+        r = client.post(f"{V1}/sql/execute", json={"sql": "SELECT 1 AS n", "context": {},
+                                                   "budgets": budgets})
+        assert r.status_code == 422 and r.json()["error"]["code"] == "QUERY_REJECTED"
+
+
+def test_one_sql_request_builds_the_catalog_once(client, monkeypatch):
+    """Listing the object store is the expensive half of a catalog. Once per request."""
+    real = cat.external_relations
+    calls = []
+
+    def counted(settings):
+        calls.append(settings)
+        return real(settings)
+
+    monkeypatch.setattr(cat, "external_relations", counted)
+    r = client.post(f"{V1}/sql/plan", json={"sql": "SELECT 1 AS n",
+                                            "context": {"mode": "current_corrected"}})
+    assert r.status_code == 200
+    assert len(calls) == 1

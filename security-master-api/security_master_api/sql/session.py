@@ -119,11 +119,16 @@ class QuerySession:
         return result
 
 
-def open_session(settings: Settings, ctx: Context, relations: Iterable[str]) -> QuerySession:
-    """An entered session holding every requested Gold view and its pinned dependencies."""
+def open_session(settings: Settings, ctx: Context, relations: Iterable[str],
+                 index: dict | None = None) -> QuerySession:
+    """An entered session holding every requested Gold view and its pinned dependencies.
+
+    `index` is an already-built catalog: a caller that had to build one to choose these
+    relations passes it in so the manifest does not list the object store a second time.
+    """
     from security_master_api.resolver.manifest import resolve_manifest
 
     wanted = list(relations)
     views = tuple(r.split(".", 1)[1] for r in wanted if r.startswith("gold."))
-    manifest = resolve_manifest(settings, ctx, wanted)
+    manifest = resolve_manifest(settings, ctx, wanted, index=index)
     return QuerySession(settings, ctx, manifest, views=views).__enter__()

@@ -23,4 +23,7 @@ RUN pip install .
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD ["uvicorn", "security_master_api.app.main:app", "--host", "127.0.0.1", "--port", "6905"]
+# --no-access-log: the compose command carries it and the image must not be quieter only
+# there -- a per-request access line logs the query string, which is where the SSE
+# routes carry their credential.
+CMD ["uvicorn", "security_master_api.app.main:app", "--host", "127.0.0.1", "--port", "6905", "--no-access-log"]

@@ -15,7 +15,7 @@ import anyio
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
 import security_master_api
@@ -58,7 +58,10 @@ LOOKUP_POLICIES = ("cache_only", "review")
 
 
 class Page(BaseModel):
-    limit: int | None = None
+    # A page of zero or fewer rows is not a smaller request, it is one the pager cannot serve:
+    # `start()` reads `page_size or first_page`, so 0 silently became the default and a
+    # negative limit reached `min()` as a ceiling below every row.
+    limit: int | None = Field(default=None, ge=1)
     cursor: str | None = None
 
 
@@ -75,6 +78,17 @@ class SqlBody(BaseModel):
     sql: str = Field(max_length=20_000)
     context: dict[str, Any] = Field(default_factory=dict)
     budgets: dict[str, int] = Field(default_factory=dict)
+
+    @field_validator("budgets")
+    @classmethod
+    def _budgets_are_positive(cls, value: dict[str, int]) -> dict[str, int]:
+        # `max_rows=0` falls back to the default page instead of returning nothing, and a
+        # negative `timeout_ms` is a deadline already past. Both are rejected rather than
+        # reinterpreted.
+        for key in ("max_rows", "timeout_ms"):
+            if key in value and value[key] < 1:
+                raise ValueError(f"{key} must be at least 1")
+        return value
 
 
 class OdpQueryBody(BaseModel):
@@ -262,26 +276,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 encode_cursor(execution_id, offset, fingerprint(ctx, sql, params)),
                 _principal(request))
         return executions.start(ctx, [body.relation], sql, params, "preview", request_id(request),
-                                _principal(request), page_size=body.page.limit)
+                                _principal(request), page_size=body.page.limit,
+                                index=cat.catalog_index(settings))
 
     def _sql_allowed() -> None:
         if settings.sql_policy == "disabled":
             raise DomainError("QUERY_REJECTED", "SQL is disabled by policy", {"policy": "sql"})
 
-    def _relations_in(ctx: Context) -> list[str]:
+    def _relations_in(ctx: Context, index: dict[str, cat.Relation]) -> list[str]:
         # Register every DECLARED relation eligible for the mode; the policy then rejects any
         # BASE_TABLE outside that set. Views are cheap until scanned. External Delta tables are
         # excluded deliberately: there can be thousands of `bronze.<library>.<symbol>`, each one
         # a table open, and nothing registers them into a session for free. A caller who wants
         # one names it through /preview.
-        return [r.full for r in cat.catalog(settings)
+        #
+        # The index is BUILT BY THE CALLER and handed down to the session too: building it
+        # lists the object store once, and a request that built its own here and let
+        # `resolve_manifest` build a second one paid for that listing twice.
+        return [r.full for r in index.values()
                 if r.kind != "external_delta" and ctx.mode in r.modes and r.layer != "ops"]
 
     @app.post(f"{V1}/sql/plan")
     def sql_plan(body: SqlBody) -> dict:
         _sql_allowed()
         ctx = parse_context(body.context)
-        return executions.plan(ctx, _relations_in(ctx), body.sql)
+        index = cat.catalog_index(settings)
+        return executions.plan(ctx, _relations_in(ctx, index), body.sql, index=index)
 
     @app.post(f"{V1}/sql/execute")
     def sql_execute(body: SqlBody, request: Request) -> dict:
@@ -291,9 +311,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # ceiling, and the whole result is still capped by settings.max_rows inside start().
         budget = body.budgets.get("max_rows")
         page_size = min(budget, settings.first_page) if budget else None
-        return executions.start(ctx, _relations_in(ctx), body.sql, [], "sql",
+        index = cat.catalog_index(settings)
+        return executions.start(ctx, _relations_in(ctx, index), body.sql, [], "sql",
                                 request_id(request), _principal(request), page_size=page_size,
-                                timeout_ms=body.budgets.get("timeout_ms"))
+                                timeout_ms=body.budgets.get("timeout_ms"), index=index)
 
     @app.get(f"{V1}/sql/executions/{{execution_id}}/pages")
     def sql_pages(execution_id: str, cursor: str, request: Request) -> dict:

@@ -68,7 +68,7 @@
         "relation": "silver.securities"
       },
       {
-        "delta_version": 0,
+        "delta_version": 1,
         "relation": "silver.session_interruptions"
       },
       {

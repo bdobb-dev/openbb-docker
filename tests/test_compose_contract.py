@@ -16,6 +16,9 @@ def test_security_master_services_are_declared():
     assert api["build"] == {"context": ".", "dockerfile": "security-master-api/Dockerfile"}
     assert api["networks"] == ["openbb-internal"] and worker["networks"] == ["openbb-internal"]
     assert api["command"][:4] == ["uvicorn", "security_master_api.app.main:app", "--host", "0.0.0.0"]
+    # Access logs carry the query string, and the SSE routes carry their credential there.
+    assert "--no-access-log" in api["command"]
+    assert "--no-access-log" in (ROOT / "security-master-api" / "Dockerfile").read_text()
     assert worker["command"] == ["python", "-m", "security_master_api.acquire"]
     for svc in (api, worker):
         files = {e["path"]: e["required"] for e in svc["env_file"]}

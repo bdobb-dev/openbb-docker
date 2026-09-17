@@ -78,7 +78,7 @@ def market_calendar(
     include_closed: bool = False,
     include_breaks: bool = False,
     include_interruptions: bool = False,
-    session_label: Literal["calendar_date", "trade_date"] = "calendar_date",
+    session_label: Literal["session_date", "trade_date"] = "session_date",
     timezone: str | None = None,
     as_of: dateType | None = None,
     knowledge_at: datetime | None = None,

@@ -6,6 +6,7 @@ import threading
 import types
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 
 import pytest
 
@@ -197,3 +198,22 @@ def test_security_master_resolve_guards_unexpected_response_shape(monkeypatch):
 
     with pytest.raises(OpenBBError, match="without results"):
         security_master_resolve(identifier="AAPL")
+
+
+def test_session_label_is_a_label_the_registry_declares(monkeypatch):
+    """The outgoing body may only carry a label the shipped registry names.
+
+    The service refuses any other value outright, so a default typed here and not declared
+    there is a 422 on every single call -- which is exactly what "calendar_date" was.
+    """
+    registry = json.loads(
+        (Path(__file__).resolve().parent.parent / "openbb_security_master"
+         / "odp_registry.json").read_text())
+    calendar = next(m for m in registry["models"] if m["model_id"] == "MarketCalendar")
+    param = next(p for p in calendar["parameters"] if p["name"] == "session_label")
+    stub = Stub(200, {"results": [], "extra": {}})
+    monkeypatch.setenv("SECURITY_MASTER_URL", stub.url)
+    market_calendar(start_date="2027-03-01", end_date="2027-03-02")
+    _, body = stub.calls[0]
+    assert body["parameters"]["session_label"] in param["values"]
+    assert body["parameters"]["session_label"] == param["default"]

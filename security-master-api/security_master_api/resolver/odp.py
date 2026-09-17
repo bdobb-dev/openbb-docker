@@ -18,12 +18,12 @@ from security_master_api.errors import DomainError
 from security_master_api.resolver.catalog import check_modes
 from security_master_api.resolver.context import Context, iso_utc, parse_context
 from security_master_api.resolver.identity import resolve
+from security_master_api.resolver.views import assertions_sql
 from security_master_api.sql.session import QuerySession, open_session
 from security_master_api.store.receipts import new_receipt, record_receipt
 from security_master_api.temporal_fixture import _instant
 
 CALENDAR_PROVIDER = "local_security_master"
-SESSION_LABELS = ("session_date", "trade_date")
 
 REGISTRY_PATH = Path(security_master_api.__file__).parent / "odp_registry.json"
 
@@ -108,7 +108,20 @@ def _calendar_id(settings: Settings, ctx: Context, bound: dict) -> str:
     return rows[0]["calendar_id"]
 
 
-def _calendar_options(bound: dict) -> None:
+def param_values(m: dict, name: str) -> tuple[str, ...]:
+    """The vocabulary the registry declares for one parameter, empty when it declares none.
+
+    The registry is the single copy of that vocabulary: the extension ships the same file and
+    types its `Literal` from it, so a label the service accepts and one the client sends can
+    only ever disagree by someone editing the registry and nothing else.
+    """
+    for p in m["parameters"]:
+        if p["name"] == name:
+            return tuple(p.get("values") or ())
+    return ()
+
+
+def _calendar_options(m: dict, bound: dict) -> None:
     """Refuse the calendar options this release cannot honour, rather than ignoring them."""
     provider = bound.get("provider")
     if provider not in (None, CALENDAR_PROVIDER):
@@ -118,10 +131,11 @@ def _calendar_options(bound: dict) -> None:
         raise DomainError("QUERY_REJECTED",
                           "output timezone conversion is not available in this release",
                           {"parameter": "timezone"})
-    if bound.get("session_label") not in (None, *SESSION_LABELS):
+    labels = param_values(m, "session_label")
+    if bound.get("session_label") not in (None, *labels):
         raise DomainError("QUERY_REJECTED",
-                          f"session_label must be one of {list(SESSION_LABELS)}",
-                          {"parameter": "session_label"})
+                          f"session_label must be one of {list(labels)}",
+                          {"parameter": "session_label", "supported": list(labels)})
 
 
 def _calendar_context(ctx: Context, bound: dict) -> Context:
@@ -213,7 +227,7 @@ def project(settings: Settings, ctx: Context, model_id: str, params: dict,
     relation = m["backing_relation"]
     calendar = model_id == "MarketCalendar"
     if calendar:
-        _calendar_options(bound)
+        _calendar_options(m, bound)
         ctx = _calendar_context(ctx, bound)
     check_modes(settings, ctx, [relation])
     binds, identity_manifest = dict(bound), {}
@@ -269,10 +283,16 @@ def _decorate_calendar(session: QuerySession, rows: list[dict], calendar_id: str
     them and there being none reads the same as not asking, which is the honest answer either
     way - the rows that have them are the only ones that differ. The relabel runs last, so
     interruptions are still matched on the session's own date.
+
+    The rows come through `assertions_sql`, not off the raw table: an interruption is an
+    assertion like any other, and a bare `system_to IS NULL` would show a `known_at` caller a
+    halt nobody had recorded yet. `effective=False` because an interruption's own
+    `session_date` is its effective axis (the same exemption the Gold view makes).
     """
+    src = assertions_sql("silver.session_interruptions", session.ctx, effective=False)
     found = session.run(
         "SELECT session_date, interruption_start, interruption_end "
-        "FROM silver.session_interruptions WHERE calendar_id = ? AND system_to IS NULL",
+        f"FROM ({src}) WHERE calendar_id = ?",
         [calendar_id]).to_pylist() if bound.get("include_interruptions") else []
     by_date: dict[str, list] = {}
     for i in found:

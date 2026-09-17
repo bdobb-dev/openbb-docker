@@ -30,7 +30,9 @@ class MarketCalendarQueryParams(QueryParams):
     include_closed: bool = False
     include_breaks: bool = False
     include_interruptions: bool = False
-    session_label: Literal["calendar_date", "trade_date"] = "calendar_date"
+    # The registry declares this vocabulary (`values`/`default` on the parameter) and the
+    # service refuses anything outside it: "calendar_date" was never a label it served.
+    session_label: Literal["session_date", "trade_date"] = "session_date"
     timezone: str | None = None
     # as_of/knowledge_at are the temporal context, not filters: the router
     # turns them into the request's `context` block and excludes them from

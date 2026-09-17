@@ -216,6 +216,24 @@
         "assertion_status": "current",
         "supersedes_assertion_id": null
       }
+    ],
+    "silver.session_interruptions": [
+      {
+        "calendar_id": "cal_tadawul",
+        "session_date": "2027-03-11",
+        "interruption_start": "2027-03-11T07:30:00Z",
+        "interruption_end": "2027-03-11T08:15:00Z",
+        "effective_from": "2027-03-11T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2027-03-10T09:00:00Z",
+        "available_at": "2027-03-10T09:00:00Z",
+        "system_from": "2027-03-10T09:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_eid_t2",
+        "assertion_id": "as_eid_interruption_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
     ]
   },
   "expectations": [

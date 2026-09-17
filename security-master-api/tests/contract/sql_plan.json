@@ -20,7 +20,7 @@
     "silver.market_sessions": 0,
     "silver.prices_normalized": 2,
     "silver.securities": 1,
-    "silver.session_interruptions": 0,
+    "silver.session_interruptions": 1,
     "silver.universe_membership": 0
   },
   "relations": [
