@@ -120,4 +120,3 @@ Use strict test-driven development:
 
 No network access, mocks, MinIO, Delta Lake, DuckDB, FastAPI, or MCP runtime is
 required by this contract suite.
-

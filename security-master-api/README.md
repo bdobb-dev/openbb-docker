@@ -17,7 +17,8 @@ known evidence IDs and are strictly time-ordered.
 known_at`; a cutoff just before a transition returns the preceding state, and
 the exact transition instant returns the new state. The loader rejects missing
 contract fields, empty events or states, naïve timestamps, non-HTTP(S) source
-URLs, unordered state times, and evidence IDs that do not name an event.
+URLs, unordered state times, duplicate event IDs, evidence IDs that do not
+name an event, and evidence observed after the state it supports.
 
 ## Development
 
