@@ -18,7 +18,12 @@ _STABLE = ("listing_id", "instrument_id", "security_id", "issuer_id")
 _FIELDS = ("listing_id", "instrument_id", "issuer_id", "security_id", "symbol", "name",
            "identifier_type", "identifier", "reason", "effective_from", "effective_to",
            "successor_security_id", "predecessor_security_id", "assertion_id", "capture_id")
-_RELATIONS = ("gold.security_master", "silver.identifiers", "silver.securities")
+_RELATIONS = ("gold.security_master", "silver.identifiers", "silver.securities",
+              "silver.issuers", "silver.instruments")
+# Where a stable id still lives when no listing carries it: a security, issuer or instrument
+# the store holds is resolved, even though gold.security_master is built from listings.
+_SILVER_BY_KIND = {"security_id": "silver.securities", "issuer_id": "silver.issuers",
+                   "instrument_id": "silver.instruments"}
 
 
 def _guess_type(identifier: str) -> str | None:
@@ -84,10 +89,22 @@ def _by_identifier(session: QuerySession, ident: str, kind: str | None,
     chosen = [(r, "active") for r in live]
     if not chosen and include_historical:
         chosen = [(r, "historical_alias") for r in rows if r.get("effective_to") is not None]
+        if not chosen:
+            # Known to the store, but every interval for it starts after the context asked.
+            # Returning [] here would read as "never heard of it"; it is a different answer.
+            raise _not_effective(ident, rows)
     out = []
     for row, reason in chosen:
         out.append(_candidate({**_identity(session, row), **_present(row)}, reason))
     return out, True
+
+
+def _not_effective(ident: str, rows: list[dict]) -> DomainError:
+    starts = [r["effective_from"] for r in rows if r.get("effective_from") is not None]
+    return DomainError("IDENTITY_UNRESOLVED",
+                       f"{ident} is not effective under the requested context",
+                       {"identifier": ident, "status": "not_effective",
+                        "effective_from": iso_utc(min(starts)) if starts else None})
 
 
 def _present(row: dict) -> dict:
@@ -134,6 +151,13 @@ def _by_stable_id(session: QuerySession, ident: str, kind: str,
         if reason == "historical_alias" and not include_historical:
             continue
         out.append(_candidate({**row, "identifier_type": kind, "identifier": ident}, reason))
+    if not rows and kind in _SILVER_BY_KIND:
+        # No listing carries this id, which is not the same as not holding it: the security,
+        # issuer or instrument row itself answers, with only the fields it carries.
+        row = _pick(_rows(session, _SILVER_BY_KIND[kind], kind, ident), at)
+        if row is not None:
+            return [_candidate({**row, "identifier_type": kind, "identifier": ident},
+                               "active")], True
     return out, bool(rows)
 
 

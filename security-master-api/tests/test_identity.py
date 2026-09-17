@@ -91,3 +91,28 @@ def test_unknown_identifier_type_is_rejected(settings):
 def test_a_stable_id_resolves_directly(settings):
     c = one(settings, "lst_000042", None)
     assert (c["symbol"], c["reason"], c["identifier_type"]) == ("META", "active", "listing_id")
+
+
+def test_an_identifier_that_is_not_yet_in_force_is_unresolved(settings):
+    # The store holds both, but neither interval has started under these contexts. An empty
+    # candidate list would read as "never heard of it", which is a different answer.
+    for ident, ctx, starts in (
+        ("META", {"mode": "effective_on", "effective_at": "2012-06-01T00:00:00Z"},
+         "2022-06-09T00:00:00Z"),
+        ("000222BB2", {"mode": "effective_on", "effective_at": "2020-01-01T00:00:00Z"},
+         "2026-07-01T00:00:00Z"),
+    ):
+        with pytest.raises(DomainError) as exc:
+            resolve(settings, parse_context(ctx), ident)
+        assert exc.value.code == "IDENTITY_UNRESOLVED"
+        assert exc.value.details["status"] == "not_effective"
+        assert exc.value.details["effective_from"] == starts
+
+
+def test_a_stable_id_without_a_listing_still_resolves(settings):
+    # No listing in the cusip fixture carries sec_100, so gold.security_master cannot see it;
+    # silver.securities can, and the store holding the id means it resolves.
+    c = one(settings, "sec_100", None)
+    assert c["security_id"] == "sec_100"
+    assert c["successor_security_id"] == "sec_101"
+    assert c["reason"] == "active"

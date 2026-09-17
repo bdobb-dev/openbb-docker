@@ -69,6 +69,9 @@ def test_compare_classifies_a_correction(settings):
     close = next(d for d in out["differences"] if d["field"] == "close")
     assert (close["left"], close["right"], close["classification"]) == (231.40, 231.74, "corrected")
     assert out["left_manifest"] != out["right_manifest"] or out["left_manifest"]
+    # Two contexts that differ in knowledge time keep the knowledge-time classes: nothing
+    # here became effective, a value was restated.
+    assert "became_effective" not in {d["classification"] for d in out["differences"]}
 
 
 def test_compare_classifies_newly_known(settings):
@@ -86,6 +89,21 @@ def test_compare_classifies_identity_successor(settings):
     sec = next(d for d in out["differences"] if d["field"] == "security_id")
     assert sec["classification"] == "identity_successor"
     assert (sec["left"], sec["right"]) == ("sec_100", "sec_101")
+    # The two contexts differ only in effective time, so a non-identity field that moved with
+    # the new interval became effective - it was not corrected and nobody learned it late.
+    cusip = next(d for d in out["differences"] if d["field"] == "cusip")
+    assert (cusip["left"], cusip["right"]) == ("000111AA1", "000222BB2")
+    assert cusip["classification"] == "became_effective"
+
+
+def test_self_compare_has_no_differences(settings):
+    # Both sides ask the same question of the same relation. The listing has two effective
+    # intervals under current_corrected, so an ORDER BY that does not break the tie made this
+    # return 0 or 6 differences at random, phantom identity_successor included.
+    ctx = parse_context(None)
+    for _ in range(5):
+        out = compare(settings, "gold.security_master", {"issuer_id": "iss_042"}, ctx, ctx)
+        assert out["differences"] == []
 
 
 def test_compare_needs_a_selection(settings):
