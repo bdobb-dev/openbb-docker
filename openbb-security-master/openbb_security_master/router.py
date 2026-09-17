@@ -1,0 +1,106 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+"""The /reference router: three commands, all delegating to security-master-api or openbb-eodhd.
+
+The router's own prefix is empty on purpose: OpenBB's RouterLoader includes a
+core extension under `/{entry-point name}`, and this package's entry point is
+named `reference`, so the commands land on `/api/v1/reference/...` and on
+`obb.reference.*`. A prefix here would nest a second segment under that.
+"""
+
+from __future__ import annotations
+
+from datetime import date as dateType
+from datetime import datetime
+from typing import Literal
+
+from openbb_core.app.model.obbject import OBBject
+from openbb_core.app.router import Router
+
+from openbb_security_master.client import SecurityMasterClient
+from openbb_security_master.models import (
+    ExchangeDetailsData,
+    MarketCalendarData,
+    MarketCalendarQueryParams,
+    ResolveData,
+)
+
+router = Router(prefix="", description="Security-master reference data")
+
+
+def _eodhd_client() -> dict:
+    """The EODHD credential mapping `sdk_call` builds its client from.
+
+    The provider extension owns key handling, the SDK pin and the error
+    mapping; this router only borrows the one endpoint OpenBB has no command
+    for. Imported lazily so the extension imports without openbb-eodhd present
+    (the image installs it, CI does not).
+    """
+    from openbb_core.app.service.user_service import UserService
+
+    creds = UserService.read_from_file().credentials.model_dump()
+    return {"eodhd_api_key": creds.get("eodhd_api_key")}
+
+
+def _eodhd_rest_json(credentials: dict, endpoint: str, params: dict):
+    from openbb_eodhd.models._client import rest_json, sdk_call
+
+    return sdk_call(credentials, lambda client: rest_json(client, endpoint, params), endpoint)
+
+
+@router.command(methods=["GET"])
+def market_calendar(
+    start_date: dateType,
+    end_date: dateType,
+    calendar_id: str | None = None,
+    exchange: str | None = None,
+    mic: str | None = None,
+    include_closed: bool = False,
+    include_breaks: bool = False,
+    include_interruptions: bool = False,
+    session_label: Literal["calendar_date", "trade_date"] = "calendar_date",
+    timezone: str | None = None,
+    as_of: dateType | None = None,
+    knowledge_at: datetime | None = None,
+    provider: str = "local_security_master",
+) -> OBBject[list[MarketCalendarData]]:
+    """Exchange sessions with holiday, authority and market-effect evidence under a temporal context."""
+    params = MarketCalendarQueryParams(**locals())
+    client = SecurityMasterClient.from_env()
+    context = client.context_for(
+        params.as_of.isoformat() if params.as_of else None,
+        params.knowledge_at.isoformat().replace("+00:00", "Z") if params.knowledge_at else None)
+    if context["mode"] != "current_corrected" and "effective_at" not in context:
+        context["effective_at"] = f"{params.start_date.isoformat()}T00:00:00Z"
+    body = params.model_dump(exclude={"as_of", "knowledge_at", "provider"}, exclude_none=True)
+    for key in ("start_date", "end_date"):
+        body[key] = body[key].isoformat()
+    out = client.odp_query("MarketCalendar", body, context)
+    return OBBject(results=[MarketCalendarData(**row) for row in out["results"]],
+                   extra=out.get("extra", {}))
+
+
+@router.command(methods=["GET"])
+def exchange_details(code: str) -> OBBject[ExchangeDetailsData]:
+    """EODHD exchange details (trading hours, holidays) as maintained calendar input."""
+    raw = _eodhd_rest_json(_eodhd_client(), f"exchange-details/{code}", {})
+    raw = raw if isinstance(raw, dict) else {}
+    holidays = list((raw.get("ExchangeHolidays") or {}).values())
+    return OBBject(results=ExchangeDetailsData(code=code, timezone=raw.get("Timezone"),
+                                               holidays=holidays, raw=raw))
+
+
+@router.command(methods=["GET"])
+def security_master_resolve(
+    identifier: str,
+    identifier_type: str | None = None,
+    as_of: str | None = None,
+    knowledge_at: str | None = None,
+) -> OBBject[list[ResolveData]]:
+    """Resolve a ticker, CUSIP, ISIN, FIGI or internal id under an explicit temporal context."""
+    client = SecurityMasterClient.from_env()
+    out = client.resolve(identifier, client.context_for(as_of, knowledge_at), identifier_type)
+    fields = ("listing_id", "instrument_id", "security_id", "symbol", "reason")
+    return OBBject(results=[ResolveData(**{k: c.get(k) for k in fields})
+                            for c in out["candidates"]],
+                   extra={"security_master_receipt": out.get("receipt", {})})

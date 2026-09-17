@@ -114,6 +114,11 @@ services:
       # which all need the same store. Set KDB_EMBEDDED=true with a q binary in
       # ./kdb to spawn a private child instead -- the read-through cache works,
       # but nothing else can see it.
+      # Where the /api/v1/reference/* commands send their queries: the
+      # security-master service on the same private bridge. The router never
+      # opens Delta or MinIO itself -- every answer is the service's, receipt
+      # and all.
+      - SECURITY_MASTER_URL=http://security-master-api:6905
       - KDB_EMBEDDED=false
       - KDB_HOST=kdb
       - KDB_PORT=5000
