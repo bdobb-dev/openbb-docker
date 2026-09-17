@@ -42,7 +42,7 @@ openbb-docker, branch `claude/security-master-api` from `release/v11.2.x`:
 - One image, `security-master-api/Dockerfile`, build context the repo
   root (it installs `openbb-deltalake` first). Two compose services from
   it: `security-master-api` (uvicorn on 6905) and `security-master-worker`
-  (`python -m security_master_api.worker`). Both on `openbb-internal`,
+  (`python -m security_master_api.acquire`). Both on `openbb-internal`,
   `env_file` `api-auth.env` and `minio.env` (both required),
   `depends_on` `tailscale` and `minio`, `restart: unless-stopped`,
   `command` overriding the fail-closed `127.0.0.1` bind.
@@ -74,7 +74,7 @@ Deployment: NAS compose directory (the live stack's project directory; docker is
 on the Mac for `linux/amd64` and shipped with `docker save | ssh nas
 docker load`; each service recreated with `docker compose up -d
 --no-deps`, after 4 PM ET; seeding runs once with `docker compose run
---rm security-master-api python -m security_master_api.seed`. Vercel is
+--rm security-master-api python -m security_master_api.store`. Vercel is
 not touched.
 
 ## 2. Data architecture
@@ -125,9 +125,9 @@ seven golden fixtures (trade correction, shares outstanding, CUSIP,
 ticker, Eid lunar correction, Lunar New Year special session, negative
 control) plus the India and Dubai historical fixtures as Bronze captures
 and Silver assertions with deterministic ids, and the two ops tables
-empty. The JSON fixtures under `tests/fixtures/` are the canonical shape;
-the bdobb-v2 TypeScript fixture adopts it (stage names `T0`/`T1`/`T2`,
-fixture ids, session labels).
+empty. The JSON fixtures under `security_master_api/fixtures/` are the
+canonical shape; the bdobb-v2 TypeScript fixture adopts it (stage
+names `T0`/`T1`/`T2`, fixture ids, session labels).
 
 ## 3. Temporal resolver and receipts
 
