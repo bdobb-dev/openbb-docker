@@ -19,7 +19,7 @@ import logging
 import time
 from typing import Any
 
-from app.classify import snapshot_ticker
+from app.classify import classify, snapshot_ticker
 
 log = logging.getLogger("live-grid")
 
@@ -40,8 +40,13 @@ def _f(value: Any) -> float | None:
 
 
 def _blank(symbol: str) -> dict[str, Any]:
+    # `asset` is decided locally, not by the vendor, so it is set here rather
+    # than alongside the fetched fields: a failed lookup must still say which
+    # session the symbol keeps -- the client hides its Extended | Regular
+    # toggle for crypto and forex, and a missing logo is no reason to lose it.
     return {"symbol": symbol, "name": None, "logo_url": None,
-            "week52_high": None, "week52_low": None}
+            "week52_high": None, "week52_low": None,
+            "asset": classify(symbol)}
 
 
 def _reset_cache_for_tests() -> None:

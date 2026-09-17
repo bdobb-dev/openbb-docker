@@ -20,6 +20,11 @@ class Series:
     column: str
     label: str
     render: dict
+    # The request this series came from. Carried rather than re-derived: a
+    # client that owns its own renderer (bdobb-v2's studies strip) matches
+    # returned series back to the study instance that asked for them, and the
+    # column name alone cannot say which SOURCE was requested.
+    req: Req | None = None
 
 
 @dataclass
@@ -43,20 +48,29 @@ def _series_for(req: Req) -> list[Series]:
     return [
         Series(base + col_suffix(req),
                f"{ind.label}{suffix}" if i == 0 else base,
-               {**render, **style})
+               {**render, **style}, req)
         for i, (base, render) in enumerate(ind.render.items())
     ]
 
 
 def _suffix(req: Req) -> str:
-    numeric = [f"{v:g}" for k, v in req.params.items()
+    # The unit rides in the label too: without it the legend reads SMA(50)
+    # for both the bar window and the session one, and the two lines become
+    # indistinguishable to the eye that has to tell them apart.
+    numeric = [f"{v:g}{req.units.get(k, '')}" for k, v in req.params.items()
                if k != "style" and isinstance(v, (int, float))]
     return f"({','.join(numeric)})" if numeric else ""
 
 
 def _key(req: Req) -> tuple:
+    # `source` is part of the identity (v12.3.0): the same SMA asked of both
+    # sources must survive dedupe as two requests, or the second silently
+    # collapses onto the first and the card loses a line.
+    # `units` likewise: `period=50` and `period=50bd` are fifty bars and
+    # fifty sessions, two lines, and dedupe must not fuse them into one.
     return (req.name, tuple(sorted(
-        (k, v) for k, v in req.params.items() if k != "style")))
+        (k, v) for k, v in req.params.items() if k != "style")), req.source,
+        tuple(sorted(req.units.items())))
 
 
 def assign(macro: Macro | None, picks: list[Req]) -> list[Pane]:

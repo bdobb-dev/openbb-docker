@@ -7,7 +7,8 @@ from datetime import date
 
 import polars as pl
 
-from app.ta.panes import Pane, Series
+from app.ta.panes import Pane, Series, assign
+from app.ta.payload import parse_indicators
 from app.ta.series_payload import build_series_payload, series_delta
 
 
@@ -69,3 +70,15 @@ def test_a_delta_carries_only_the_revised_tail():
 def test_a_delta_keeps_the_offset_of_an_offset_series():
     delta = series_delta(_frame(), _panes(), 2)
     assert delta["panes"][0]["series"][0]["data"][-1]["time"] == "2026-01-04"
+
+
+def test_a_bd_window_echoes_its_wire_form_in_req_params():
+    """`req.params` is what the client SENT, so matchSeries can match it.
+
+    The client asked for `period=3bd`; a bare 3 on the way back reads as a
+    different study and the series never finds its instance.
+    """
+    panes = assign(None, parse_indicators("sma:period=3,sma:period=3bd"))
+    series = build_series_payload(
+        _frame(), panes, "AAPL", "", [])["panes"][0]["series"]
+    assert [s["req"]["params"]["period"] for s in series] == [3, "3bd"]

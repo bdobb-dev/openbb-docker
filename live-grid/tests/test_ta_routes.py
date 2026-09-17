@@ -3,13 +3,14 @@
 
 """The /ta_chart route and macro discovery in /widgets.json."""
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from app.main import create_app
+from app.ta.registry import REGISTRY
 
 
 def client():
@@ -279,3 +280,109 @@ def test_ta_series_ws_closes_on_an_unknown_macro():
     with pytest.raises(WebSocketDisconnect):
         with client().websocket_connect("/ta_series_ws?symbol=AAPL&macro=nope") as ws:
             ws.receive_json()
+
+
+def test_ta_registry_projects_every_indicator_but_volume():
+    resp = client().get("/ta_registry")
+    assert resp.status_code == 200
+    names = [e["name"] for e in resp.json()]
+    assert "sma" in names and "avwap" in names and "volume" not in names
+    assert len(names) == len(REGISTRY) - 1
+
+
+def test_ta_registry_entry_shape_for_bbands_and_avwap():
+    entries = {e["name"]: e for e in client().get("/ta_registry").json()}
+    bb = entries["bbands"]
+    assert bb["pane"] == "price" and bb["band"] is True and bb["render"] == "line"
+    assert [p["name"] for p in bb["params"]] == ["period", "k"]
+    assert bb["windows"] == ["period"]
+    assert bb["params"][0] == {
+        "name": "period", "default": 20, "text": False, "float": False, "window": True}
+    # bbands' k is a standard-deviation multiple, not a bars lookback -- not a
+    # window, unlike stoch's k (registry.py Indicator.windows docstring).
+    assert bb["params"][1] == {
+        "name": "k", "default": 2.0, "text": False, "float": True, "window": False}
+    assert bb["eodhd"]["function"] == "bbands" and "adjusted" in bb["eodhd"]["note"]
+    av = entries["avwap"]
+    assert av["params"][0] == {
+        "name": "anchor", "default": None, "text": True, "float": False, "window": False}
+    assert av["eodhd"] is None
+    assert entries["sar"]["render"] == "dots"
+    assert entries["rsi"]["guides"] == [30, 70]
+    assert entries["pivots_standard"]["sessioned"] is True and entries["sma"]["sessioned"] is False
+    macd = entries["macd"]
+    assert macd["windows"] == ["fast", "slow", "signal"]
+    assert [p["window"] for p in macd["params"] if p["name"] in macd["windows"]] == [True, True, True]
+
+
+# --- session=regular ---------------------------------------------------------
+def _intraday_bars() -> list[dict]:
+    """A full 2024-01-03 US tape, 04:00-20:00 ET, as naive-UTC 1m bars.
+
+    January is EST (UTC-5), so premarket opens at 09:00 UTC and the tape runs
+    to 01:00 UTC the next day. vwap drifts so a cumulative mean over a longer
+    window is a different number, not the same one twice.
+    """
+    first = datetime(2024, 1, 3, 9, 0)
+    out = []
+    for i in range(16 * 60):
+        price = 100.0 + i * 0.01
+        out.append({"date": (first + timedelta(minutes=i)).isoformat(),
+                    "open": price, "high": price, "low": price, "close": price,
+                    "adjusted_close": price, "volume": 100.0, "vwap": price})
+    return out
+
+
+async def _fake_intraday_series(*args, **kwargs):
+    return _intraday_bars(), {}
+
+
+def _avwap_values(payload):
+    pane = next(p for p in payload["panes"] if p["id"] == "price")
+    series = next(s for s in pane["series"] if s["column"].startswith("avwap"))
+    return [point["value"] for point in series["data"]]
+
+
+def test_ta_series_ws_session_regular_computes_on_the_regular_session(monkeypatch):
+    """The veil is the client's; the numbers behind it are the server's.
+
+    `session=regular` must cut the bars BEFORE compute -- otherwise the chart
+    dims the extended hours while every study still quietly includes them.
+    """
+    monkeypatch.setattr("app.main.build_series", _fake_intraday_series)
+    query = ("symbol=AAPL&interval=1m&provider=kdb"
+             "&indicators=avwap:anchor=2024-01-03T14:30:00")
+    with client().websocket_connect(f"/ta_series_ws?{query}") as ws:
+        extended = ws.receive_json()
+    with client().websocket_connect(f"/ta_series_ws?{query}&session=regular") as ws:
+        regular = ws.receive_json()
+
+    assert len(extended["candles"]) == 16 * 60
+    # 09:30 through 15:59 ET inclusive, the half-open [open, close) window.
+    assert len(regular["candles"]) == 390
+    assert _avwap_values(regular)[-1] != _avwap_values(extended)[-1]
+
+
+def test_ta_series_ws_defaults_to_extended_and_ignores_an_unknown_session(monkeypatch):
+    """Only the literal `regular` filters. An unknown value is not an error:
+    the socket URL is built by a client that may be newer or older than this
+    server, and a chart that closes on an unrecognised toggle is worse than
+    one that shows the whole tape."""
+    monkeypatch.setattr("app.main.build_series", _fake_intraday_series)
+    query = "symbol=AAPL&interval=1m"
+    with client().websocket_connect(f"/ta_series_ws?{query}") as ws:
+        default = ws.receive_json()
+    with client().websocket_connect(f"/ta_series_ws?{query}&session=nonsense") as ws:
+        unknown = ws.receive_json()
+    assert len(default["candles"]) == len(unknown["candles"]) == 16 * 60
+
+
+def test_ta_chart_ws_takes_session_regular_too(monkeypatch):
+    """Both sockets read the same query param -- the Workspace figure viewer
+    must not be the sibling that silently ignores it."""
+    monkeypatch.setattr("app.main.build_series", _fake_intraday_series)
+    query = "symbol=AAPL&interval=1m"
+    with client().websocket_connect(f"/ta_chart_ws?{query}&session=regular") as ws:
+        figure = ws.receive_json()
+    candles = next(t for t in figure["figure"]["data"] if t.get("type") == "candlestick")
+    assert len(candles["x"]) == 390

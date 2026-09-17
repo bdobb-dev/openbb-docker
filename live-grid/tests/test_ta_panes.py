@@ -173,3 +173,20 @@ def test_shift_times_tolerates_a_null_in_the_trailing_positions():
     times = [date(2026, 1, 1), date(2026, 1, 2), date(2026, 1, 3), None]
     out = shift_times(times, 1)
     assert out == [date(2026, 1, 2), date(2026, 1, 3), None, date(2026, 1, 5)]
+
+
+def test_an_explicit_source_does_not_dedupe_against_the_macros_pick():
+    """An explicit source is an explicit request: `source=local` asks for the
+    local series by name and gets its own column, where a pick that names no
+    source still collapses onto the macro's."""
+    macro = macro_of(
+        PaneSpec("price", 3.0, [resolve("sma", period=50)]),
+    )
+    panes = assign(macro, [resolve("sma", "local", period=50)])
+    assert [s.column for s in panes[0].series] == [
+        col("sma", period=50), "sma|period=50,source=local",
+    ]
+    assert len(all_reqs(panes)) == 2
+
+    same = assign(macro, [resolve("sma", period=50)])
+    assert [s.column for s in same[0].series] == [col("sma", period=50)]

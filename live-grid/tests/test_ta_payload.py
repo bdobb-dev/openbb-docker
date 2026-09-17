@@ -6,6 +6,7 @@
 import pytest
 
 from app.ta.payload import ChartParams, bars_to_frame, build_payload, parse_indicators
+from app.ta.registry import col_suffix
 from tests.ta_helpers import fixture_frame
 
 BARS = [
@@ -157,3 +158,180 @@ def test_with_anchor_folds_the_param_into_the_indicator_list():
     assert with_anchor("rsi:period=14", "") == "rsi:period=14"
     explicit = "avwap:anchor=2026-08-28T09:30,rsi:period=14"
     assert with_anchor(explicit, "2026-08-28T14:30") == explicit  # explicit wins
+
+
+def test_parse_indicators_reads_source_as_a_pseudo_parameter():
+    """`source` rides in the indicator grammar but is not an indicator
+    parameter -- it must be popped before resolve(), which raises on any key
+    the registry does not declare."""
+    reqs = parse_indicators("bbands:period=20:k=2.0:source=eodhd,rsi:period=14")
+    assert reqs[0].name == "bbands" and reqs[0].source == "eodhd"
+    assert reqs[0].params["period"] == 20 and reqs[0].params["k"] == 2.0
+    assert "source" not in reqs[0].params
+    assert reqs[1].source is None
+
+
+def test_parse_indicators_rejects_a_source_that_is_neither_local_nor_eodhd():
+    """Silently treating a typo as "local" would draw a plausible lie: the
+    series would say it came from the vendor and be computed here."""
+    with pytest.raises(ValueError, match="local.*eodhd"):
+        parse_indicators("sma:period=50:source=bloomberg")
+
+
+def test_two_sources_of_one_indicator_are_two_requests():
+    """Compute identity is (name, params, source): the same SMA asked of both
+    sources is two lines on the card, not one deduplicated away."""
+    from app.ta.panes import _key
+
+    a, b = parse_indicators("sma:period=50:source=eodhd,sma:period=50")
+    assert _key(a) != _key(b)
+
+
+async def test_build_payload_routes_each_request_by_its_own_source():
+    class FakeEodhd:
+        async def series(self, df, reqs, symbol, interval, last_closed):
+            from app.ta.compute import compute
+            from app.ta.sources import Result
+
+            assert [r.name for r in reqs] == ["sma"], (
+                "only the eodhd-sourced request reaches the vendor")
+            return Result(compute(df, reqs))
+
+    params = ChartParams(symbol="AAPL", interval="1d", source="local",
+                         indicators="sma:period=20:source=eodhd,rsi:period=14")
+    _, panes, frame, _ = await build_payload(params, fixture_frame(),
+                                             eodhd_source=FakeEodhd())
+    columns = {s.column for p in panes for s in p.series}
+    assert any(c.startswith("sma|") for c in columns) and any(c.startswith("rsi|") for c in columns)
+    assert all(c in frame.columns for c in columns)
+
+
+def test_series_payload_carries_the_request_and_the_served_source():
+    from app.ta.panes import assign
+    from app.ta.series_payload import build_series_payload
+    from app.ta.sources import Annotation, LocalSource
+
+    reqs = parse_indicators("sma:period=20:source=eodhd,rsi:period=14")
+    panes = assign(None, reqs)
+    frame = LocalSource().series(fixture_frame(), reqs).frame
+    sma_col = next(s.column for p in panes for s in p.series if s.column.startswith("sma|"))
+    payload = build_series_payload(
+        frame, panes, "AAPL",
+        annotations=[Annotation(sma_col, "local", "EODHD has no intraday data")],
+    )
+    series = {s["column"]: s for p in payload["panes"] for s in p["series"]}
+    assert series[sma_col]["req"] == {"name": "sma", "params": {"period": 20}, "source": "eodhd"}
+    assert series[sma_col]["render"]["source"] == "local"          # requested eodhd, served local
+    rsi_col = next(c for c in series if c.startswith("rsi|"))
+    assert series[rsi_col]["req"]["source"] is None
+    assert series[rsi_col]["render"]["source"] == "local"
+
+
+async def test_two_sources_of_one_indicator_land_in_two_columns():
+    """Distinct requests must be distinct COLUMNS, or the vendor's join lands
+    in `<col>_right`, nothing reads it, and the eodhd-labelled series ships
+    the locally computed numbers under the vendor's name."""
+    from app.ta.series_payload import build_series_payload
+    from app.ta.sources import EodhdSource
+
+    async def fake_fetch(query):
+        return [{"date": "2024-10-25", "sma": 999.0},
+                {"date": "2024-10-26", "sma": 999.0}]
+
+    params = ChartParams(symbol="AAPL", interval="1d", source="local",
+                         indicators="sma:period=50:source=eodhd,sma:period=50")
+    _, panes, frame, annotations = await build_payload(
+        params, fixture_frame(),
+        eodhd_source=EodhdSource(api_key="k", fetch=fake_fetch),
+    )
+    columns = [s.column for p in panes for s in p.series]
+    assert columns == ["sma|period=50,source=eodhd", "sma|period=50"]
+    assert all(c in frame.columns for c in columns)
+    assert not any(c.endswith("_right") for c in frame.columns)
+    assert annotations == []
+
+    vendor = frame["sma|period=50,source=eodhd"][-1]
+    local = frame["sma|period=50"][-1]
+    assert vendor == 999.0
+    assert local is not None and local != 999.0
+
+    payload = build_series_payload(frame, panes, "AAPL")
+    series = {s["column"]: s for p in payload["panes"] for s in p["series"]}
+    assert series["sma|period=50,source=eodhd"]["render"]["source"] == "eodhd"
+    assert series["sma|period=50"]["render"]["source"] == "local"
+
+
+def test_a_source_less_request_keeps_its_historic_column_name():
+    """The suffix is appended only for an EXPLICIT source, so every chart and
+    every saved dashboard that names no source keeps the column it had."""
+    from app.ta.registry import col_suffix
+
+    (plain,) = parse_indicators("sma:period=50")
+    assert col_suffix(plain) == "|period=50"
+
+
+def test_parse_indicators_reads_a_business_day_window():
+    """`50bd` is fifty business days: the number is a number, `bd` is a unit."""
+    req = parse_indicators("sma:period=50bd")[0]
+    assert req.params["period"] == 50
+    assert req.units == {"period": "bd"}
+
+
+def test_a_bare_number_wears_no_unit():
+    assert parse_indicators("sma:period=50")[0].units == {}
+
+
+def test_a_business_day_window_names_its_own_column():
+    bars, days = parse_indicators("sma:period=50,sma:period=50bd")
+    assert col_suffix(bars) == "|period=50"
+    assert col_suffix(days) == "|period=50bd"
+
+
+def test_a_unit_on_one_window_and_not_another_is_rejected():
+    """A unit moves the WHOLE request onto the session frame, so
+    `macd:fast=12bd:slow=26` computed slow and signal on sessions while the
+    legend, the column and the wire echo all said bars (Important 2). It is a
+    bad request now, refused by the same resolve() that refuses an unknown
+    parameter."""
+    with pytest.raises(ValueError, match="all of 'macd'"):
+        parse_indicators("macd:fast=12bd:slow=26")
+    # The defaulted windows count too: `signal` is bars whether it was typed
+    # or not, and a request that counts it in sessions has to say so.
+    with pytest.raises(ValueError, match="all of 'macd'"):
+        parse_indicators("macd:fast=12bd:slow=26bd")
+
+
+def test_a_unit_on_a_non_window_parameter_is_rejected():
+    """`k` is a standard-deviation multiple, so "two business days" of it
+    means nothing -- and it used to route the whole BBands onto the session
+    frame and name a column `k=2.0bd`."""
+    with pytest.raises(ValueError, match="counts no bars"):
+        parse_indicators("bbands:k=2bd")
+    with pytest.raises(ValueError, match="counts no bars"):
+        parse_indicators("pivots_standard:session_shift=1bd")
+
+
+def test_which_parameters_take_a_unit_comes_from_the_registry():
+    """`k` is a multiplier on bbands and a 14-bar lookback on stoch, so the
+    answer cannot be a list of parameter names -- each indicator declares its
+    own windows."""
+    from app.ta.registry import get
+
+    assert get("bbands").windows == ("period",)
+    (stoch,) = parse_indicators("stoch:k=14bd:smooth_k=1bd:d=3bd")
+    assert stoch.units == {"k": "bd", "smooth_k": "bd", "d": "bd"}
+
+
+def test_every_window_wearing_the_unit_is_accepted_whole():
+    """The accepted form keeps the three spellings consistent: the column
+    suffix, the legend and the wire echo all carry the unit on every window."""
+    from app.ta.panes import assign
+    from app.ta.series_payload import _series_of
+
+    (req,) = parse_indicators("macd:fast=12bd:slow=26bd:signal=9bd")
+    assert col_suffix(req) == "|fast=12bd,signal=9bd,slow=26bd"
+    pane = assign(None, [req])[-1]
+    assert pane.series[0].label == "MACD(12bd,26bd,9bd)"
+    frame = bars_to_frame(BARS)
+    echoed = _series_of(frame, pane)[0]["req"]["params"]
+    assert echoed == {"fast": "12bd", "slow": "26bd", "signal": "9bd"}

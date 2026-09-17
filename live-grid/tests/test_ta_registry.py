@@ -165,3 +165,10 @@ def test_avwap_is_null_on_bars_without_trade_data():
 def test_avwap_rejects_a_malformed_anchor():
     with pytest.raises(ValueError):
         compute(fixture_frame(), [resolve("avwap", anchor="not-a-time")])
+
+
+def test_resolve_rejects_a_source_that_is_neither_local_nor_eodhd():
+    """A macro YAML `source:` key reaches resolve() without passing
+    parse_indicators, so the check has to live here too."""
+    with pytest.raises(ValueError, match="local.*eodhd"):
+        resolve("sma", source="vendor")

@@ -39,9 +39,11 @@ from app.ta.payload import (
     bars_to_frame,
     build_payload,
     chart_subtitle,
-    revised_from,
+    delta_start,
     with_anchor,
 )
+from app.ta.registry import catalog
+from app.ta.session import regular_only
 from app.ta.series_payload import build_series_payload, series_delta
 from app.ta.sources import EodhdSource
 
@@ -283,6 +285,23 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             spec.pop("subscriptions", None)
         return JSONResponse(spec)
 
+    # Built once: register() runs at import and nothing mutates REGISTRY
+    # afterwards, so the projection cannot change while the process lives --
+    # the same reason /widgets.json reads its file per request but this does
+    # not (the registry is code, not a file an operator edits).
+    _catalog = catalog()
+
+    @app.get("/ta_registry")
+    async def ta_registry() -> JSONResponse:
+        """The indicator catalog for the advanced chart's studies picker.
+
+        The registry is the single source of truth for what a study is: its
+        params and their defaults, which pane it belongs in, its guides, its
+        render hints and whether EODHD can serve it. A client that hardcoded
+        any of that would drift the first time an indicator changed here.
+        """
+        return JSONResponse(_catalog)
+
     @app.get("/live_grid")
     def live_grid(symbol: str = Query(default="")):
         symbols = _parse_symbols(symbol)
@@ -441,6 +460,7 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             indicators=with_anchor(query.get("indicators", ""), query.get("anchor")),
             start=s, end=e, provider=query.get("provider", "kdb"),
             basis=query.get("basis", "adjusted"),
+            session=query.get("session", "extended"),
         )
         interval_s = float(os.getenv("TA_PUSH_INTERVAL_MS", "1000")) / 1000.0
         previous: list[str] = []
@@ -469,6 +489,12 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                 except Exception as exc:  # noqa: BLE001
                     log.warning("ta_chart_ws bars unavailable for %s: %s", params.symbol, exc)
                     bars, bars_error = [], exc
+                # Before the frame, so every indicator -- AVWAP's cumulative
+                # sums included -- sees only the session's bars. Filtering the
+                # OUTPUT instead would leave each study carrying the extended
+                # hours it was told to exclude.
+                if params.session == "regular":
+                    bars = regular_only(bars, params.symbol, params.interval)
                 try:
                     figure, panes, frame, annotations = await build_payload(
                         params, bars_to_frame(bars, basis=params.basis), eodhd_source=_eodhd
@@ -498,7 +524,8 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                         or marks != previous_marks):
                     await ws.send_json({"type": "figure", "rev": rev, "figure": figure})
                 else:
-                    payload = ta_delta(frame, panes, revised_from(previous, dates))
+                    payload = ta_delta(frame, panes, delta_start(
+                        panes, previous, dates, frame, params.symbol))
                     await ws.send_json({"type": "delta", "rev": rev, **payload})
                 previous, previous_marks, rev = dates, marks, rev + 1
                 # Drop rather than queue: a recompute that overran its slot must
@@ -531,6 +558,7 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             indicators=with_anchor(query.get("indicators", ""), query.get("anchor")),
             start=s, end=e, provider=query.get("provider", "kdb"),
             basis=query.get("basis", "adjusted"),
+            session=query.get("session", "extended"),
         )
         interval_s = float(os.getenv("TA_PUSH_INTERVAL_MS", "1000")) / 1000.0
         previous: list[str] = []
@@ -549,6 +577,11 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                     log.warning("ta_series_ws bars unavailable for %s: %s",
                                 params.symbol, exc)
                     bars, bars_error = [], exc
+                # Same as ta_chart_ws: the cut happens before the frame, so
+                # every study recomputes on the session's bars rather than
+                # having the extended hours trimmed off its output.
+                if params.session == "regular":
+                    bars = regular_only(bars, params.symbol, params.interval)
                 try:
                     _, panes, frame, annotations = await build_payload(
                         params, bars_to_frame(bars, basis=params.basis), eodhd_source=_eodhd
@@ -573,11 +606,20 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                 if (rev == 0 or any_repaints(panes) or bars_error is not None
                         or marks != previous_marks):
                     payload = build_series_payload(
-                        frame, panes, params.symbol, subtitle, annotations
+                        frame, panes, params.symbol, subtitle, annotations,
+                        params.source,
                     )
                     await ws.send_json({"type": "series", "rev": rev, **payload})
                 else:
-                    payload = series_delta(frame, panes, revised_from(previous, dates))
+                    # A delta's series carry `render.source` too, so the
+                    # annotations and the chart-wide default travel with it --
+                    # otherwise a fallback column would report the vendor on
+                    # every push but the full ones.
+                    payload = series_delta(
+                        frame, panes,
+                        delta_start(panes, previous, dates, frame, params.symbol),
+                        annotations, params.source,
+                    )
                     await ws.send_json({"type": "delta", "rev": rev, **payload})
                 previous, previous_marks, rev = dates, marks, rev + 1
                 elapsed = asyncio.get_running_loop().time() - started

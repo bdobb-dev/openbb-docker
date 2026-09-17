@@ -3,11 +3,23 @@
 
 """Live deltas: only revised bars travel, and repainting indicators do not."""
 
+import pytest
+
 from app.ta.figure import delta, trace_index
 from app.ta.panes import assign
-from app.ta.payload import any_repaints, revised_from
+from app.ta.payload import (
+    any_repaints,
+    bars_to_frame,
+    delta_start,
+    parse_indicators,
+    revised_from,
+)
 from app.ta.registry import REGISTRY, resolve
-from tests.ta_helpers import fixture_frame
+from app.ta.series_payload import series_delta
+from app.ta.sources import LocalSource
+from tests.ta_helpers import cols, fixture_frame
+from tests.test_ta_session import session_bars
+from tests.test_ta_sources import THREE_SESSIONS
 
 
 def test_an_unchanged_series_resends_only_the_forming_bar():
@@ -41,6 +53,66 @@ def test_a_repainting_indicator_is_detected():
         assert any_repaints(assign(None, [resolve("_zz")]))
     finally:
         del REGISTRY["_zz"]
+
+
+def _bd_frame(sessions):
+    """The `sma:period=3bd` request and its computed 1m frame."""
+    req = parse_indicators("sma:period=3bd")[0]
+    bars = [bar for day, closes in sessions for bar in session_bars(day, closes)]
+    frame = LocalSource().series(bars_to_frame(bars), [req], "1m", "AAPL").frame
+    return req, frame
+
+
+def test_a_business_day_window_resends_its_whole_running_session():
+    """A `bd` window moves every bar of the running session when a tick
+    revises the session's close (Critical 1, review-B3), so a one-bar tail
+    delta leaves the rest of the session stale on the client.
+
+    It is not answered by calling the chart repainting, though (Important 1,
+    review-final-slice4): the delta stays on and reaches back to the session's
+    first bar instead.
+    """
+    # Three sessions of 10,11,12 / 20,21,22 / 30,31,32, then a fourth bar
+    # revises the running session's close to 42.
+    running = (*THREE_SESSIONS[:2], ("2024-01-05", [30.0, 31.0, 32.0, 42.0]))
+    req, frame = _bd_frame(running)
+    panes = assign(None, [req])
+    assert not any_repaints(panes)
+    column = cols(req)[0]
+    # mean(12, 22, 42) lands on the whole running session -- 14:30 through
+    # 14:33 -- not only the forming bar a tail delta would resend.
+    assert frame[column].to_list()[-4:] == pytest.approx([76 / 3] * 4)
+
+    dates = [str(d) for d in frame["date"].to_list()]
+    assert revised_from(dates, dates) == frame.height - 1, "the tail is one bar"
+    # ...and the delta covers all four bars that moved.
+    assert delta_start(panes, dates, dates, frame, "AAPL") == frame.height - 4
+
+
+def test_a_business_day_delta_stops_at_the_running_session():
+    """The sessions BEFORE the running one are closed and cannot move, so
+    they must not travel: this is the whole difference between a bounded
+    delta and resending 21,450 bars a second."""
+    req, frame = _bd_frame(THREE_SESSIONS)
+    panes = assign(None, [req])
+    dates = [str(d) for d in frame["date"].to_list()]
+    start = delta_start(panes, dates, dates, frame, "AAPL")
+    assert start == 6, "the third session's first bar, not the frame's"
+
+    payload = series_delta(frame, panes, start)
+    assert payload["from"] == 6
+    assert len(payload["candles"]) == 3
+    assert all(len(s["data"]) == 3 for pane in payload["panes"] for s in pane["series"])
+
+
+def test_a_bar_window_delta_is_the_tail_it_always_was():
+    """No unit, no clamp: the sessions are irrelevant to a bar window and
+    every existing chart keeps the one-bar delta it had."""
+    req = parse_indicators("sma:period=3")[0]
+    _, frame = _bd_frame(THREE_SESSIONS)
+    panes = assign(None, [req])
+    dates = [str(d) for d in frame["date"].to_list()]
+    assert delta_start(panes, dates, dates, frame, "AAPL") == frame.height - 1
 
 
 def test_a_delta_of_two_bars_carries_two_points_per_trace():
