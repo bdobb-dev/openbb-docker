@@ -11,7 +11,7 @@ from later chapters is.
 
 | Release | Episode | What it adds |
 |---|---|---|
-| v1.0.0 | Ep. 1 — Your Own Bloomberg in a Closet | Tailscale sidecar + OpenBB Platform API, Serve-only ingress, provider keys |
+| v1.0.0 | Ep. 1 — Your Own Bloomberg in a Cabinet | Tailscale sidecar + OpenBB Platform API, Serve-only ingress, provider keys |
 | v2.0.0 | Ep. 2 — The Borrowed Terminal | HTTP Basic auth on the API, Tailscale Funnel (port 443 only) |
 | v3.0.0 | Ep. 3 — (with BDOBB v3.0.0) | key-maint: the transport-tiered key status widget backend |
 | v6.0.0 | Ep. 6 — The Analyst | OpenBB MCP server (tool-discovery mode), agent deploy configs |
@@ -21,7 +21,7 @@ from later chapters is.
 | v10.1.0 | Ep. 10 — The Cache | the kdb-line follow-ons: tick-log durability, the kdb-ws demo chart, per-bar vwap, the `subscriptions` and `kdb_ticks` widgets; the Ep. 9 and Ep. 10 example dashboards served at each backend's `/apps.json` |
 | v10.1.1 | Ep. 10 — The Cache | point release: every `live_grid` column declares a width, so bdobb can lock the grid's layout instead of re-flowing its columns on every tick |
 
-## What you get (this release: v10.1.1)
+## What you get (this release: v10.1.2)
 
 Eight services across two tailnet nodes, zero exposed ports. The backbone,
 unchanged since Ep. 1:

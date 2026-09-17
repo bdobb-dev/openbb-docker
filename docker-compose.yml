@@ -67,7 +67,7 @@ services:
     build: .
     # 4.7.2 = the skill-built image (OpenBB 4.7.2, openbb-eodhd 9.5.0 with the
     # full FMP-parity fetcher set — 52 eodhd widgets).
-    image: openbb-local:4.7.2
+    image: openbb-local:10.1.2
     container_name: openbb-api
     restart: unless-stopped
     # Bridge migration (Layer 1): was `network_mode: service:tailscale`.
@@ -182,7 +182,7 @@ services:
     build: .
     # 4.7.2 = the skill-built image (OpenBB 4.7.2, openbb-eodhd 9.5.0), same
     # as openbb-api — the MCP tool set tracks the same provider registry.
-    image: openbb-local:4.7.2
+    image: openbb-local:10.1.2
     container_name: openbb-mcp
     restart: unless-stopped
     # Bridge migration (Layer 1): was
@@ -235,7 +235,7 @@ services:
   # SSH — no port, no header).
   key-maint:
     build: ./key-maint
-    image: openbb-key-maint:latest
+    image: openbb-key-maint:10.1.2
     container_name: openbb-key-maint
     restart: unless-stopped
     # Bridge migration (Layer 1): was
@@ -285,7 +285,7 @@ services:
     build:
       context: .
       dockerfile: live-grid/Dockerfile
-    image: openbb-live-grid:latest
+    image: openbb-live-grid:10.1.2
     container_name: openbb-live-grid
     restart: unless-stopped
     # Bridge migration (Layer 1): was
