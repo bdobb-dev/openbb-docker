@@ -277,7 +277,7 @@ def _line(color: str | None = None) -> dict:
 register(Indicator(
     name="sma", label="SMA", params={"period": 50},
     group='Moving averages', title='Simple Moving Average',
-    description='Averages price over a fixed number of bars, smoothing out day-to-day noise so the underlying trend stands out. Price crossing above or below the line is often read as a shift in trend direction.',
+    description="Averages price over a fixed number of bars, smoothing out day-to-day noise so the underlying trend stands out. Price crossing above or below the line is often read as a shift in trend direction.",
     wiki="https://en.wikipedia.org/wiki/Moving_average",
     windows=("period",), pane="price",
     price_basis="adjusted",
@@ -296,7 +296,7 @@ register(Indicator(
 register(Indicator(
     name="ema", label="EMA", params={"period": 50},
     group='Moving averages', title='Exponential Moving Average',
-    description='Averages price over a lookback window like a simple moving average, but weights recent bars more heavily so it turns with price faster. Traders read it the same way as an SMA, as a trend line, but it reacts sooner to new moves.',
+    description="Averages price over a lookback window like a simple moving average, but weights recent bars more heavily so it turns with price faster. Traders read it the same way as an SMA, as a trend line, but it reacts sooner to new moves.",
     wiki="https://en.wikipedia.org/wiki/Moving_average",
     windows=("period",), pane="price",
     price_basis="adjusted",
@@ -331,7 +331,7 @@ def _rsi_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 register(Indicator(
     name="rsi", label="RSI", params={"period": 14},
     group='Oscillators', title='Relative Strength Index',
-    description='Compares the size of recent gains to recent losses on a 0-100 scale to gauge whether a security has moved too far too fast. Readings above roughly 70 are read as overbought and below 30 as oversold, though strong trends can hold at extremes for a while.',
+    description="Compares the size of recent gains to recent losses on a 0-100 scale to gauge whether a security has moved too far too fast. Readings above roughly 70 are read as overbought and below 30 as oversold, though strong trends can hold at extremes for a while.",
     wiki="https://en.wikipedia.org/wiki/Relative_strength_index",
     windows=("period",), pane="own",
     price_basis="adjusted", guides=[30.0, 70.0],
@@ -363,7 +363,7 @@ def _bbands_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 register(Indicator(
     name="bbands", label="Bollinger Bands", params={"period": 20, "k": 2.0},
     group='Bands & channels', title='Bollinger Bands',
-    description='A moving average with two bands plotted a multiple of standard deviation above and below it, so the band width expands and contracts with volatility. Price pressing against or beyond a band is read as a stretched, possibly overextended move relative to its recent range.',
+    description="A moving average with two bands plotted a multiple of standard deviation above and below it, so the band width expands and contracts with volatility. Price pressing against or beyond a band is read as a stretched, possibly overextended move relative to its recent range.",
     wiki="https://en.wikipedia.org/wiki/Bollinger_Bands",
     windows=("period",),
     pane="price", price_basis="adjusted",
@@ -411,7 +411,7 @@ register(Indicator(
 register(Indicator(
     name="wma", label="WMA", params={"period": 50},
     group='Moving averages', title='Weighted Moving Average',
-    description='Weights each bar in the lookback window in proportion to how recent it is, so the most recent price counts several times as much as the oldest. It sits between the SMA and EMA in responsiveness and is read the same way, as a trend line.',
+    description="Weights each bar in the lookback window in proportion to how recent it is, so the most recent price counts several times as much as the oldest. It sits between the SMA and EMA in responsiveness and is read the same way, as a trend line.",
     wiki="https://en.wikipedia.org/wiki/Moving_average",
     windows=("period",), pane="price",
     price_basis="adjusted",
@@ -454,7 +454,7 @@ def _hma_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 register(Indicator(
     name="hma", label="Hull Moving Average", params={"period": 9},
     group='Moving averages', title='Hull Moving Average',
-    description='Combines two weighted moving averages of different lengths to cancel out lag while keeping the line smooth, so it tracks price closely without the choppiness of a plain fast average. A turn in its slope is read as an early trend-change signal.',
+    description="Combines two weighted moving averages of different lengths to cancel out lag while keeping the line smooth, so it tracks price closely without the choppiness of a plain fast average. A turn in its slope is read as an early trend-change signal.",
     wiki=None,
     windows=("period",), pane="price",
     price_basis="adjusted",
@@ -519,7 +519,7 @@ def _keltner_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 register(Indicator(
     name="keltner", label="Keltner Channels",
     group='Bands & channels', title='Keltner Channels',
-    description='An average price line with bands set a multiple of average true range above and below it, so the channel width tracks volatility directly instead of standard deviation. Price breaking outside the channel is often read as the start of a stronger directional move.',
+    description="An average price line with bands set a multiple of average true range above and below it, so the channel width tracks volatility directly instead of standard deviation. Price breaking outside the channel is often read as the start of a stronger directional move.",
     wiki="https://en.wikipedia.org/wiki/Keltner_channel",
     params={"period": 20, "mult": 2.0, "atr_period": 10},
     windows=("period", "atr_period"), pane="price",
@@ -537,7 +537,7 @@ register(Indicator(
 register(Indicator(
     name="donchian", label="Price Channels", params={"period": 20},
     group='Bands & channels', title='Donchian Channels',
-    description='Plots the highest high and lowest low over the lookback window as a channel, with the midpoint drawn between them. A new high or low pushing against the edge of the channel is read as a breakout from the recent trading range.',
+    description="Plots the highest high and lowest low over the lookback window as a channel, with the midpoint drawn between them. A new high or low pushing against the edge of the channel is read as a breakout from the recent trading range.",
     wiki="https://en.wikipedia.org/wiki/Donchian_channel",
     windows=("period",), pane="price",
     price_basis="raw",
@@ -606,7 +606,7 @@ def _avwap_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 register(Indicator(
     name="avwap", label="Anchored VWAP", params={"anchor": None}, pane="price",
     group='Moving averages', title='Anchored VWAP',
-    description='The same volume-weighted average as VWAP, but the running average starts fresh from a timestamp the trader chooses rather than from the start of the chart. It is read as the average cost basis of everyone who has traded since that anchor, useful for judging whether a specific event still supports the price.',
+    description="The same volume-weighted average as VWAP, but the running average starts fresh from a timestamp the trader chooses rather than from the start of the chart. It is read as the average cost basis of everyone who has traded since that anchor, useful for judging whether a specific event still supports the price.",
     wiki=None,
     price_basis="raw",
     convention=(
@@ -687,7 +687,7 @@ def _stoch_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 register(Indicator(
     name="stoch", label="Stochastic", params={"k": 14, "smooth_k": 1, "d": 3},
     group='Oscillators', title='Stochastic Oscillator',
-    description='Compares the latest close to the high-low range over the lookback window, on a 0-100 scale, to show where price sits within its recent range. Readings near the top are read as overbought and readings near the bottom as oversold; a crossover of its two lines is often read as a timing signal.',
+    description="Compares the latest close to the high-low range over the lookback window, on a 0-100 scale, to show where price sits within its recent range. Readings near the top are read as overbought and readings near the bottom as oversold; a crossover of its two lines is often read as a timing signal.",
     wiki="https://en.wikipedia.org/wiki/Stochastic_oscillator",
     windows=("k", "smooth_k", "d"),
     pane="own", price_basis="raw", guides=[20.0, 80.0],
@@ -724,7 +724,7 @@ def _stochrsi_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 register(Indicator(
     name="stochrsi", label="StochRSI",
     group='Oscillators', title='Stochastic RSI',
-    description='Applies the same overbought/oversold calculation used by the stochastic oscillator to RSI values instead of price, producing a more sensitive, faster-moving 0-100 reading. It is read the same way as RSI or stochastics, but reaches its extremes more often and sooner.',
+    description="Applies the same overbought/oversold calculation used by the stochastic oscillator to RSI values instead of price, producing a more sensitive, faster-moving 0-100 reading. It is read the same way as RSI or stochastics, but reaches its extremes more often and sooner.",
     wiki=None,
     params={"period": 14, "stoch_period": 14},
     windows=("period", "stoch_period"), pane="own",
@@ -766,7 +766,7 @@ def _adx_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 register(Indicator(
     name="adx", label="ADX / DMI", params={"period": 14},
     group='Trend', title='Average Directional Index',
-    description='Measures how strongly price is trending, regardless of direction, alongside two companion lines showing whether buyers or sellers currently have the upper hand. A rising main line is read as a strengthening trend, while a low reading suggests a directionless, choppy market.',
+    description="Measures how strongly price is trending, regardless of direction, alongside two companion lines showing whether buyers or sellers currently have the upper hand. A rising main line is read as a strengthening trend, while a low reading suggests a directionless, choppy market.",
     wiki="https://en.wikipedia.org/wiki/Average_directional_movement_index",
     windows=("period",), pane="own",
     price_basis="raw", guides=[20.0, 25.0],
@@ -799,7 +799,7 @@ def _cci_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 register(Indicator(
     name="cci", label="CCI", params={"period": 20},
     group='Oscillators', title='Commodity Channel Index',
-    description='Measures how far the typical price has strayed from its recent average, scaled by typical deviation, so it reads similarly across different securities and price levels. Large positive or negative readings are read as a price move stretched well beyond its normal range.',
+    description="Measures how far the typical price has strayed from its recent average, scaled by typical deviation, so it reads similarly across different securities and price levels. Large positive or negative readings are read as a price move stretched well beyond its normal range.",
     wiki="https://en.wikipedia.org/wiki/Commodity_channel_index",
     windows=("period",), pane="own",
     price_basis="raw", guides=[-100.0, 100.0],
@@ -823,7 +823,7 @@ register(Indicator(
 register(Indicator(
     name="willr", label="Williams %R", params={"period": 14},
     group='Oscillators', title='Williams %R',
-    description='Compares the latest close to the high-low range over the lookback window, similar to the stochastic oscillator but plotted upside down on a 0 to -100 scale. Readings near zero are read as overbought and readings near -100 as oversold.',
+    description="Compares the latest close to the high-low range over the lookback window, similar to the stochastic oscillator but plotted upside down on a 0 to -100 scale. Readings near zero are read as overbought and readings near -100 as oversold.",
     wiki="https://en.wikipedia.org/wiki/Williams_%25R",
     windows=("period",), pane="own",
     price_basis="raw", guides=[-80.0, -20.0],
@@ -844,7 +844,7 @@ register(Indicator(
 register(Indicator(
     name="roc", label="Rate of Change", params={"period": 12},
     group='Oscillators', title='Rate of Change',
-    description='The plain percentage change in price from a fixed number of bars ago to now, a direct measure of how fast price is moving. Crossing above or below zero is read as momentum turning positive or negative.',
+    description="The plain percentage change in price from a fixed number of bars ago to now, a direct measure of how fast price is moving. Crossing above or below zero is read as momentum turning positive or negative.",
     wiki="https://en.wikipedia.org/wiki/Momentum_(technical_analysis)",
     windows=("period",), pane="own",
     price_basis="adjusted", guides=[0.0],
@@ -880,7 +880,7 @@ register(Indicator(
 register(Indicator(
     name="stddev", label="Standard Deviation", params={"period": 20},
     group='Volatility', title='Standard Deviation',
-    description='The statistical spread of price around its recent average, computed the same way as the width used inside the Bollinger Bands. A rising value is read as expanding volatility and a falling value as price settling into a tighter range.',
+    description="The statistical spread of price around its recent average, computed the same way as the width used inside the Bollinger Bands. A rising value is read as expanding volatility and a falling value as price settling into a tighter range.",
     wiki="https://en.wikipedia.org/wiki/Standard_deviation",
     windows=("period",), pane="own",
     price_basis="adjusted",
@@ -900,7 +900,7 @@ register(Indicator(
 register(Indicator(
     name="pct_b", label="%B", params={"period": 20, "k": 2.0},
     group='Oscillators', title='Bollinger %B',
-    description='Shows where the current price sits between the Bollinger Bands, expressed as a fraction from 0 at the lower band to 1 at the upper band. Readings above 1 or below 0 mean price has pushed outside the bands entirely, read as an extreme move.',
+    description="Shows where the current price sits between the Bollinger Bands, expressed as a fraction from 0 at the lower band to 1 at the upper band. Readings above 1 or below 0 mean price has pushed outside the bands entirely, read as an extreme move.",
     wiki="https://en.wikipedia.org/wiki/Bollinger_Bands",
     windows=("period",), pane="own",
     price_basis="adjusted", guides=[0.0, 1.0],
@@ -923,7 +923,7 @@ register(Indicator(
 register(Indicator(
     name="bandwidth", label="Bollinger BandWidth",
     group='Oscillators', title='Bollinger BandWidth',
-    description='The width of the Bollinger Bands expressed as a percentage of the middle band, so it rises when volatility expands and falls when it contracts. A sustained low reading is often read as a volatility squeeze that tends to precede a bigger move.',
+    description="The width of the Bollinger Bands expressed as a percentage of the middle band, so it rises when volatility expands and falls when it contracts. A sustained low reading is often read as a volatility squeeze that tends to precede a bigger move.",
     wiki="https://en.wikipedia.org/wiki/Bollinger_Bands",
     params={"period": 20, "k": 2.0},
     windows=("period",), pane="own", price_basis="adjusted",
@@ -944,7 +944,7 @@ register(Indicator(
 register(Indicator(
     name="sar", label="Parabolic SAR",
     group='Trend', title='Parabolic SAR',
-    description='Plots a series of dots that trail below price in an uptrend and above it in a downtrend, accelerating toward price the longer the trend runs. When price crosses the dots, it flips to the other side and is commonly read as a signal to reverse position.',
+    description="Plots a series of dots that trail below price in an uptrend and above it in a downtrend, accelerating toward price the longer the trend runs. When price crosses the dots, it flips to the other side and is commonly read as a signal to reverse position.",
     wiki="https://en.wikipedia.org/wiki/Parabolic_SAR",
     params={"acceleration": 0.02, "maximum": 0.2}, pane="price",
     price_basis="raw", iterative=True,
@@ -965,7 +965,7 @@ register(Indicator(
 register(Indicator(
     name="supertrend", label="Supertrend",
     group='Trend', title='Supertrend',
-    description='A single trailing line set a multiple of average true range away from price, holding steady on one side until price closes through it. A flip in which side of price the line sits on is read as a change in trend direction.',
+    description="A single trailing line set a multiple of average true range away from price, holding steady on one side until price closes through it. A flip in which side of price the line sits on is read as a change in trend direction.",
     wiki=None,
     params={"period": 10, "multiplier": 3.0},
     windows=("period",), pane="price",
@@ -1058,7 +1058,7 @@ def _cmf_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 register(Indicator(
     name="cmf", label="Chaikin Money Flow", params={"period": 20},
     group='Volume', title='Chaikin Money Flow',
-    description='Measures whether volume over the lookback window is concentrated on bars that closed near their high or near their low, summed and scaled by total volume. Sustained positive readings are read as accumulation and sustained negative readings as distribution.',
+    description="Measures whether volume over the lookback window is concentrated on bars that closed near their high or near their low, summed and scaled by total volume. Sustained positive readings are read as accumulation and sustained negative readings as distribution.",
     wiki=None,
     windows=("period",), pane="own",
     price_basis="raw", guides=[0.0],
@@ -1091,7 +1091,7 @@ def _uo_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 register(Indicator(
     name="uo", label="Ultimate Oscillator",
     group='Oscillators', title='Ultimate Oscillator',
-    description='Blends buying pressure measured over three different lookback lengths into one 0-100 reading, weighting the shortest window most heavily so it reacts quickly while still reflecting the longer-term picture. High readings are read as overbought and low readings as oversold.',
+    description="Blends buying pressure measured over three different lookback lengths into one 0-100 reading, weighting the shortest window most heavily so it reacts quickly while still reflecting the longer-term picture. High readings are read as overbought and low readings as oversold.",
     wiki="https://en.wikipedia.org/wiki/Ultimate_oscillator",
     params={"fast": 7, "mid": 14, "slow": 28},
     windows=("fast", "mid", "slow"), pane="own",
@@ -1158,7 +1158,7 @@ def _chop_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 register(Indicator(
     name="chop", label="Choppiness Index", params={"period": 14},
     group='Trend', title='Choppiness Index',
-    description='Measures whether price is trending or moving sideways by comparing the sum of daily ranges to the overall range of the lookback window, scaled between zero and one hundred. A high reading is read as a choppy, non-trending market, while a low reading suggests a sustained directional move.',
+    description="Measures whether price is trending or moving sideways by comparing the sum of daily ranges to the overall range of the lookback window, scaled between zero and one hundred. A high reading is read as a choppy, non-trending market, while a low reading suggests a sustained directional move.",
     wiki=None,
     windows=("period",), pane="own",
     price_basis="raw", guides=[38.2, 61.8],
