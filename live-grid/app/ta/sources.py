@@ -92,6 +92,12 @@ class LocalSource:
         On a daily-or-coarser frame a bar IS a session, so `50bd` is 50 bars
         and the ordinary path is already the right answer -- the defaults say
         so, which keeps every existing caller (and the parity tests) intact.
+
+        ponytail: that is only literally true on `1d`. `is_intraday` treats
+        `1wk`/`1mo` as "not intraday" too, so `50bd` there silently falls
+        through to the ordinary path and means 50 bars -- 50 weeks or months,
+        not 50 sessions. Upgrade path: reject a `bd` unit when the interval is
+        coarser than `1d`, once a caller actually asks for one.
         """
         bd = [r for r in reqs if _is_bd(r)]
         if not bd or df.height == 0 or not is_intraday(interval):

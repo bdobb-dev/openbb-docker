@@ -112,6 +112,12 @@ def session_date(feed: str) -> pl.Expr:
     a business day there is a UTC calendar day -- the same boundary the tick
     plane already stamps its bars against. Upgrade path: a per-feed "day
     starts at" when one of them grows a settlement hour that matters.
+
+    ponytail: `date` is assumed naive, so `replace_time_zone("UTC")` stamps
+    UTC on it rather than converting -- on an already tz-aware column that
+    would overwrite the real zone instead of reading it. `bars_to_frame`
+    only ever produces naive dates in this engine, so nothing hits this yet.
+    Upgrade path: skip the replace when the dtype already carries a zone.
     """
     zone = SESSIONS.get(feed, ("UTC", "", ""))[0]
     return (

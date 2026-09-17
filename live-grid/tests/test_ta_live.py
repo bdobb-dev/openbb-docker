@@ -3,11 +3,16 @@
 
 """Live deltas: only revised bars travel, and repainting indicators do not."""
 
+import pytest
+
 from app.ta.figure import delta, trace_index
 from app.ta.panes import assign
-from app.ta.payload import any_repaints, revised_from
+from app.ta.payload import any_repaints, bars_to_frame, parse_indicators, revised_from
 from app.ta.registry import REGISTRY, resolve
-from tests.ta_helpers import fixture_frame
+from app.ta.sources import LocalSource
+from tests.ta_helpers import cols, fixture_frame
+from tests.test_ta_session import session_bars
+from tests.test_ta_sources import THREE_SESSIONS
 
 
 def test_an_unchanged_series_resends_only_the_forming_bar():
@@ -41,6 +46,27 @@ def test_a_repainting_indicator_is_detected():
         assert any_repaints(assign(None, [resolve("_zz")]))
     finally:
         del REGISTRY["_zz"]
+
+
+def test_a_business_day_window_repaints_its_running_session():
+    """A `bd` window moves every bar of the running session when a tick
+    revises the session's close (Critical 1, review-B3) -- the same
+    degradation ZigZag causes, so `any_repaints` must say so too and force a
+    full push, or the client keeps a stale flat line until the session ends.
+    """
+    req = parse_indicators("sma:period=3bd")[0]
+    panes = assign(None, [req])
+    assert any_repaints(panes)
+
+    # Three sessions of 10,11,12 / 20,21,22 / 30,31,32, then a fourth bar
+    # revises the running session's close to 42.
+    running = (*THREE_SESSIONS[:2], ("2024-01-05", [30.0, 31.0, 32.0, 42.0]))
+    bars = [bar for day, closes in running for bar in session_bars(day, closes)]
+    frame = LocalSource().series(bars_to_frame(bars), [req], "1m", "AAPL").frame
+    column = cols(req)[0]
+    # mean(12, 22, 42) lands on the whole running session -- 14:30 through
+    # 14:33 -- not only the forming bar a tail delta would resend.
+    assert frame[column].to_list()[-4:] == pytest.approx([76 / 3] * 4)
 
 
 def test_a_delta_of_two_bars_carries_two_points_per_trace():

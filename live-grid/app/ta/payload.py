@@ -127,6 +127,12 @@ def parse_indicators(raw: str) -> list[Req]:
         if source is not None and source not in ("local", "eodhd"):
             raise ValueError(
                 f"source must be 'local' or 'eodhd', got {source!r}")
+        # `units` collides with resolve()'s own named argument the same way
+        # `source` would -- reject it here instead of letting resolve() raise
+        # a "multiple values for argument" TypeError that means nothing to
+        # whoever reads the log.
+        if "units" in params:
+            raise ValueError("'units' is a reserved key, not an indicator parameter")
         reqs.append(resolve(name.strip(), source, units, **params))
     return reqs
 
@@ -253,11 +259,15 @@ def any_repaints(panes: list[Pane]) -> bool:
 
     Tail deltas assume causality: a revision to bar t changes bar t alone. That
     is false for ZigZag, whose pivots move well back into history when a new
-    extreme arrives, so such a chart resends in full (spec D10).
+    extreme arrives, so such a chart resends in full (spec D10). It is also
+    false for a `bd` (business-day) window: a tick to the running session's
+    close moves every bar of that session, not only the last one, so a
+    unit-bearing request repaints too.
     """
     from app.ta.registry import get
 
-    return any(get(req.name).repaints for pane in panes for req in pane.reqs)
+    return any(get(req.name).repaints or req.units
+               for pane in panes for req in pane.reqs)
 
 
 def revised_from(previous_dates: list[str], current_dates: list[str]) -> int:
