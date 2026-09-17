@@ -72,12 +72,12 @@ def _candidate(row: dict, reason: str) -> dict:
 
 
 def _by_identifier(session: QuerySession, ident: str, kind: str | None,
-                   include_historical: bool) -> list[dict]:
+                   include_historical: bool) -> tuple[list[dict], bool]:
     at = session.ctx.effective_at
     extra, params = ("AND identifier_type = ?", [kind]) if kind else ("", [])
     rows = _rows(session, "silver.identifiers", "identifier", ident, extra, params)
     if not rows:
-        return []
+        return [], False
     live = [r for r in rows if _effective(r, at)]
     # A closed alias only answers for an identity nothing current claims; when a live row
     # exists it is the answer, and the closed row is just its history.
@@ -87,7 +87,7 @@ def _by_identifier(session: QuerySession, ident: str, kind: str | None,
     out = []
     for row, reason in chosen:
         out.append(_candidate({**_identity(session, row), **_present(row)}, reason))
-    return out
+    return out, True
 
 
 def _present(row: dict) -> dict:
@@ -118,7 +118,7 @@ def _identity(session: QuerySession, row: dict) -> dict:
 
 
 def _by_stable_id(session: QuerySession, ident: str, kind: str,
-                  include_historical: bool) -> list[dict]:
+                  include_historical: bool) -> tuple[list[dict], bool]:
     at = session.ctx.effective_at
     rows = session.run(f'SELECT * FROM gold.security_master WHERE "{kind}" = ?',
                        [ident]).to_pylist()
@@ -134,7 +134,7 @@ def _by_stable_id(session: QuerySession, ident: str, kind: str,
         if reason == "historical_alias" and not include_historical:
             continue
         out.append(_candidate({**row, "identifier_type": kind, "identifier": ident}, reason))
-    return out
+    return out, bool(rows)
 
 
 def resolve(settings: Settings, ctx: Context, identifier: str, identifier_type: str | None = None,
@@ -147,13 +147,11 @@ def resolve(settings: Settings, ctx: Context, identifier: str, identifier_type: 
         raise DomainError("QUERY_REJECTED", f"unknown identifier_type {kind!r}",
                           {"supported": list(_TYPES)})
     with open_session(settings, ctx, _RELATIONS) as session:
-        if kind in _STABLE:
-            candidates = _by_stable_id(session, ident, kind, include_historical)
-            known = bool(candidates)
-        else:
-            candidates = _by_identifier(session, ident, kind, include_historical)
-            known = bool(candidates) or bool(
-                _rows(session, "silver.identifiers", "identifier", ident))
+        # `known` is whether the store has ever heard of this identifier, which is a
+        # different question from whether the context has a candidate to offer: an alias
+        # excluded by include_historical is still resolved, just not currently in force.
+        resolver = _by_stable_id if kind in _STABLE else _by_identifier
+        candidates, known = resolver(session, ident, kind, include_historical)
         manifest = dict(session.manifest)
     if not known:
         raise DomainError("IDENTITY_UNRESOLVED", f"{ident} resolves to no local security",
