@@ -1,0 +1,99 @@
+{
+  "columns": [
+    {
+      "dtype": "string",
+      "name": "symbol"
+    }
+  ],
+  "count": {
+    "quality": "exact",
+    "value": 4
+  },
+  "execution_id": "qry_9861150182cf4c32",
+  "next_cursor": "eyJlIjogInFyeV85ODYxMTUwMTgyY2Y0YzMyIiwgIm8iOiAzLCAiZiI6ICIzYTc5OTljYjA2YWQ3YTEwIn0",
+  "receipt": {
+    "availability_policy": "local_as_ingested",
+    "created_at": "2026-09-17T12:02:21.680158Z",
+    "dependencies": [
+      {
+        "delta_version": 1,
+        "relation": "silver.calendar_authorities"
+      },
+      {
+        "delta_version": 5,
+        "relation": "silver.calendar_exceptions"
+      },
+      {
+        "delta_version": 0,
+        "relation": "silver.calendar_rules"
+      },
+      {
+        "delta_version": 0,
+        "relation": "silver.corporate_actions"
+      },
+      {
+        "delta_version": 5,
+        "relation": "silver.exchanges"
+      },
+      {
+        "delta_version": 1,
+        "relation": "silver.fundamental_facts"
+      },
+      {
+        "delta_version": 4,
+        "relation": "silver.identifiers"
+      },
+      {
+        "delta_version": 4,
+        "relation": "silver.instruments"
+      },
+      {
+        "delta_version": 4,
+        "relation": "silver.issuers"
+      },
+      {
+        "delta_version": 3,
+        "relation": "silver.listings"
+      },
+      {
+        "delta_version": 0,
+        "relation": "silver.market_sessions"
+      },
+      {
+        "delta_version": 2,
+        "relation": "silver.prices_normalized"
+      },
+      {
+        "delta_version": 1,
+        "relation": "silver.securities"
+      },
+      {
+        "delta_version": 0,
+        "relation": "silver.session_interruptions"
+      },
+      {
+        "delta_version": 0,
+        "relation": "silver.universe_membership"
+      }
+    ],
+    "effective_at": null,
+    "execution_id": "qry_9861150182cf4c32",
+    "kind": "sql",
+    "known_at": null,
+    "projection_version": "security-master-projection/1",
+    "request_id": "req_bfe8f20d4c0b",
+    "sql_fingerprint": "3a7999cb06ad7a10",
+    "temporal_mode": "current_corrected"
+  },
+  "rows": [
+    {
+      "symbol": "AAPL"
+    },
+    {
+      "symbol": "EXMP"
+    },
+    {
+      "symbol": "FB"
+    }
+  ]
+}

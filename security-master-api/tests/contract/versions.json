@@ -1,0 +1,25 @@
+{
+  "relation": "silver.listings",
+  "versions": [
+    {
+      "retained": true,
+      "timestamp": "2026-09-17T12:02:18Z",
+      "version": 3
+    },
+    {
+      "retained": true,
+      "timestamp": "2026-09-17T12:02:18Z",
+      "version": 2
+    },
+    {
+      "retained": true,
+      "timestamp": "2026-09-17T12:02:17Z",
+      "version": 1
+    },
+    {
+      "retained": true,
+      "timestamp": "2026-09-17T12:02:17Z",
+      "version": 0
+    }
+  ]
+}

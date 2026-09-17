@@ -1,0 +1,68 @@
+{
+  "differences": [
+    {
+      "classification": "corrected",
+      "field": "close",
+      "key": {
+        "listing_id": "lst_apple",
+        "market_date": "2026-09-14"
+      },
+      "left": 231.4,
+      "right": 231.74
+    },
+    {
+      "classification": "corrected",
+      "field": "volume",
+      "key": {
+        "listing_id": "lst_apple",
+        "market_date": "2026-09-14"
+      },
+      "left": 51200000.0,
+      "right": 51230000.0
+    }
+  ],
+  "left_receipt": {
+    "availability_policy": "local_as_ingested",
+    "created_at": "2026-09-17T12:02:23.572473Z",
+    "dependencies": [
+      {
+        "delta_version": 3,
+        "relation": "silver.listings"
+      },
+      {
+        "delta_version": 2,
+        "relation": "silver.prices_normalized"
+      }
+    ],
+    "effective_at": null,
+    "execution_id": "qry_40399f3cba9c4c7a",
+    "kind": "compare",
+    "known_at": "2026-09-14T20:05:00Z",
+    "projection_version": "security-master-projection/1",
+    "request_id": "req_790da703f973",
+    "sql_fingerprint": "",
+    "temporal_mode": "known_at"
+  },
+  "right_receipt": {
+    "availability_policy": "local_as_ingested",
+    "created_at": "2026-09-17T12:02:23.572485Z",
+    "dependencies": [
+      {
+        "delta_version": 3,
+        "relation": "silver.listings"
+      },
+      {
+        "delta_version": 2,
+        "relation": "silver.prices_normalized"
+      }
+    ],
+    "effective_at": null,
+    "execution_id": "qry_b89c894c81314d17",
+    "kind": "compare",
+    "known_at": "2026-09-15T09:20:00Z",
+    "projection_version": "security-master-projection/1",
+    "request_id": "req_790da703f973",
+    "sql_fingerprint": "",
+    "temporal_mode": "known_at"
+  }
+}

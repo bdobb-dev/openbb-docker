@@ -1,0 +1,66 @@
+{
+  "columns": [
+    {
+      "dtype": "string",
+      "name": "listing_id"
+    },
+    {
+      "dtype": "string",
+      "name": "symbol"
+    }
+  ],
+  "count": {
+    "quality": "exact",
+    "value": 4
+  },
+  "execution_id": "qry_b8a001b05bc74261",
+  "next_cursor": "eyJlIjogInFyeV9iOGEwMDFiMDViYzc0MjYxIiwgIm8iOiAzLCAiZiI6ICI3M2ZlNmU2MWM0NGZmNzYxIn0",
+  "receipt": {
+    "availability_policy": "local_as_ingested",
+    "created_at": "2026-09-17T12:02:19.802541Z",
+    "dependencies": [
+      {
+        "delta_version": 4,
+        "relation": "silver.identifiers"
+      },
+      {
+        "delta_version": 4,
+        "relation": "silver.instruments"
+      },
+      {
+        "delta_version": 4,
+        "relation": "silver.issuers"
+      },
+      {
+        "delta_version": 3,
+        "relation": "silver.listings"
+      },
+      {
+        "delta_version": 1,
+        "relation": "silver.securities"
+      }
+    ],
+    "effective_at": null,
+    "execution_id": "qry_b8a001b05bc74261",
+    "kind": "preview",
+    "known_at": null,
+    "projection_version": "security-master-projection/1",
+    "request_id": "req_3b752cfa3a00",
+    "sql_fingerprint": "73fe6e61c44ff761",
+    "temporal_mode": "current_corrected"
+  },
+  "rows": [
+    {
+      "listing_id": "lst_apple",
+      "symbol": "AAPL"
+    },
+    {
+      "listing_id": "lst_example",
+      "symbol": "EXMP"
+    },
+    {
+      "listing_id": "lst_000042",
+      "symbol": "FB"
+    }
+  ]
+}

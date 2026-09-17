@@ -1,0 +1,14 @@
+{
+  "error": {
+    "code": "TEMPORAL_MODE_UNSUPPORTED",
+    "details": {
+      "relation": "bronze.source_captures",
+      "supported_modes": [
+        "captured_by",
+        "delta_snapshot"
+      ]
+    },
+    "message": "known_at is not supported by bronze.source_captures",
+    "request_id": "req_1719a2a26c11"
+  }
+}

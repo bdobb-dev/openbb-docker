@@ -1,0 +1,58 @@
+{
+  "chain": [
+    {
+      "assertion_id": "as_px_apple_20260914_2",
+      "assertion_status": "current",
+      "available_at": "2026-09-15T09:20:00Z",
+      "capture_id": "cap_00489",
+      "close": 231.74,
+      "effective_from": "2026-09-14T00:00:00Z",
+      "effective_to": null,
+      "high": 232.0,
+      "kind": "assertion",
+      "listing_id": "lst_apple",
+      "low": 229.8,
+      "market_date": "2026-09-14",
+      "observed_at": "2026-09-15T09:20:00Z",
+      "open": 230.1,
+      "price_basis": "raw",
+      "supersedes_assertion_id": "as_px_apple_20260914_1",
+      "system_from": "2026-09-15T09:20:00Z",
+      "system_to": null,
+      "volume": 51230000.0
+    },
+    {
+      "capture_id": "cap_00489",
+      "captured_at": "2026-09-15T09:20:00Z",
+      "content_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "endpoint": "seed",
+      "job_id": null,
+      "kind": "capture",
+      "provider": "fixture",
+      "request_fingerprint": "fx-tc-2",
+      "status": 200
+    }
+  ],
+  "receipt": {
+    "availability_policy": "local_as_ingested",
+    "created_at": "2026-09-17T12:02:23.457749Z",
+    "dependencies": [
+      {
+        "delta_version": 9,
+        "relation": "bronze.source_captures"
+      },
+      {
+        "delta_version": 2,
+        "relation": "silver.prices_normalized"
+      }
+    ],
+    "effective_at": null,
+    "execution_id": "qry_8c68aeeda6084bdd",
+    "kind": "lineage",
+    "known_at": null,
+    "projection_version": "security-master-projection/1",
+    "request_id": "req_2f487f73c9e8",
+    "sql_fingerprint": "",
+    "temporal_mode": "delta_snapshot"
+  }
+}

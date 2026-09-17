@@ -1,0 +1,100 @@
+# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+"""HTTP Basic auth for every security-master surface.
+
+Uses the SAME credentials as openbb-api, from the same `api-auth.env` that
+compose already mounts into this service: OPENBB_API_AUTH, OPENBB_API_USERNAME,
+OPENBB_API_PASSWORD. One credential for the stack's HTTP surfaces means one
+thing to rotate.
+
+Read with os.environ rather than openbb_core.env.Env: api_app.py uses Env
+because it runs inside the Platform, but this service does not depend on
+openbb-core and should not gain that dependency to read three strings.
+
+A RAW ASGI middleware, not BaseHTTPMiddleware. Starlette's BaseHTTPMiddleware
+begins `if scope["type"] != "http": await self.app(...); return`, so it never
+runs for websockets -- and a guard that covers only HTTP would leave any future
+streaming surface wide open while every HTTP test passed.
+
+Two differences from live-grid's copy: the credential may also arrive in the
+`authorization` QUERY PARAMETER, because an EventSource cannot set headers; and
+the liveness path is open, because a health check has no credential to offer.
+"""
+
+import base64
+import binascii
+import os
+import secrets
+from urllib.parse import parse_qs
+
+_TRUE = ("1", "true", "yes", "on")
+OPEN_PATHS = ("/security-master/v1/health",)
+
+
+def auth_enabled() -> bool:
+    """True when OPENBB_API_AUTH is set to a truthy value."""
+    return os.environ.get("OPENBB_API_AUTH", "").strip().lower() in _TRUE
+
+
+def credentials_ok(header: str | None) -> bool:
+    """True when `header` carries the configured Basic credentials."""
+    username = os.environ.get("OPENBB_API_USERNAME", "")
+    password = os.environ.get("OPENBB_API_PASSWORD", "")
+
+    supplied_user = supplied_pw = ""
+    if header and header[:6].lower() == "basic ":
+        try:
+            decoded = base64.b64decode(header[6:], validate=True).decode("utf8")
+        except (binascii.Error, UnicodeDecodeError, ValueError):
+            decoded = ""
+        if ":" in decoded:
+            supplied_user, _, supplied_pw = decoded.partition(":")
+
+    ok_user = secrets.compare_digest(supplied_user.encode(), username.encode())
+    ok_pw = secrets.compare_digest(supplied_pw.encode(), password.encode())
+    # `username and password` fails CLOSED when either is unconfigured: without
+    # it, compare_digest("", "") is true on both halves and `Basic <base64 of
+    # ":">` would authenticate against an empty pair.
+    return bool(username and password and ok_user and ok_pw)
+
+
+def credential_of(scope) -> str | None:
+    """The Basic credential this connection offers, header first, then query string."""
+    for key, value in scope.get("headers") or []:
+        if key == b"authorization":
+            return value.decode("latin-1")
+    query = parse_qs(scope.get("query_string", b"").decode())
+    return query.get("authorization", [None])[0]
+
+
+class BasicAuthMiddleware:
+    """Reject unauthenticated HTTP requests and websocket connections."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if (scope["type"] not in ("http", "websocket") or not auth_enabled()
+                or scope.get("path") in OPEN_PATHS):
+            await self.app(scope, receive, send)
+            return
+
+        if credentials_ok(credential_of(scope)):
+            await self.app(scope, receive, send)
+            return
+
+        if scope["type"] == "websocket":
+            # Refuse before accept. A websocket client sees the handshake fail;
+            # there is no 401 body to send on this transport.
+            await send({"type": "websocket.close", "code": 1008})
+            return
+
+        await send({
+            "type": "http.response.start",
+            "status": 401,
+            "headers": [
+                (b"www-authenticate", b"Basic"),
+                (b"content-length", b"0"),
+            ],
+        })
+        await send({"type": "http.response.body", "body": b""})

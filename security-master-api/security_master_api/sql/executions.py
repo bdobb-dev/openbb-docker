@@ -49,7 +49,7 @@ class _Execution:
     principal: str = ""
 
 
-def _fingerprint(ctx: Context, sql: str, params) -> str:
+def fingerprint(ctx: Context, sql: str, params) -> str:
     return hashlib.sha256(json.dumps([ctx.as_dict(), sql, params], sort_keys=True,
                                      default=str).encode()).hexdigest()[:16]
 
@@ -113,7 +113,7 @@ class Executions:
         try:
             session = open_session(self.settings, ctx, list(relations))
             receipt = new_receipt(self.settings, kind, ctx, session.manifest, request_id,
-                                  _fingerprint(ctx, sql, params))
+                                  fingerprint(ctx, sql, params))
             record_receipt(self.settings, receipt)
             ex = _Execution(receipt=receipt, fingerprint=receipt["sql_fingerprint"],
                             page_size=page, session=session, principal=principal)

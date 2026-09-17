@@ -1,0 +1,98 @@
+{
+  "columns": [
+    {
+      "dtype": "date32[day]",
+      "name": "date"
+    },
+    {
+      "dtype": "double",
+      "name": "open"
+    },
+    {
+      "dtype": "double",
+      "name": "high"
+    },
+    {
+      "dtype": "double",
+      "name": "low"
+    },
+    {
+      "dtype": "double",
+      "name": "close"
+    },
+    {
+      "dtype": "double",
+      "name": "volume"
+    },
+    {
+      "dtype": "string",
+      "name": "listing_id"
+    },
+    {
+      "dtype": "string",
+      "name": "assertion_id"
+    },
+    {
+      "dtype": "string",
+      "name": "capture_id"
+    },
+    {
+      "dtype": "string",
+      "name": "supersedes_assertion_id"
+    }
+  ],
+  "extra": {
+    "security_master_receipt": {
+      "availability_policy": "local_as_ingested",
+      "created_at": "2026-09-17T12:02:19.065176Z",
+      "dependencies": [
+        {
+          "delta_version": 4,
+          "relation": "silver.identifiers"
+        },
+        {
+          "delta_version": 4,
+          "relation": "silver.instruments"
+        },
+        {
+          "delta_version": 4,
+          "relation": "silver.issuers"
+        },
+        {
+          "delta_version": 3,
+          "relation": "silver.listings"
+        },
+        {
+          "delta_version": 2,
+          "relation": "silver.prices_normalized"
+        },
+        {
+          "delta_version": 1,
+          "relation": "silver.securities"
+        }
+      ],
+      "effective_at": "2026-09-14T20:00:00Z",
+      "execution_id": "qry_e25e3c2662e44623",
+      "kind": "odp",
+      "known_at": "2026-09-15T09:20:00Z",
+      "projection_version": "security-master-projection/1",
+      "request_id": "req_c012ac59e5cc",
+      "sql_fingerprint": "d4843d9bb9d1a2d0",
+      "temporal_mode": "known_at"
+    }
+  },
+  "results": [
+    {
+      "assertion_id": "as_px_apple_20260914_2",
+      "capture_id": "cap_00489",
+      "close": 231.74,
+      "date": "2026-09-14",
+      "high": 232.0,
+      "listing_id": "lst_apple",
+      "low": 229.8,
+      "open": 230.1,
+      "supersedes_assertion_id": "as_px_apple_20260914_1",
+      "volume": 51230000.0
+    }
+  ]
+}

@@ -1,0 +1,349 @@
+{
+  "model": {
+    "backing_relation": "gold.market_calendar",
+    "consumers": [
+      "bdobb-v2 security master browser",
+      "obb.reference.market_calendar",
+      "price download preflight"
+    ],
+    "fields": [
+      {
+        "name": "calendar_id",
+        "source": "gold.market_calendar.calendar_id",
+        "type": "string"
+      },
+      {
+        "name": "exchange_id",
+        "source": "gold.market_calendar.exchange_id",
+        "type": "string"
+      },
+      {
+        "name": "exchange_name",
+        "source": "gold.market_calendar.exchange_name",
+        "type": "string"
+      },
+      {
+        "name": "mic",
+        "source": "gold.market_calendar.mic",
+        "type": "string"
+      },
+      {
+        "name": "calendar_alias",
+        "source": "gold.market_calendar.calendar_alias",
+        "type": "string"
+      },
+      {
+        "name": "session_date",
+        "source": "gold.market_calendar.session_date",
+        "type": "date"
+      },
+      {
+        "name": "trade_date",
+        "source": "gold.market_calendar.trade_date",
+        "type": "date"
+      },
+      {
+        "name": "timezone",
+        "source": "gold.market_calendar.timezone",
+        "type": "string"
+      },
+      {
+        "name": "session_status",
+        "source": "gold.market_calendar.session_status",
+        "type": "string"
+      },
+      {
+        "name": "calendar_system",
+        "source": "gold.market_calendar.calendar_system",
+        "type": "string"
+      },
+      {
+        "name": "holiday_family",
+        "source": "gold.market_calendar.holiday_family",
+        "type": "string"
+      },
+      {
+        "name": "assertion_domain",
+        "source": "gold.market_calendar.assertion_domain",
+        "type": "string"
+      },
+      {
+        "name": "evidence_status",
+        "source": "gold.market_calendar.evidence_status",
+        "type": "string"
+      },
+      {
+        "name": "market_open",
+        "source": "gold.market_calendar.market_open",
+        "type": "datetime"
+      },
+      {
+        "name": "market_close",
+        "source": "gold.market_calendar.market_close",
+        "type": "datetime"
+      },
+      {
+        "name": "break_start",
+        "source": "gold.market_calendar.break_start",
+        "type": "datetime"
+      },
+      {
+        "name": "break_end",
+        "source": "gold.market_calendar.break_end",
+        "type": "datetime"
+      },
+      {
+        "name": "interruptions",
+        "source": "silver.session_interruptions",
+        "type": "array"
+      },
+      {
+        "name": "holiday_name",
+        "source": "gold.market_calendar.holiday_name",
+        "type": "string"
+      },
+      {
+        "name": "special_open",
+        "source": "gold.market_calendar.special_open",
+        "type": "boolean"
+      },
+      {
+        "name": "special_close",
+        "source": "gold.market_calendar.special_close",
+        "type": "boolean"
+      },
+      {
+        "name": "market_effect",
+        "source": "gold.market_calendar.market_effect",
+        "type": "string"
+      },
+      {
+        "name": "authority_type",
+        "source": "gold.market_calendar.authority_type",
+        "type": "string"
+      },
+      {
+        "name": "authority_name",
+        "source": "gold.market_calendar.authority_name",
+        "type": "string"
+      },
+      {
+        "name": "authority_verified_at",
+        "source": "gold.market_calendar.authority_verified_at",
+        "type": "datetime"
+      },
+      {
+        "name": "source_kind",
+        "source": "gold.market_calendar.source_kind",
+        "type": "string"
+      },
+      {
+        "name": "source_version",
+        "source": "gold.market_calendar.source_version",
+        "type": "string"
+      },
+      {
+        "name": "rule_id",
+        "source": "gold.market_calendar.rule_id",
+        "type": "string"
+      },
+      {
+        "name": "supersedes_assertion_id",
+        "source": "gold.market_calendar.supersedes_assertion_id",
+        "type": "string"
+      },
+      {
+        "name": "effective_from",
+        "source": "gold.market_calendar.effective_from",
+        "type": "datetime"
+      },
+      {
+        "name": "effective_to",
+        "source": "gold.market_calendar.effective_to",
+        "type": "datetime"
+      },
+      {
+        "name": "known_from",
+        "source": "gold.market_calendar.known_from",
+        "type": "datetime"
+      },
+      {
+        "name": "known_to",
+        "source": "gold.market_calendar.known_to",
+        "type": "datetime"
+      },
+      {
+        "name": "capture_id",
+        "source": "gold.market_calendar.capture_id",
+        "type": "string"
+      }
+    ],
+    "kind": "custom",
+    "model_id": "MarketCalendar",
+    "parameters": [
+      {
+        "description": "Stable internal calendar identifier",
+        "name": "calendar_id",
+        "required": false,
+        "type": "string"
+      },
+      {
+        "description": "Exchange name or pandas alias",
+        "name": "exchange",
+        "required": false,
+        "type": "string"
+      },
+      {
+        "name": "mic",
+        "required": false,
+        "type": "string"
+      },
+      {
+        "name": "start_date",
+        "required": true,
+        "type": "date"
+      },
+      {
+        "name": "end_date",
+        "required": true,
+        "type": "date"
+      },
+      {
+        "name": "include_closed",
+        "required": false,
+        "type": "boolean"
+      },
+      {
+        "name": "include_breaks",
+        "required": false,
+        "type": "boolean"
+      },
+      {
+        "name": "include_interruptions",
+        "required": false,
+        "type": "boolean"
+      },
+      {
+        "name": "session_label",
+        "required": false,
+        "type": "string"
+      },
+      {
+        "name": "timezone",
+        "required": false,
+        "type": "string"
+      },
+      {
+        "name": "as_of",
+        "required": false,
+        "type": "date"
+      },
+      {
+        "name": "knowledge_at",
+        "required": false,
+        "type": "datetime"
+      },
+      {
+        "name": "provider",
+        "required": false,
+        "type": "string"
+      }
+    ],
+    "primary_temporal_scenario": "lunar_holiday_correction",
+    "route": "/api/v1/reference/market-calendar",
+    "sql": "SELECT * FROM gold.market_calendar WHERE calendar_id = $calendar_id AND session_date BETWEEN $start_date AND $end_date AND ($include_closed OR market_effect <> 'closed') ORDER BY session_date",
+    "temporal_capabilities": [
+      "current_corrected",
+      "effective_on",
+      "known_at",
+      "delta_snapshot"
+    ]
+  },
+  "scenario": {
+    "captures": [
+      "cap_eid_t0",
+      "cap_eid_t1",
+      "cap_eid_t2"
+    ],
+    "expectations": [
+      {
+        "context": {
+          "known_at": "2027-03-09T18:44:59Z",
+          "mode": "known_at"
+        },
+        "expect": {
+          "evidence_status": "provisional",
+          "holiday_family": "eid_al_fitr",
+          "market_effect": "pending"
+        },
+        "model": "MarketCalendar",
+        "params": {
+          "calendar_id": "cal_tadawul",
+          "end_date": "2027-03-31",
+          "include_closed": true,
+          "start_date": "2027-03-01"
+        },
+        "row_date": "2027-03-10"
+      },
+      {
+        "absent_row_dates": [
+          "2027-03-10"
+        ],
+        "context": {
+          "known_at": "2027-03-09T18:45:00Z",
+          "mode": "known_at"
+        },
+        "expect": {
+          "authority_name": "Supreme Court of Saudi Arabia",
+          "evidence_status": "authority_confirmed",
+          "market_effect": "pending"
+        },
+        "model": "MarketCalendar",
+        "params": {
+          "calendar_id": "cal_tadawul",
+          "end_date": "2027-03-31",
+          "include_closed": true,
+          "start_date": "2027-03-01"
+        },
+        "row_date": "2027-03-11"
+      },
+      {
+        "context": {
+          "known_at": "2027-03-10T08:00:00Z",
+          "mode": "known_at"
+        },
+        "expect": {
+          "evidence_status": "market_final",
+          "market_effect": "closed"
+        },
+        "model": "MarketCalendar",
+        "params": {
+          "calendar_id": "cal_tadawul",
+          "end_date": "2027-03-31",
+          "include_closed": true,
+          "start_date": "2027-03-01"
+        },
+        "row_date": "2027-03-11"
+      },
+      {
+        "context": {
+          "mode": "current_corrected"
+        },
+        "expect": {
+          "evidence_status": "market_final",
+          "market_effect": "closed"
+        },
+        "model": "MarketCalendar",
+        "params": {
+          "calendar_id": "cal_tadawul",
+          "end_date": "2027-03-31",
+          "include_closed": true,
+          "start_date": "2027-03-01"
+        },
+        "row_date": "2027-03-11"
+      }
+    ],
+    "fixture_id": "eid-lunar-correction",
+    "scenario": "lunar_holiday_correction"
+  }
+}

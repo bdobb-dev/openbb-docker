@@ -1,0 +1,59 @@
+{
+  "exchanges": [
+    {
+      "calendar_alias": null,
+      "calendar_id": "cal_xdfm",
+      "effective_from": "2000-01-01T00:00:00Z",
+      "effective_to": null,
+      "eodhd_code": null,
+      "exchange_id": "exch_xdfm",
+      "mic": "XDFM",
+      "name": "Dubai Financial Market",
+      "timezone": "Asia/Dubai"
+    },
+    {
+      "calendar_alias": "XHKG",
+      "calendar_id": "cal_xhkg",
+      "effective_from": "2000-01-01T00:00:00Z",
+      "effective_to": null,
+      "eodhd_code": null,
+      "exchange_id": "exch_xhkg",
+      "mic": "XHKG",
+      "name": "Hong Kong Exchanges",
+      "timezone": "Asia/Hong_Kong"
+    },
+    {
+      "calendar_alias": "NSE",
+      "calendar_id": "cal_xnse",
+      "effective_from": "2000-01-01T00:00:00Z",
+      "effective_to": null,
+      "eodhd_code": null,
+      "exchange_id": "exch_xnse",
+      "mic": "XNSE",
+      "name": "National Stock Exchange of India",
+      "timezone": "Asia/Kolkata"
+    },
+    {
+      "calendar_alias": null,
+      "calendar_id": "cal_tadawul",
+      "effective_from": "2000-01-01T00:00:00Z",
+      "effective_to": null,
+      "eodhd_code": null,
+      "exchange_id": "exch_xsau",
+      "mic": "XSAU",
+      "name": "Saudi Exchange (Tadawul)",
+      "timezone": "Asia/Riyadh"
+    },
+    {
+      "calendar_alias": null,
+      "calendar_id": "cal_xtae",
+      "effective_from": "2000-01-01T00:00:00Z",
+      "effective_to": null,
+      "eodhd_code": null,
+      "exchange_id": "exch_xtae",
+      "mic": "XTAE",
+      "name": "Tel Aviv Stock Exchange",
+      "timezone": "Asia/Jerusalem"
+    }
+  ]
+}
