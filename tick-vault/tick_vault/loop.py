@@ -76,6 +76,7 @@ from tick_vault.engine import (
     STATUS_PARTIAL,
     STATUS_PENDING,
     Budget,
+    FetchResult,
     SpanMemory,
     _REDACTED,
     fetch_week,
@@ -155,6 +156,10 @@ class LoopConfig:
     daily_after_ny: str = DEFAULT_DAILY_AFTER_NY
     n_gated: int = DEFAULT_N_GATED
     sleep_seconds: float = DEFAULT_SLEEP_SECONDS
+    # Worker PROCESSES for FETCH/RETRY items (`vault backfill --workers N`).
+    # 1 keeps the strictly serial loop. The walk is CPU-bound in parse/write
+    # (see tick_vault.parallel), so this is processes, not threads.
+    workers: int = 1
 
 
 @dataclass
@@ -569,6 +574,66 @@ def _execute_fetch_like(ctx: LoopContext, action: CycleAction, state: dict) -> N
         ctx.manifest_row_writer(ctx.root, updated_row)
 
 
+def select_fetch_batch(ctx: LoopContext, manifest_df, state: dict, limit: int) -> list:
+    """Up to `limit` PENDING items for the parallel walk, newest complete week
+    first - `run_cycle`'s priority-1 rule applied to a batch instead of one
+    row, minus any week covering a session the vendor has not loaded yet."""
+    if manifest_df is None or manifest_df.empty or limit < 1:
+        return []
+    now_utc = ctx.now()
+    blocked = _blocked_session(state, now_utc)
+    pending = manifest_df[manifest_df["status"] == STATUS_PENDING]
+    if pending.empty:
+        return []
+    complete = pending[pending["week_monday"].apply(lambda wm: _week_is_complete(_to_date(wm), now_utc))]
+    if blocked is not None:
+        complete = complete[~complete["week_monday"].apply(lambda wm: _covers(wm, blocked))]
+    if complete.empty:
+        return []
+    ordered = complete.sort_values(["week_monday", "priority"], ascending=[False, True])
+    return [row.to_dict() for _, row in ordered.head(limit).iterrows()]
+
+
+def _execute_fetch_batch(ctx: LoopContext, items: list, state: dict, mapper) -> None:
+    """Run `items` through worker processes, then apply every result in the
+    PARENT: rebuild each `FetchResult`, persist the worker's divergence rows,
+    rule with `ctx.gate` in dispatch order (so gate sequence numbers stay
+    deterministic whatever order workers finish in), and write the manifest
+    row. Workers never touch `ops.backfill_manifest` or the gate."""
+    from tick_vault.parallel import records_to_report
+
+    if not items:
+        return
+    if not _session_ready(ctx, state, items[0].get("week_monday")):
+        return
+    now = ctx.now()
+    jobs = [
+        {"root": ctx.root, "item": item, "api_token": ctx.api_token,
+         "now": now.isoformat(), "reconcile": ctx.reconcile_step is not None}
+        for item in items
+    ]
+    for item, payload in zip(items, mapper(jobs)):
+        if payload.get("error"):
+            state.setdefault("errors", []).append(f"FETCH {item.get('work_id')}: {payload['error']}")
+            continue
+        r = payload["result"]
+        result = FetchResult(
+            status=r["status"], rows_written=r["rows_written"], captures=r["captures"],
+            wall_minutes=r["wall_minutes"], error=r["error"],
+        )
+        updated_row = update_manifest_row(item, result, completed_at=ctx.now())
+        report = records_to_report(payload.get("report"))
+        if report is not None:
+            from tick_vault.cli import persist_reconcile_issues
+
+            persist_reconcile_issues(ctx, report)
+            sequence_number = state.get("gate_sequence", 0)
+            state["gate_sequence"] = sequence_number + 1
+            updated_row = apply_gate_decision(updated_row, ctx.gate.check(sequence_number, report))
+        if ctx.manifest_row_writer is not None:
+            ctx.manifest_row_writer(ctx.root, updated_row)
+
+
 def _execute_settle(ctx: LoopContext, action: CycleAction, state: dict) -> None:
     from tick_vault.settle import settle_pass
 
@@ -665,7 +730,24 @@ def _execute_action(ctx: LoopContext, action: CycleAction, state: dict) -> None:
         raise ValueError(f"unknown CycleAction.kind: {action.kind!r}")
 
 
-def run_loop(ctx: LoopContext, *, max_cycles: "int | None" = None, run_type: str = "backfill_loop") -> dict:
+def _process_pool_mapper(workers: int):
+    """`jobs -> results` over a process pool, created once for the whole run.
+    Returns `(mapper, shutdown)`; `None` when `workers < 2` (serial loop)."""
+    if workers < 2:
+        return None, (lambda: None)
+    from concurrent.futures import ProcessPoolExecutor
+    import multiprocessing as mp
+
+    from tick_vault.parallel import fetch_job
+
+    pool = ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn"))
+    return (lambda jobs: list(pool.map(fetch_job, jobs))), (lambda: pool.shutdown(wait=True))
+
+
+def run_loop(
+    ctx: LoopContext, *, max_cycles: "int | None" = None, run_type: str = "backfill_loop",
+    mapper=None,
+) -> dict:
     """Thin, impure driver: opens one `ops.ingestion_run` row, repeatedly
     reads the manifest / calls `run_cycle` / executes exactly one
     `CycleAction` through the real components (catching and logging any
@@ -686,6 +768,9 @@ def run_loop(ctx: LoopContext, *, max_cycles: "int | None" = None, run_type: str
         "gate_sequence": 0,
         "errors": [],
     }
+    shutdown = (lambda: None)
+    if mapper is None:
+        mapper, shutdown = _process_pool_mapper(ctx.config.workers)
     run_id = open_run(ctx, run_type)
     status = RUN_STATUS_COMPLETED
     cycles = 0
@@ -695,13 +780,20 @@ def run_loop(ctx: LoopContext, *, max_cycles: "int | None" = None, run_type: str
             manifest_df = ctx.manifest_reader(ctx.root) if ctx.manifest_reader else None
             action = run_cycle(ctx, manifest_df, state)
             try:
-                _execute_action(ctx, action, state)
+                if mapper is not None and action.kind in (CYCLE_FETCH, CYCLE_RETRY):
+                    _execute_fetch_batch(
+                        ctx, select_fetch_batch(ctx, manifest_df, state, ctx.config.workers),
+                        state, mapper,
+                    )
+                else:
+                    _execute_action(ctx, action, state)
             except Exception as exc:  # per-action isolation, not caller-fatal
                 state["errors"].append(f"{action.kind}: {type(exc).__name__}: {exc}")
     except BaseException:
         status = RUN_STATUS_FAILED
         raise
     finally:
+        shutdown()
         close_run(
             ctx, run_id, status=status,
             error_summary="; ".join(state["errors"]) if state["errors"] else None,

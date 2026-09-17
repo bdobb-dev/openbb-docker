@@ -451,3 +451,69 @@ def test_session_ready_never_probes_for_a_week_that_does_not_cover_the_latest_se
     ctx = LoopContext(root="mem://test", clock=lambda: dt.datetime(2026, 9, 15, 12, 0, tzinfo=UTC),
                       session_probe=_boom)
     assert _session_ready(ctx, {}, dt.date(2026, 8, 31)) is True
+
+
+# ---------------------------------------------------------------------------
+# parallel walk: batch selection + parent-side application (2026-09-17)
+# ---------------------------------------------------------------------------
+
+def test_select_fetch_batch_takes_newest_complete_weeks_up_to_the_limit():
+    from tick_vault.loop import select_fetch_batch
+
+    now = dt.datetime(2026, 9, 19, 8, 30, tzinfo=UTC)   # Saturday
+    manifest = pd.DataFrame([
+        _row(work_id="w_new", week_monday=dt.date(2026, 9, 14)),   # complete per T+1
+        _row(work_id="w_mid", week_monday=dt.date(2026, 9, 7)),
+        _row(work_id="w_old", week_monday=dt.date(2026, 8, 31)),
+        _row(work_id="w_future", week_monday=dt.date(2026, 9, 21)),  # not complete yet
+    ])
+    got = select_fetch_batch(_ctx(now), manifest, {}, 2)
+    assert [i["work_id"] for i in got] == ["w_new", "w_mid"]
+
+    # a session the vendor has not loaded blocks only the week covering it
+    state = {"unloaded_session": {"day": dt.date(2026, 9, 18), "retry_at": now + dt.timedelta(minutes=10)}}
+    got = select_fetch_batch(_ctx(now), manifest, state, 2)
+    assert [i["work_id"] for i in got] == ["w_mid", "w_old"]
+
+
+def test_execute_fetch_batch_applies_worker_results_in_the_parent():
+    from tick_vault.loop import _execute_fetch_batch
+    from tick_vault.engine import STATUS_PARTIAL
+
+    now = dt.datetime(2026, 9, 19, 8, 30, tzinfo=UTC)
+    written, dq_writes = [], []
+    ctx = LoopContext(
+        root="mem://test", clock=lambda: now, api_token="KEY",
+        manifest_row_writer=lambda root, row: written.append(row),
+        dq_issue_writer=lambda root, table, df: dq_writes.append((table, len(df))),
+        reconcile_step=object(),          # only used as "reconciliation is wired"
+    )
+    items = [_row(work_id="w1"), _row(work_id="w2"), _row(work_id="w3")]
+    payloads = [
+        {"work_id": "w1", "error": None,
+         "result": {"status": STATUS_COMPLETE, "rows_written": 10, "captures": 1, "wall_minutes": 0.5, "error": None},
+         "report": {"status": "DIVERGENT", "diffs": [], "issues": [{"issue_id": "i1"}], "null_size_count": 0}},
+        {"work_id": "w2", "error": None,
+         "result": {"status": STATUS_COMPLETE, "rows_written": 5, "captures": 1, "wall_minutes": 0.2, "error": None},
+         "report": {"status": "PASS", "diffs": [], "issues": [], "null_size_count": 0}},
+        {"work_id": "w3", "error": "RuntimeError: boom", "result": None, "report": None},
+    ]
+    state: dict = {"gate_sequence": 0, "errors": []}
+    seen_jobs = {}
+
+    def _mapper(jobs):
+        seen_jobs["jobs"] = jobs
+        return payloads
+
+    _execute_fetch_batch(ctx, items, state, _mapper)
+
+    # jobs carry only picklable data, and ask for reconciliation
+    assert [j["item"]["work_id"] for j in seen_jobs["jobs"]] == ["w1", "w2", "w3"]
+    assert seen_jobs["jobs"][0]["reconcile"] is True and seen_jobs["jobs"][0]["root"] == "mem://test"
+    # w1 diverged inside the gated window -> held; w2 passed; w3's failure is recorded, not fatal
+    by_id = {r["work_id"]: r for r in written}
+    assert by_id["w1"]["status"] == STATUS_PARTIAL and by_id["w1"]["last_error"] == GATE_REASON_HOLD
+    assert by_id["w2"]["status"] == STATUS_COMPLETE
+    assert "w3" not in by_id and any("w3" in e for e in state["errors"])
+    assert dq_writes == [("ops.data_quality_issue", 1)]   # only the divergent one
+    assert state["gate_sequence"] == 2                     # advanced once per report

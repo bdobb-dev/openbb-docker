@@ -201,20 +201,21 @@ def _item_get(item, key: str, default=None):
     return getattr(item, key, default)
 
 
-def _pandas_reconcile_step(
-    ctx: loop_mod.LoopContext, item, fetch_result, sequence_number: int
-):
-    """Minimal pandas Phase-A reconciliation hook (C2 wiring - Plan-2's
-    reconciliation gate, previously defined in `tick_vault.reconcile` but
-    never actually called from anywhere in production).
+def build_reconcile_report(ctx, item):
+    """Build one tranche's reconciliation report - no ruling, no writes.
+
+    Split out of `_pandas_reconcile_step` (2026-09-17) so the parallel
+    walk's worker processes can do this expensive half (reading the week
+    back and aggregating bars) while the parent keeps the `Gate` and the
+    `ops.data_quality_issue` writes. `ctx` only needs the seams named
+    below, so a worker can pass a plain namespace.
 
     Reads back this tranche's just-written daily ticks via `ctx.
     existing_ticks_reader` (real wiring: `_default_existing_ticks_
     reader` above), aggregates them to daily OHLCV bars (`tick_vault.
     reconcile.aggregate_bars`), fetches the vendor's EOD reference bars
     for the same ISO week (`ReferenceClient.get_eod`), compares the two
-    (`tick_vault.reconcile.reconcile_tranche`), and rules on the tranche
-    via `ctx.gate.check(sequence_number, report)`.
+    (`tick_vault.reconcile.reconcile_tranche`), and returns that report.
 
     Returns `None` ("no reconciliation performed for this tranche", per
     `LoopContext.reconcile_step`'s own contract - the gate sequence is
@@ -254,14 +255,30 @@ def _pandas_reconcile_step(
 
     splits_reader = getattr(ctx, "splits_reader", None)
     splits_df = splits_reader(ctx.root, symbol) if splits_reader is not None else None
-    report = reconcile_mod.reconcile_tranche(
+    return reconcile_mod.reconcile_tranche(
         item, our_daily_df, ref_eod_df, our_daily_stats=our_daily_stats, splits_df=splits_df
     )
-    # Persist the divergence rows: before this, a HOLD left no trace in
-    # ops.data_quality_issue (Phase-0 calibration: 500 holds, 0 rows).
+
+
+def persist_reconcile_issues(ctx, report) -> None:
+    """Write a report's divergence rows to `ops.data_quality_issue`. Before
+    this existed a HOLD left no trace there (Phase-0 calibration: 500 holds,
+    0 rows). Split out of the hook so the parallel walk's parent process can
+    persist what a worker reported."""
     dq_issue_writer = getattr(ctx, "dq_issue_writer", None)
-    if dq_issue_writer is not None and len(report.issues_df):
+    if dq_issue_writer is not None and report is not None and len(report.issues_df):
         dq_issue_writer(ctx.root, "ops.data_quality_issue", report.issues_df)
+
+
+def _pandas_reconcile_step(
+    ctx: loop_mod.LoopContext, item, fetch_result, sequence_number: int
+):
+    """The serial reconciliation hook: build the report, persist its
+    divergence rows, and rule on the tranche via `ctx.gate`."""
+    report = build_reconcile_report(ctx, item)
+    if report is None:
+        return None
+    persist_reconcile_issues(ctx, report)
     return ctx.gate.check(sequence_number, report)
 
 
@@ -378,6 +395,9 @@ def handle_backfill(args: argparse.Namespace, ctx_factory) -> int:
             raise SystemExit(GATE_REFUSAL_MESSAGE.format(path=report_path))
 
         ctx = ctx_factory()
+        config = getattr(ctx, "config", None)
+        if config is not None:  # test ctxs are bare stubs without a LoopConfig
+            config.workers = max(1, int(getattr(args, "workers", 1) or 1))
 
         # Second gate (C2 fix-round): `--loop` also refuses when
         # reconciliation Phase-A isn't wired on this ctx - running the
@@ -733,6 +753,10 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--loop", action="store_true", help="run the engine loop forever")
     g.add_argument("--week", help="backfill a single ISO week (YYYY-MM-DD Monday)")
     g.add_argument("--until", help="backfill backwards until this ISO date")
+    p_backfill.add_argument(
+        "--workers", type=int, default=1,
+        help="worker PROCESSES for --loop fetches (default 1 = the serial loop)",
+    )
     p_backfill.add_argument(
         "--i-know-what-im-doing", dest="override", action="store_true",
         help="override the calibration-report gate for --loop (logged to ops.ingestion_run)",
