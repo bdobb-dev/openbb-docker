@@ -157,3 +157,70 @@ def test_with_anchor_folds_the_param_into_the_indicator_list():
     assert with_anchor("rsi:period=14", "") == "rsi:period=14"
     explicit = "avwap:anchor=2026-08-28T09:30,rsi:period=14"
     assert with_anchor(explicit, "2026-08-28T14:30") == explicit  # explicit wins
+
+
+def test_parse_indicators_reads_source_as_a_pseudo_parameter():
+    """`source` rides in the indicator grammar but is not an indicator
+    parameter -- it must be popped before resolve(), which raises on any key
+    the registry does not declare."""
+    reqs = parse_indicators("bbands:period=20:k=2.0:source=eodhd,rsi:period=14")
+    assert reqs[0].name == "bbands" and reqs[0].source == "eodhd"
+    assert reqs[0].params["period"] == 20 and reqs[0].params["k"] == 2.0
+    assert "source" not in reqs[0].params
+    assert reqs[1].source is None
+
+
+def test_parse_indicators_rejects_a_source_that_is_neither_local_nor_eodhd():
+    """Silently treating a typo as "local" would draw a plausible lie: the
+    series would say it came from the vendor and be computed here."""
+    with pytest.raises(ValueError, match="local.*eodhd"):
+        parse_indicators("sma:period=50:source=bloomberg")
+
+
+def test_two_sources_of_one_indicator_are_two_requests():
+    """Compute identity is (name, params, source): the same SMA asked of both
+    sources is two lines on the card, not one deduplicated away."""
+    from app.ta.panes import _key
+
+    a, b = parse_indicators("sma:period=50:source=eodhd,sma:period=50")
+    assert _key(a) != _key(b)
+
+
+async def test_build_payload_routes_each_request_by_its_own_source():
+    class FakeEodhd:
+        async def series(self, df, reqs, symbol, interval, last_closed):
+            from app.ta.compute import compute
+            from app.ta.sources import Result
+
+            assert [r.name for r in reqs] == ["sma"], (
+                "only the eodhd-sourced request reaches the vendor")
+            return Result(compute(df, reqs))
+
+    params = ChartParams(symbol="AAPL", interval="1d", source="local",
+                         indicators="sma:period=20:source=eodhd,rsi:period=14")
+    _, panes, frame, _ = await build_payload(params, fixture_frame(),
+                                             eodhd_source=FakeEodhd())
+    columns = {s.column for p in panes for s in p.series}
+    assert any(c.startswith("sma|") for c in columns) and any(c.startswith("rsi|") for c in columns)
+    assert all(c in frame.columns for c in columns)
+
+
+def test_series_payload_carries_the_request_and_the_served_source():
+    from app.ta.panes import assign
+    from app.ta.series_payload import build_series_payload
+    from app.ta.sources import Annotation, LocalSource
+
+    reqs = parse_indicators("sma:period=20:source=eodhd,rsi:period=14")
+    panes = assign(None, reqs)
+    frame = LocalSource().series(fixture_frame(), reqs).frame
+    sma_col = next(s.column for p in panes for s in p.series if s.column.startswith("sma|"))
+    payload = build_series_payload(
+        frame, panes, "AAPL",
+        annotations=[Annotation(sma_col, "local", "EODHD has no intraday data")],
+    )
+    series = {s["column"]: s for p in payload["panes"] for s in p["series"]}
+    assert series[sma_col]["req"] == {"name": "sma", "params": {"period": 20}, "source": "eodhd"}
+    assert series[sma_col]["render"]["source"] == "local"          # requested eodhd, served local
+    rsi_col = next(c for c in series if c.startswith("rsi|"))
+    assert series[rsi_col]["req"]["source"] is None
+    assert series[rsi_col]["render"]["source"] == "local"

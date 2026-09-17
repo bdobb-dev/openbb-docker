@@ -20,6 +20,11 @@ class Series:
     column: str
     label: str
     render: dict
+    # The request this series came from. Carried rather than re-derived: a
+    # client that owns its own renderer (bdobb-v2's studies strip) matches
+    # returned series back to the study instance that asked for them, and the
+    # column name alone cannot say which SOURCE was requested.
+    req: Req | None = None
 
 
 @dataclass
@@ -43,7 +48,7 @@ def _series_for(req: Req) -> list[Series]:
     return [
         Series(base + col_suffix(req),
                f"{ind.label}{suffix}" if i == 0 else base,
-               {**render, **style})
+               {**render, **style}, req)
         for i, (base, render) in enumerate(ind.render.items())
     ]
 
@@ -55,8 +60,11 @@ def _suffix(req: Req) -> str:
 
 
 def _key(req: Req) -> tuple:
+    # `source` is part of the identity (v12.3.0): the same SMA asked of both
+    # sources must survive dedupe as two requests, or the second silently
+    # collapses onto the first and the card loses a line.
     return (req.name, tuple(sorted(
-        (k, v) for k, v in req.params.items() if k != "style")))
+        (k, v) for k, v in req.params.items() if k != "style")), req.source)
 
 
 def assign(macro: Macro | None, picks: list[Req]) -> list[Pane]:

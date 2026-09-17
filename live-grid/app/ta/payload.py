@@ -19,7 +19,7 @@ from app.ta.figure import build_ta_figure
 from app.ta.macros import load_all
 from app.ta.panes import Pane, all_reqs, assign
 from app.ta.registry import Req, resolve
-from app.ta.sources import LocalSource
+from app.ta.sources import Annotation, LocalSource, _columns
 
 _NUMERIC = ("period", "k", "d", "fast", "slow", "signal", "smooth_k",
             "stoch_period", "atr_period", "mult", "acceleration", "maximum",
@@ -87,7 +87,17 @@ def parse_indicators(raw: str) -> list[Req]:
                 continue
             key, value = pair.split("=", 1)
             params[key.strip()] = _coerce(key.strip(), value.strip())
-        reqs.append(resolve(name.strip(), **params))
+        # `source` rides in the same colon grammar but is NOT an indicator
+        # parameter -- it is the request's own Local/EODHD routing choice. It
+        # has to come out before resolve(), which raises on any key the
+        # registry does not declare, and it is validated here rather than
+        # defaulted: silently reading a typo as "local" would draw a line the
+        # payload then labels as the vendor's.
+        source = params.pop("source", None)
+        if source is not None and source not in ("local", "eodhd"):
+            raise ValueError(
+                f"source must be 'local' or 'eodhd', got {source!r}")
+        reqs.append(resolve(name.strip(), source, **params))
     return reqs
 
 
@@ -173,15 +183,32 @@ async def build_payload(
     panes = assign(macro, parse_indicators(params.indicators))
     reqs = all_reqs(panes)
 
+    # The chart-wide `source` is now only a DEFAULT: each request may name its
+    # own (v12.3.0 studies), so the split is per request rather than one
+    # branch for the whole chart. Local runs first and the vendor joins onto
+    # its frame, so one frame carries both and nothing downstream has to know
+    # which engine produced which column.
+    def effective(req: Req) -> str:
+        return req.source or params.source
+
+    vendor = [r for r in reqs if effective(r) == "eodhd"]
+    local = [r for r in reqs if effective(r) != "eodhd"]
     annotations: list = []
-    if params.source == "eodhd" and eodhd_source is not None and reqs:
+    computed = frame
+    if local:
+        computed = LocalSource().series(computed, local).frame
+    if vendor and eodhd_source is not None:
         last_closed = str(frame["date"][-1]) if frame.height else ""
         result = await eodhd_source.series(
-            frame, reqs, params.symbol, params.interval, last_closed
+            computed, vendor, params.symbol, params.interval, last_closed
         )
         computed, annotations = result.frame, result.annotations
-    else:
-        computed = LocalSource().series(frame, reqs).frame
+    elif vendor:
+        # No vendor client configured: compute locally and say so, exactly as
+        # an intraday request is answered.
+        computed = LocalSource().series(computed, vendor).frame
+        annotations = [Annotation(col, "local", "no EODHD source configured")
+                       for r in vendor for col in _columns(r)]
 
     figure = build_ta_figure(
         params.symbol, computed, panes, annotations, chart_subtitle(params)

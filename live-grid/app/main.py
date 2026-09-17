@@ -573,11 +573,19 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                 if (rev == 0 or any_repaints(panes) or bars_error is not None
                         or marks != previous_marks):
                     payload = build_series_payload(
-                        frame, panes, params.symbol, subtitle, annotations
+                        frame, panes, params.symbol, subtitle, annotations,
+                        params.source,
                     )
                     await ws.send_json({"type": "series", "rev": rev, **payload})
                 else:
-                    payload = series_delta(frame, panes, revised_from(previous, dates))
+                    # A delta's series carry `render.source` too, so the
+                    # annotations and the chart-wide default travel with it --
+                    # otherwise a fallback column would report the vendor on
+                    # every push but the full ones.
+                    payload = series_delta(
+                        frame, panes, revised_from(previous, dates),
+                        annotations, params.source,
+                    )
                     await ws.send_json({"type": "delta", "rev": rev, **payload})
                 previous, previous_marks, rev = dates, marks, rev + 1
                 elapsed = asyncio.get_running_loop().time() - started

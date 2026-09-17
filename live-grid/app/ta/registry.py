@@ -25,10 +25,16 @@ from app.ta.exprs import Base, price_col
 
 @dataclass(frozen=True)
 class Req:
-    """One indicator with its parameters fully resolved."""
+    """One indicator with its parameters fully resolved.
+
+    `source` (v12.3.0) is the request's own Local/EODHD choice, or None to
+    take the chart-wide default; it is part of the request's identity, so
+    the same SMA asked of both sources is two requests, not one.
+    """
 
     name: str
     params: dict[str, Any]
+    source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -98,12 +104,14 @@ def get(name: str) -> Indicator:
         raise KeyError(f"unknown indicator {name!r}") from None
 
 
-def resolve(name: str, **overrides: Any) -> Req:
+def resolve(name: str, source: str | None = None, **overrides: Any) -> Req:
     """Defaults from the registry, overridden by keyword. Unknown keys raise.
 
     `style` is accepted for every indicator: it is per-series presentation
     carried from a macro, not an indicator parameter, so it is not in
-    `Indicator.params`.
+    `Indicator.params`. `source` is the same kind of thing one level up -- a
+    routing choice, not a parameter -- so it is a named argument rather than
+    an override, and never reaches `params`.
     """
     ind = get(name)
     style = overrides.pop("style", None)
@@ -115,7 +123,7 @@ def resolve(name: str, **overrides: Any) -> Req:
                 f"unknown parameter {key!r} for {name!r}; "
                 f"expected one of {sorted(ind.params)}"
             )
-    return Req(name, {**ind.params, "style": style, **overrides})
+    return Req(name, {**ind.params, "style": style, **overrides}, source)
 
 
 def col_suffix(req: Req) -> str:
