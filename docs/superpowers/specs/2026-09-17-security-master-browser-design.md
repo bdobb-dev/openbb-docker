@@ -120,7 +120,7 @@ Calendar assertions hold `assertion_domain` (`holiday_date` |
 columns. Interruptions are a child relation row set, never numbered
 columns.
 
-Seeding: `python -m security_master_api.seed [--root PATH]` writes the
+Seeding: `python -m security_master_api.store [--root PATH]` writes the
 seven golden fixtures (trade correction, shares outstanding, CUSIP,
 ticker, Eid lunar correction, Lunar New Year special session, negative
 control) plus the India and Dubai historical fixtures as Bronze captures
@@ -236,7 +236,7 @@ version and `odp_registry.json` is the single source for both packages.
 
 ## 6. Acquisition worker
 
-Same image, `python -m security_master_api.worker`; configuration
+Same image, `python -m security_master_api.acquire`; configuration
 `OPENBB_URL` plus the Basic-auth pair, like tick-lab. Preflight resolves
 identities under the pinned context, computes missing ranges against
 `silver.prices_normalized`, the expected request count and the applicable
