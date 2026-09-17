@@ -7,9 +7,10 @@ from pathlib import Path
 
 import pytest
 
+import security_master_api
 from security_master_api.temporal_fixture import load_temporal_fixture, state_at
 
-FIXTURES = Path(__file__).parent / "fixtures"
+FIXTURES = Path(security_master_api.__file__).parent / "fixtures"
 
 
 def instant(value: str) -> datetime:

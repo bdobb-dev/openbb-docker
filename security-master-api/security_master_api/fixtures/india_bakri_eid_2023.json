@@ -1,0 +1,335 @@
+{
+  "schema": "security-master.temporal-fixture.v1",
+  "fixture_id": "india-bakri-eid-2023",
+  "capture_time_semantics": "synthetic_test_capture",
+  "exchange_mic": "XNSE",
+  "exchange_name": "National Stock Exchange of India",
+  "holiday_family": "Bakri Eid",
+  "events": [
+    {
+      "event_id": "india-t0-exchange-calendar",
+      "published_on": "2022-12-08",
+      "known_from": "2022-12-08T18:00:00Z",
+      "source_kind": "exchange_calendar",
+      "authority": "NSE",
+      "source_url": "https://archives.nseindia.com/content/circulars/CMTR54757.pdf",
+      "assertion": "June 28, 2023 is a market holiday."
+    },
+    {
+      "event_id": "india-t1-government-notice",
+      "published_on": "2023-06-27",
+      "known_from": "2023-06-26T12:00:00Z",
+      "source_kind": "government_notice",
+      "authority": "Government of Maharashtra",
+      "source_url": "http://sppudocs.unipune.ac.in/sites/circulars/Administrative%20Circulars%20%20Non%20Teaching/Circular%20No.125-2023_27062023.pdf",
+      "assertion": "The public holiday is observed on June 29, 2023."
+    },
+    {
+      "event_id": "india-t2-exchange-clearing-notice",
+      "published_on": "2023-06-27",
+      "known_from": "2023-06-27T12:00:00Z",
+      "source_kind": "exchange_clearing_notice",
+      "authority": "NSE and clearing corporation",
+      "source_url": "https://archives.nseindia.com/content/circulars/CMPT57291.pdf",
+      "assertion": "June 28 is open, June 29 is closed, and expiry moves to June 28."
+    }
+  ],
+  "expected_states": [
+    {
+      "stage": "T0",
+      "known_from": "2022-12-08T18:00:00Z",
+      "evidence_event_ids": [
+        "india-t0-exchange-calendar"
+      ],
+      "authority_status": "projected",
+      "market_status": "final",
+      "market_dates": [
+        {
+          "date": "2023-06-28",
+          "session": "closed"
+        },
+        {
+          "date": "2023-06-29",
+          "session": "open"
+        }
+      ],
+      "expiry_date": "2023-06-29",
+      "settlement_status": "original"
+    },
+    {
+      "stage": "T1",
+      "known_from": "2023-06-26T12:00:00Z",
+      "evidence_event_ids": [
+        "india-t0-exchange-calendar",
+        "india-t1-government-notice"
+      ],
+      "authority_status": "confirmed_by_government",
+      "market_status": "pending",
+      "market_dates": [
+        {
+          "date": "2023-06-28",
+          "session": "closed"
+        },
+        {
+          "date": "2023-06-29",
+          "session": "pending"
+        }
+      ],
+      "expiry_date": null,
+      "settlement_status": "pending"
+    },
+    {
+      "stage": "T2",
+      "known_from": "2023-06-27T12:00:00Z",
+      "evidence_event_ids": [
+        "india-t0-exchange-calendar",
+        "india-t1-government-notice",
+        "india-t2-exchange-clearing-notice"
+      ],
+      "authority_status": "confirmed_by_government",
+      "market_status": "final",
+      "market_dates": [
+        {
+          "date": "2023-06-28",
+          "session": "open"
+        },
+        {
+          "date": "2023-06-29",
+          "session": "closed"
+        }
+      ],
+      "expiry_date": "2023-06-28",
+      "settlement_status": "revised"
+    }
+  ],
+  "captures": [
+    {
+      "capture_id": "cap_india_t0",
+      "provider": "fixture",
+      "endpoint": "seed",
+      "request_fingerprint": "fx-india-0",
+      "captured_at": "2022-12-08T18:00:00Z",
+      "content_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "status": 200,
+      "payload": "{}",
+      "job_id": null
+    },
+    {
+      "capture_id": "cap_india_t1",
+      "provider": "fixture",
+      "endpoint": "seed",
+      "request_fingerprint": "fx-india-1",
+      "captured_at": "2023-06-26T12:00:00Z",
+      "content_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "status": 200,
+      "payload": "{}",
+      "job_id": null
+    },
+    {
+      "capture_id": "cap_india_t2",
+      "provider": "fixture",
+      "endpoint": "seed",
+      "request_fingerprint": "fx-india-2",
+      "captured_at": "2023-06-27T12:00:00Z",
+      "content_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "status": 200,
+      "payload": "{}",
+      "job_id": null
+    }
+  ],
+  "assertions": {
+    "silver.exchanges": [
+      {
+        "exchange_id": "exch_xnse",
+        "calendar_id": "cal_xnse",
+        "mic": "XNSE",
+        "name": "National Stock Exchange of India",
+        "timezone": "Asia/Kolkata",
+        "calendar_alias": "NSE",
+        "eodhd_code": null,
+        "effective_from": "2000-01-01T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2022-12-08T18:00:00Z",
+        "available_at": "2022-12-08T18:00:00Z",
+        "system_from": "2022-12-08T18:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_india_t0",
+        "assertion_id": "as_exch_xnse_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
+    ],
+    "silver.calendar_exceptions": [
+      {
+        "calendar_id": "cal_xnse",
+        "session_date": "2023-06-28",
+        "assertion_domain": "holiday_date",
+        "holiday_family": "bakri_eid",
+        "calendar_system": "islamic",
+        "evidence_status": "market_final",
+        "authority_type": "exchange",
+        "authority_name": "National Stock Exchange of India",
+        "authority_verified_at": null,
+        "source_kind": "exchange_calendar",
+        "source_version": null,
+        "rule_id": null,
+        "market_effect": "closed",
+        "holiday_name": "Bakri Eid",
+        "special_open": null,
+        "special_close": null,
+        "market_open": null,
+        "market_close": null,
+        "candidate_branches": null,
+        "selected_branch": null,
+        "expiry_date": null,
+        "settlement_status": null,
+        "effective_from": "2023-06-28T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2022-12-08T18:00:00Z",
+        "available_at": "2022-12-08T18:00:00Z",
+        "system_from": "2022-12-08T18:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_india_t0",
+        "assertion_id": "as_india_t0",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      },
+      {
+        "calendar_id": "cal_xnse",
+        "session_date": "2023-06-28",
+        "assertion_domain": "holiday_date",
+        "holiday_family": "bakri_eid",
+        "calendar_system": "islamic",
+        "evidence_status": "market_final",
+        "authority_type": "exchange",
+        "authority_name": "National Stock Exchange of India",
+        "authority_verified_at": null,
+        "source_kind": "exchange_calendar",
+        "source_version": null,
+        "rule_id": null,
+        "market_effect": "closed",
+        "holiday_name": "Bakri Eid",
+        "special_open": null,
+        "special_close": null,
+        "market_open": null,
+        "market_close": null,
+        "candidate_branches": null,
+        "selected_branch": null,
+        "expiry_date": null,
+        "settlement_status": null,
+        "effective_from": "2023-06-28T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2022-12-08T18:00:00Z",
+        "available_at": "2022-12-08T18:00:00Z",
+        "system_from": "2023-06-26T12:00:00Z",
+        "system_to": "2023-06-26T12:00:00Z",
+        "capture_id": "cap_india_t0",
+        "assertion_id": "as_india_t0",
+        "assertion_status": "superseded",
+        "supersedes_assertion_id": null
+      },
+      {
+        "calendar_id": "cal_xnse",
+        "session_date": "2023-06-29",
+        "assertion_domain": "holiday_date",
+        "holiday_family": "bakri_eid",
+        "calendar_system": "islamic",
+        "evidence_status": "authority_confirmed",
+        "authority_type": "government",
+        "authority_name": "Government of Maharashtra",
+        "authority_verified_at": null,
+        "source_kind": "government_notice",
+        "source_version": null,
+        "rule_id": null,
+        "market_effect": null,
+        "holiday_name": "Bakri Eid",
+        "special_open": null,
+        "special_close": null,
+        "market_open": null,
+        "market_close": null,
+        "candidate_branches": null,
+        "selected_branch": null,
+        "expiry_date": null,
+        "settlement_status": null,
+        "effective_from": "2023-06-29T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2023-06-26T12:00:00Z",
+        "available_at": "2023-06-26T12:00:00Z",
+        "system_from": "2023-06-26T12:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_india_t1",
+        "assertion_id": "as_india_t1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": "as_india_t0"
+      },
+      {
+        "calendar_id": "cal_xnse",
+        "session_date": "2023-06-28",
+        "assertion_domain": "market_session",
+        "holiday_family": "bakri_eid",
+        "calendar_system": "islamic",
+        "evidence_status": "market_final",
+        "authority_type": "exchange",
+        "authority_name": "National Stock Exchange of India",
+        "authority_verified_at": null,
+        "source_kind": "exchange_clearing_notice",
+        "source_version": null,
+        "rule_id": null,
+        "market_effect": "open",
+        "holiday_name": "Bakri Eid",
+        "special_open": null,
+        "special_close": null,
+        "market_open": null,
+        "market_close": null,
+        "candidate_branches": null,
+        "selected_branch": null,
+        "expiry_date": null,
+        "settlement_status": null,
+        "effective_from": "2023-06-28T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2023-06-27T12:00:00Z",
+        "available_at": "2023-06-27T12:00:00Z",
+        "system_from": "2023-06-27T12:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_india_t2",
+        "assertion_id": "as_india_t2_open",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      },
+      {
+        "calendar_id": "cal_xnse",
+        "session_date": "2023-06-29",
+        "assertion_domain": "market_session",
+        "holiday_family": "bakri_eid",
+        "calendar_system": "islamic",
+        "evidence_status": "market_final",
+        "authority_type": "exchange",
+        "authority_name": "National Stock Exchange of India",
+        "authority_verified_at": null,
+        "source_kind": "exchange_clearing_notice",
+        "source_version": null,
+        "rule_id": null,
+        "market_effect": "closed",
+        "holiday_name": "Bakri Eid",
+        "special_open": null,
+        "special_close": null,
+        "market_open": null,
+        "market_close": null,
+        "candidate_branches": null,
+        "selected_branch": null,
+        "expiry_date": "2023-06-28",
+        "settlement_status": "revised",
+        "effective_from": "2023-06-29T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2023-06-27T12:00:00Z",
+        "available_at": "2023-06-27T12:00:00Z",
+        "system_from": "2023-06-27T12:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_india_t2",
+        "assertion_id": "as_india_t2_closed",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
+    ]
+  }
+}

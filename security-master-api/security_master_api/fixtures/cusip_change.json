@@ -1,0 +1,190 @@
+{
+  "schema": "security-master.golden-fixture.v1",
+  "fixture_id": "cusip-change",
+  "scenario": "cusip_change",
+  "captures": [
+    {
+      "capture_id": "cap_cusip_1",
+      "provider": "fixture",
+      "endpoint": "seed",
+      "request_fingerprint": "fx-cusip-1",
+      "captured_at": "2026-06-20T00:00:00Z",
+      "content_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "status": 200,
+      "payload": "{}",
+      "job_id": null
+    }
+  ],
+  "assertions": {
+    "silver.issuers": [
+      {
+        "issuer_id": "iss_042",
+        "name": "Reorg Holdings Inc.",
+        "effective_from": "2015-01-01T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2026-06-20T00:00:00Z",
+        "available_at": "2026-06-20T00:00:00Z",
+        "system_from": "2026-06-20T00:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_cusip_1",
+        "assertion_id": "as_iss_042_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
+    ],
+    "silver.instruments": [
+      {
+        "instrument_id": "ins_042",
+        "issuer_id": "iss_042",
+        "name": "Reorg Holdings Common Stock",
+        "instrument_type": "Common Stock",
+        "effective_from": "2015-01-01T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2026-06-20T00:00:00Z",
+        "available_at": "2026-06-20T00:00:00Z",
+        "system_from": "2026-06-20T00:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_cusip_1",
+        "assertion_id": "as_ins_042_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
+    ],
+    "silver.securities": [
+      {
+        "security_id": "sec_100",
+        "instrument_id": "ins_042",
+        "issuer_id": "iss_042",
+        "cusip": "000111AA1",
+        "predecessor_security_id": null,
+        "successor_security_id": "sec_101",
+        "reorganization_kind": null,
+        "effective_from": "2015-01-01T00:00:00Z",
+        "effective_to": "2026-07-01T00:00:00Z",
+        "observed_at": "2026-06-20T00:00:00Z",
+        "available_at": "2026-06-20T00:00:00Z",
+        "system_from": "2026-06-20T00:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_cusip_1",
+        "assertion_id": "as_sec_100_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      },
+      {
+        "security_id": "sec_101",
+        "instrument_id": "ins_042",
+        "issuer_id": "iss_042",
+        "cusip": "000222BB2",
+        "predecessor_security_id": "sec_100",
+        "successor_security_id": null,
+        "reorganization_kind": "reorganization",
+        "effective_from": "2026-07-01T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2026-06-20T00:00:00Z",
+        "available_at": "2026-06-20T00:00:00Z",
+        "system_from": "2026-06-20T00:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_cusip_1",
+        "assertion_id": "as_sec_101_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
+    ],
+    "silver.identifiers": [
+      {
+        "identifier_type": "cusip",
+        "identifier": "000111AA1",
+        "listing_id": null,
+        "instrument_id": "ins_042",
+        "security_id": "sec_100",
+        "issuer_id": "iss_042",
+        "effective_from": "2015-01-01T00:00:00Z",
+        "effective_to": "2026-07-01T00:00:00Z",
+        "observed_at": "2026-06-20T00:00:00Z",
+        "available_at": "2026-06-20T00:00:00Z",
+        "system_from": "2026-06-20T00:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_cusip_1",
+        "assertion_id": "as_id_cusip_100_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      },
+      {
+        "identifier_type": "cusip",
+        "identifier": "000222BB2",
+        "listing_id": null,
+        "instrument_id": "ins_042",
+        "security_id": "sec_101",
+        "issuer_id": "iss_042",
+        "effective_from": "2026-07-01T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2026-06-20T00:00:00Z",
+        "available_at": "2026-06-20T00:00:00Z",
+        "system_from": "2026-06-20T00:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_cusip_1",
+        "assertion_id": "as_id_cusip_101_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
+    ]
+  },
+  "expectations": [
+    {
+      "model": "resolve",
+      "params": {
+        "identifier": "000111AA1"
+      },
+      "context": {
+        "mode": "effective_on",
+        "effective_at": "2026-06-30T00:00:00Z"
+      },
+      "expect": {
+        "security_id": "sec_100",
+        "reason": "active"
+      }
+    },
+    {
+      "model": "resolve",
+      "params": {
+        "identifier": "000222BB2"
+      },
+      "context": {
+        "mode": "effective_on",
+        "effective_at": "2026-07-02T00:00:00Z"
+      },
+      "expect": {
+        "security_id": "sec_101",
+        "reason": "active"
+      }
+    },
+    {
+      "model": "resolve",
+      "params": {
+        "identifier": "000111AA1"
+      },
+      "context": {
+        "mode": "current_corrected"
+      },
+      "expect": {
+        "security_id": "sec_100",
+        "reason": "historical_alias",
+        "successor_security_id": "sec_101"
+      }
+    },
+    {
+      "model": "lineage",
+      "params": {
+        "security_id": "sec_100"
+      },
+      "context": {
+        "mode": "current_corrected"
+      },
+      "expect": {
+        "includes_capture_ids": [
+          "cap_cusip_1"
+        ]
+      }
+    }
+  ]
+}

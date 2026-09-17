@@ -1,0 +1,299 @@
+{
+  "schema": "security-master.golden-fixture.v1",
+  "fixture_id": "eid-lunar-correction",
+  "scenario": "eid_lunar_correction",
+  "captures": [
+    {
+      "capture_id": "cap_eid_t0",
+      "provider": "fixture",
+      "endpoint": "seed",
+      "request_fingerprint": "fx-eid-0",
+      "captured_at": "2027-01-05T00:00:00Z",
+      "content_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "status": 200,
+      "payload": "{}",
+      "job_id": null
+    },
+    {
+      "capture_id": "cap_eid_t1",
+      "provider": "fixture",
+      "endpoint": "seed",
+      "request_fingerprint": "fx-eid-1",
+      "captured_at": "2027-03-09T18:45:00Z",
+      "content_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "status": 200,
+      "payload": "{}",
+      "job_id": null
+    },
+    {
+      "capture_id": "cap_eid_t2",
+      "provider": "fixture",
+      "endpoint": "seed",
+      "request_fingerprint": "fx-eid-2",
+      "captured_at": "2027-03-10T08:00:00Z",
+      "content_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "status": 200,
+      "payload": "{}",
+      "job_id": null
+    }
+  ],
+  "assertions": {
+    "silver.exchanges": [
+      {
+        "exchange_id": "exch_xsau",
+        "calendar_id": "cal_tadawul",
+        "mic": "XSAU",
+        "name": "Saudi Exchange (Tadawul)",
+        "timezone": "Asia/Riyadh",
+        "calendar_alias": null,
+        "eodhd_code": null,
+        "effective_from": "2000-01-01T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2027-01-05T00:00:00Z",
+        "available_at": "2027-01-05T00:00:00Z",
+        "system_from": "2027-01-05T00:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_eid_t0",
+        "assertion_id": "as_exch_xsau_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
+    ],
+    "silver.calendar_authorities": [
+      {
+        "authority_id": "auth_ksa_moon",
+        "calendar_id": "cal_tadawul",
+        "authority_type": "religious_authority",
+        "authority_name": "Supreme Court of Saudi Arabia",
+        "jurisdiction": "SA",
+        "holiday_family": "eid_al_fitr",
+        "effective_from": "2000-01-01T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2027-01-05T00:00:00Z",
+        "available_at": "2027-01-05T00:00:00Z",
+        "system_from": "2027-01-05T00:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_eid_t0",
+        "assertion_id": "as_auth_ksa_moon_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
+    ],
+    "silver.calendar_exceptions": [
+      {
+        "calendar_id": "cal_tadawul",
+        "session_date": "2027-03-10",
+        "assertion_domain": "holiday_date",
+        "holiday_family": "eid_al_fitr",
+        "calendar_system": "islamic",
+        "evidence_status": "provisional",
+        "authority_type": "calendar_package",
+        "authority_name": null,
+        "authority_verified_at": null,
+        "source_kind": "pandas_rule",
+        "source_version": null,
+        "rule_id": null,
+        "market_effect": null,
+        "holiday_name": "Eid al-Fitr",
+        "special_open": null,
+        "special_close": null,
+        "market_open": null,
+        "market_close": null,
+        "candidate_branches": null,
+        "selected_branch": null,
+        "expiry_date": null,
+        "settlement_status": null,
+        "effective_from": "2027-03-10T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2027-01-05T00:00:00Z",
+        "available_at": "2027-01-05T00:00:00Z",
+        "system_from": "2027-01-05T00:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_eid_t0",
+        "assertion_id": "as_eid_t0",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      },
+      {
+        "calendar_id": "cal_tadawul",
+        "session_date": "2027-03-10",
+        "assertion_domain": "holiday_date",
+        "holiday_family": "eid_al_fitr",
+        "calendar_system": "islamic",
+        "evidence_status": "provisional",
+        "authority_type": "calendar_package",
+        "authority_name": null,
+        "authority_verified_at": null,
+        "source_kind": "pandas_rule",
+        "source_version": null,
+        "rule_id": null,
+        "market_effect": null,
+        "holiday_name": "Eid al-Fitr",
+        "special_open": null,
+        "special_close": null,
+        "market_open": null,
+        "market_close": null,
+        "candidate_branches": null,
+        "selected_branch": null,
+        "expiry_date": null,
+        "settlement_status": null,
+        "effective_from": "2027-03-10T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2027-01-05T00:00:00Z",
+        "available_at": "2027-01-05T00:00:00Z",
+        "system_from": "2027-03-09T18:45:00Z",
+        "system_to": "2027-03-09T18:45:00Z",
+        "capture_id": "cap_eid_t0",
+        "assertion_id": "as_eid_t0",
+        "assertion_status": "superseded",
+        "supersedes_assertion_id": null
+      },
+      {
+        "calendar_id": "cal_tadawul",
+        "session_date": "2027-03-11",
+        "assertion_domain": "holiday_date",
+        "holiday_family": "eid_al_fitr",
+        "calendar_system": "islamic",
+        "evidence_status": "authority_confirmed",
+        "authority_type": "religious_authority",
+        "authority_name": "Supreme Court of Saudi Arabia",
+        "authority_verified_at": "2027-03-09T18:30:00Z",
+        "source_kind": "authority_notice",
+        "source_version": null,
+        "rule_id": null,
+        "market_effect": null,
+        "holiday_name": "Eid al-Fitr",
+        "special_open": null,
+        "special_close": null,
+        "market_open": null,
+        "market_close": null,
+        "candidate_branches": null,
+        "selected_branch": null,
+        "expiry_date": null,
+        "settlement_status": null,
+        "effective_from": "2027-03-11T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2027-03-09T18:45:00Z",
+        "available_at": "2027-03-09T18:45:00Z",
+        "system_from": "2027-03-09T18:45:00Z",
+        "system_to": null,
+        "capture_id": "cap_eid_t1",
+        "assertion_id": "as_eid_t1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": "as_eid_t0"
+      },
+      {
+        "calendar_id": "cal_tadawul",
+        "session_date": "2027-03-11",
+        "assertion_domain": "market_session",
+        "holiday_family": "eid_al_fitr",
+        "calendar_system": "islamic",
+        "evidence_status": "market_final",
+        "authority_type": "exchange",
+        "authority_name": "Saudi Exchange (Tadawul)",
+        "authority_verified_at": null,
+        "source_kind": "exchange_notice",
+        "source_version": null,
+        "rule_id": null,
+        "market_effect": "closed",
+        "holiday_name": "Eid al-Fitr",
+        "special_open": null,
+        "special_close": null,
+        "market_open": null,
+        "market_close": null,
+        "candidate_branches": null,
+        "selected_branch": null,
+        "expiry_date": null,
+        "settlement_status": null,
+        "effective_from": "2027-03-11T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2027-03-10T08:00:00Z",
+        "available_at": "2027-03-10T08:00:00Z",
+        "system_from": "2027-03-10T08:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_eid_t2",
+        "assertion_id": "as_eid_t2",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
+    ]
+  },
+  "expectations": [
+    {
+      "model": "MarketCalendar",
+      "params": {
+        "calendar_id": "cal_tadawul",
+        "start_date": "2027-03-01",
+        "end_date": "2027-03-31",
+        "include_closed": true
+      },
+      "context": {
+        "mode": "known_at",
+        "known_at": "2027-03-09T18:44:59Z"
+      },
+      "row_date": "2027-03-10",
+      "expect": {
+        "evidence_status": "provisional",
+        "market_effect": "pending",
+        "holiday_family": "eid_al_fitr"
+      }
+    },
+    {
+      "model": "MarketCalendar",
+      "params": {
+        "calendar_id": "cal_tadawul",
+        "start_date": "2027-03-01",
+        "end_date": "2027-03-31",
+        "include_closed": true
+      },
+      "context": {
+        "mode": "known_at",
+        "known_at": "2027-03-09T18:45:00Z"
+      },
+      "row_date": "2027-03-11",
+      "absent_row_dates": [
+        "2027-03-10"
+      ],
+      "expect": {
+        "evidence_status": "authority_confirmed",
+        "market_effect": "pending",
+        "authority_name": "Supreme Court of Saudi Arabia"
+      }
+    },
+    {
+      "model": "MarketCalendar",
+      "params": {
+        "calendar_id": "cal_tadawul",
+        "start_date": "2027-03-01",
+        "end_date": "2027-03-31",
+        "include_closed": true
+      },
+      "context": {
+        "mode": "known_at",
+        "known_at": "2027-03-10T08:00:00Z"
+      },
+      "row_date": "2027-03-11",
+      "expect": {
+        "evidence_status": "market_final",
+        "market_effect": "closed"
+      }
+    },
+    {
+      "model": "MarketCalendar",
+      "params": {
+        "calendar_id": "cal_tadawul",
+        "start_date": "2027-03-01",
+        "end_date": "2027-03-31",
+        "include_closed": true
+      },
+      "context": {
+        "mode": "current_corrected"
+      },
+      "row_date": "2027-03-11",
+      "expect": {
+        "evidence_status": "market_final",
+        "market_effect": "closed"
+      }
+    }
+  ]
+}

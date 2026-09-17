@@ -1,0 +1,255 @@
+{
+  "schema": "security-master.golden-fixture.v1",
+  "fixture_id": "trade-correction",
+  "scenario": "trade_correction",
+  "captures": [
+    {
+      "capture_id": "cap_00421",
+      "provider": "fixture",
+      "endpoint": "seed",
+      "request_fingerprint": "fx-tc-1",
+      "captured_at": "2026-09-14T20:05:00Z",
+      "content_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "status": 200,
+      "payload": "{}",
+      "job_id": null
+    },
+    {
+      "capture_id": "cap_00489",
+      "provider": "fixture",
+      "endpoint": "seed",
+      "request_fingerprint": "fx-tc-2",
+      "captured_at": "2026-09-15T09:20:00Z",
+      "content_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "status": 200,
+      "payload": "{}",
+      "job_id": null
+    }
+  ],
+  "assertions": {
+    "silver.issuers": [
+      {
+        "issuer_id": "iss_apple",
+        "name": "Apple Inc.",
+        "effective_from": "1980-12-12T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2026-09-14T20:05:00Z",
+        "available_at": "2026-09-14T20:05:00Z",
+        "system_from": "2026-09-14T20:05:00Z",
+        "system_to": null,
+        "capture_id": "cap_00421",
+        "assertion_id": "as_iss_apple_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
+    ],
+    "silver.instruments": [
+      {
+        "instrument_id": "ins_apple",
+        "issuer_id": "iss_apple",
+        "name": "Apple Inc. Common Stock",
+        "instrument_type": "Common Stock",
+        "effective_from": "1980-12-12T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2026-09-14T20:05:00Z",
+        "available_at": "2026-09-14T20:05:00Z",
+        "system_from": "2026-09-14T20:05:00Z",
+        "system_to": null,
+        "capture_id": "cap_00421",
+        "assertion_id": "as_ins_apple_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
+    ],
+    "silver.listings": [
+      {
+        "listing_id": "lst_apple",
+        "instrument_id": "ins_apple",
+        "issuer_id": "iss_apple",
+        "security_id": "sec_apple",
+        "exchange_id": "exch_xnas",
+        "mic": "XNAS",
+        "symbol": "AAPL",
+        "provider_symbol": "AAPL.US",
+        "currency": "USD",
+        "status": "active",
+        "name": "Apple Inc.",
+        "instrument_type": "Common Stock",
+        "effective_from": "1980-12-12T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2026-09-14T20:05:00Z",
+        "available_at": "2026-09-14T20:05:00Z",
+        "system_from": "2026-09-14T20:05:00Z",
+        "system_to": null,
+        "capture_id": "cap_00421",
+        "assertion_id": "as_lst_apple_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
+    ],
+    "silver.identifiers": [
+      {
+        "identifier_type": "ticker",
+        "identifier": "AAPL",
+        "listing_id": "lst_apple",
+        "instrument_id": "ins_apple",
+        "security_id": "sec_apple",
+        "issuer_id": "iss_apple",
+        "effective_from": "1980-12-12T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2026-09-14T20:05:00Z",
+        "available_at": "2026-09-14T20:05:00Z",
+        "system_from": "2026-09-14T20:05:00Z",
+        "system_to": null,
+        "capture_id": "cap_00421",
+        "assertion_id": "as_id_aapl_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
+    ],
+    "silver.prices_normalized": [
+      {
+        "listing_id": "lst_apple",
+        "market_date": "2026-09-14",
+        "open": 230.1,
+        "high": 232.0,
+        "low": 229.8,
+        "close": 231.4,
+        "volume": 51200000,
+        "price_basis": "raw",
+        "effective_from": "2026-09-14T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2026-09-14T20:05:00Z",
+        "available_at": "2026-09-14T20:05:00Z",
+        "system_from": "2026-09-14T20:05:00Z",
+        "system_to": null,
+        "capture_id": "cap_00421",
+        "assertion_id": "as_px_apple_20260914_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      },
+      {
+        "listing_id": "lst_apple",
+        "market_date": "2026-09-14",
+        "open": 230.1,
+        "high": 232.0,
+        "low": 229.8,
+        "close": 231.4,
+        "volume": 51200000,
+        "price_basis": "raw",
+        "effective_from": "2026-09-14T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2026-09-14T20:05:00Z",
+        "available_at": "2026-09-14T20:05:00Z",
+        "system_from": "2026-09-15T09:20:00Z",
+        "system_to": "2026-09-15T09:20:00Z",
+        "capture_id": "cap_00421",
+        "assertion_id": "as_px_apple_20260914_1",
+        "assertion_status": "superseded",
+        "supersedes_assertion_id": null
+      },
+      {
+        "listing_id": "lst_apple",
+        "market_date": "2026-09-14",
+        "open": 230.1,
+        "high": 232.0,
+        "low": 229.8,
+        "close": 231.74,
+        "volume": 51230000,
+        "price_basis": "raw",
+        "effective_from": "2026-09-14T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2026-09-15T09:20:00Z",
+        "available_at": "2026-09-15T09:20:00Z",
+        "system_from": "2026-09-15T09:20:00Z",
+        "system_to": null,
+        "capture_id": "cap_00489",
+        "assertion_id": "as_px_apple_20260914_2",
+        "assertion_status": "current",
+        "supersedes_assertion_id": "as_px_apple_20260914_1"
+      }
+    ]
+  },
+  "expectations": [
+    {
+      "model": "EquityHistorical",
+      "params": {
+        "symbol": "AAPL",
+        "start_date": "2026-09-14",
+        "end_date": "2026-09-14"
+      },
+      "context": {
+        "mode": "known_at",
+        "effective_at": "2026-09-14T20:00:00Z",
+        "known_at": "2026-09-14T20:05:00Z"
+      },
+      "expect": {
+        "close": 231.4,
+        "assertion_id": "as_px_apple_20260914_1",
+        "capture_id": "cap_00421"
+      }
+    },
+    {
+      "model": "EquityHistorical",
+      "params": {
+        "symbol": "AAPL",
+        "start_date": "2026-09-14",
+        "end_date": "2026-09-14"
+      },
+      "context": {
+        "mode": "known_at",
+        "effective_at": "2026-09-14T20:00:00Z",
+        "known_at": "2026-09-15T09:19:59.999999Z"
+      },
+      "expect": {
+        "close": 231.4
+      }
+    },
+    {
+      "model": "EquityHistorical",
+      "params": {
+        "symbol": "AAPL",
+        "start_date": "2026-09-14",
+        "end_date": "2026-09-14"
+      },
+      "context": {
+        "mode": "known_at",
+        "effective_at": "2026-09-14T20:00:00Z",
+        "known_at": "2026-09-15T09:20:00Z"
+      },
+      "expect": {
+        "close": 231.74,
+        "assertion_id": "as_px_apple_20260914_2",
+        "capture_id": "cap_00489"
+      }
+    },
+    {
+      "model": "EquityHistorical",
+      "params": {
+        "symbol": "AAPL",
+        "start_date": "2026-09-14",
+        "end_date": "2026-09-14"
+      },
+      "context": {
+        "mode": "current_corrected"
+      },
+      "expect": {
+        "close": 231.74
+      }
+    },
+    {
+      "model": "EquityHistorical",
+      "params": {
+        "symbol": "AAPL",
+        "start_date": "2026-09-14",
+        "end_date": "2026-09-14"
+      },
+      "context": {
+        "mode": "known_at",
+        "effective_at": "2026-09-14T20:00:00Z",
+        "known_at": "2026-09-14T20:04:59Z"
+      },
+      "error": "NO_LOCAL_EVIDENCE"
+    }
+  ]
+}
