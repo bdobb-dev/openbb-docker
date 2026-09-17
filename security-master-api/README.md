@@ -90,6 +90,7 @@ Configured entirely from the environment (`security_master_api.config`);
 | `SECURITY_MASTER_SCAN_SLOTS` | `4` | DuckDB's concurrent scan budget |
 | `SECURITY_MASTER_MEMORY_LIMIT` | `1GB` | DuckDB's `memory_limit` |
 | `SECURITY_MASTER_THREADS` | `2` | DuckDB's `threads` |
+| `SECURITY_MASTER_WORKER_POLL_S` | `2` | seconds between the worker's poll-for-queued-jobs cycles |
 | `SECURITY_MASTER_ROOT` | *(unset)* | a local directory instead of MinIO — tests and smoke runs only |
 
 Storage otherwise comes from the shared `DELTA_S3_*` variables in
