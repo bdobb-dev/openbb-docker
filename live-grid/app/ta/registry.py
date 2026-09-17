@@ -90,6 +90,15 @@ class Indicator:
     deps: Callable[[dict], list[Base]]
     build: Callable[[dict, dict[str, Base]], list[pl.Expr]]
     render: dict[str, dict]
+    # Which of this indicator's parameters count BARS -- a lookback window --
+    # as opposed to a multiplier, a step or a plot offset. Only a window may
+    # wear a unit (`period=50bd`), and because the unit moves the WHOLE
+    # request onto the session frame (app.ta.sources._is_bd), every window of
+    # a request wears it or none does. Declared per indicator because one
+    # name is not one thing: `stoch`'s `k` is a 14-bar lookback while
+    # `bbands`' `k` is a standard-deviation multiple. Empty means this
+    # indicator has no window at all and so takes no unit.
+    windows: tuple[str, ...] = ()
     guides: list[float] = field(default_factory=list)
     repaints: bool = False
     iterative: bool = False
@@ -147,8 +156,29 @@ def resolve(name: str, source: str | None = None,
                 f"unknown parameter {key!r} for {name!r}; "
                 f"expected one of {sorted(ind.params)}"
             )
-    return Req(name, {**ind.params, "style": style, **overrides}, source,
-               dict(units or {}))
+    # A unit is written on one parameter but acts on the whole request: `bd`
+    # moves every window of it onto the session frame (app.ta.sources._is_bd).
+    # So the grammar has to match the effect. Without these two rules
+    # `macd:fast=12bd:slow=26` computes slow and signal on SESSIONS while the
+    # legend, the column name and the wire echo all say bars, and
+    # `bbands:k=2bd` asks for two business-day standard deviations -- neither
+    # is refused anywhere else, and neither is visible in the output. Checked
+    # here rather than in parse_indicators for the reason `source` is: a macro
+    # reaches resolve() without passing the query-string parser.
+    units = dict(units or {})
+    stray = sorted(set(units) - set(ind.windows))
+    if stray:
+        raise ValueError(
+            f"{stray[0]!r} counts no bars for {name!r}, so it takes no unit; "
+            f"a unit belongs on {sorted(ind.windows) or 'no parameter of this indicator'}"
+        )
+    bare = sorted(set(ind.windows) - set(units)) if units else []
+    if bare:
+        raise ValueError(
+            f"a unit applies to all of {name!r} or none of it: "
+            f"{bare} must wear the same unit as {sorted(units)}"
+        )
+    return Req(name, {**ind.params, "style": style, **overrides}, source, units)
 
 
 def col_suffix(req: Req) -> str:
@@ -218,7 +248,8 @@ def _line(color: str | None = None) -> dict:
 # --- Simple moving average -------------------------------------------------
 
 register(Indicator(
-    name="sma", label="SMA", params={"period": 50}, pane="price",
+    name="sma", label="SMA", params={"period": 50},
+    windows=("period",), pane="price",
     price_basis="adjusted",
     convention="Arithmetic mean of adjusted close over `period` bars.",
     deps=lambda p: [Base("sma", price_col("adjusted"), p["period"])],
@@ -233,7 +264,8 @@ register(Indicator(
 # --- Exponential moving average --------------------------------------------
 
 register(Indicator(
-    name="ema", label="EMA", params={"period": 50}, pane="price",
+    name="ema", label="EMA", params={"period": 50},
+    windows=("period",), pane="price",
     price_basis="adjusted",
     convention="EMA with alpha = 2/(period+1), adjust=False, on adjusted close.",
     deps=lambda p: [Base("ewm", price_col("adjusted"), p["period"])],
@@ -264,7 +296,8 @@ def _rsi_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 
 
 register(Indicator(
-    name="rsi", label="RSI", params={"period": 14}, pane="own",
+    name="rsi", label="RSI", params={"period": 14},
+    windows=("period",), pane="own",
     price_basis="adjusted", guides=[30.0, 70.0],
     convention=(
         "Wilder's RSI: gains and losses smoothed with alpha=1/period "
@@ -293,6 +326,7 @@ def _bbands_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 
 register(Indicator(
     name="bbands", label="Bollinger Bands", params={"period": 20, "k": 2.0},
+    windows=("period",),
     pane="price", price_basis="adjusted",
     convention=(
         "Middle = SMA(period) of adjusted close. Bands = mid +/- k * population "
@@ -312,7 +346,8 @@ register(Indicator(
 # --- Average true range -----------------------------------------------------
 
 register(Indicator(
-    name="atr", label="ATR", params={"period": 14}, pane="own",
+    name="atr", label="ATR", params={"period": 14},
+    windows=("period",), pane="own",
     price_basis="raw",
     convention=(
         "Wilder's average of true range on RAW OHLC. EODHD's atr matches raw, "
@@ -332,7 +367,8 @@ register(Indicator(
 # --- Weighted moving average ------------------------------------------------
 
 register(Indicator(
-    name="wma", label="WMA", params={"period": 50}, pane="price",
+    name="wma", label="WMA", params={"period": 50},
+    windows=("period",), pane="price",
     price_basis="adjusted",
     convention="Linearly weighted mean of adjusted close; weight i = i for i in 1..period.",
     deps=lambda p: [],
@@ -371,7 +407,8 @@ def _hma_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 
 
 register(Indicator(
-    name="hma", label="Hull Moving Average", params={"period": 9}, pane="price",
+    name="hma", label="Hull Moving Average", params={"period": 9},
+    windows=("period",), pane="price",
     price_basis="adjusted",
     convention=(
         "WMA(2*WMA(adj_close, round(n/2)) - WMA(adj_close, n), round(sqrt(n))). "
@@ -400,7 +437,8 @@ def _trix_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 
 
 register(Indicator(
-    name="trix", label="TRIX", params={"period": 18}, pane="own",
+    name="trix", label="TRIX", params={"period": 18},
+    windows=("period",), pane="own",
     price_basis="adjusted", guides=[0.0],
     convention=(
         "1-bar percent change of a triple EMA(period) on adjusted close, "
@@ -429,7 +467,8 @@ def _keltner_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 
 register(Indicator(
     name="keltner", label="Keltner Channels",
-    params={"period": 20, "mult": 2.0, "atr_period": 10}, pane="price",
+    params={"period": 20, "mult": 2.0, "atr_period": 10},
+    windows=("period", "atr_period"), pane="price",
     price_basis="adjusted",
     convention="EMA(period) of adjusted close +/- mult * Wilder ATR(atr_period) of raw OHLC.",
     deps=lambda p: [Base("ewm", price_col("adjusted"), p["period"]), Base("tr", "raw", 0)],
@@ -442,7 +481,8 @@ register(Indicator(
 # --- Price channels (Donchian) ---------------------------------------------
 
 register(Indicator(
-    name="donchian", label="Price Channels", params={"period": 20}, pane="price",
+    name="donchian", label="Price Channels", params={"period": 20},
+    windows=("period",), pane="price",
     price_basis="raw",
     convention="Highest high and lowest low of raw OHLC over `period` bars; mid is their mean.",
     deps=lambda p: [Base("max", "high", p["period"]), Base("min", "low", p["period"])],
@@ -547,6 +587,7 @@ def _macd_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 
 register(Indicator(
     name="macd", label="MACD", params={"fast": 12, "slow": 26, "signal": 9},
+    windows=("fast", "slow", "signal"),
     pane="own", price_basis="adjusted", guides=[0.0],
     convention="EMA(fast) - EMA(slow) on adjusted close; signal is EMA(signal) of that line.",
     deps=lambda p: [Base("ewm", price_col("adjusted"), p["fast"]),
@@ -579,6 +620,7 @@ def _stoch_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 
 register(Indicator(
     name="stoch", label="Stochastic", params={"k": 14, "smooth_k": 1, "d": 3},
+    windows=("k", "smooth_k", "d"),
     pane="own", price_basis="raw", guides=[20.0, 80.0],
     convention=(
         "smooth_k=1 is FAST %K, 3 is SLOW, anything else is FULL. Raw OHLC. "
@@ -612,7 +654,8 @@ def _stochrsi_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 
 register(Indicator(
     name="stochrsi", label="StochRSI",
-    params={"period": 14, "stoch_period": 14}, pane="own",
+    params={"period": 14, "stoch_period": 14},
+    windows=("period", "stoch_period"), pane="own",
     price_basis="adjusted", guides=[20.0, 80.0],
     convention="Stochastic of Wilder RSI(period) over stoch_period bars, scaled 0-100, on adjusted close.",
     deps=lambda p: [],
@@ -649,7 +692,8 @@ def _adx_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 
 
 register(Indicator(
-    name="adx", label="ADX / DMI", params={"period": 14}, pane="own",
+    name="adx", label="ADX / DMI", params={"period": 14},
+    windows=("period",), pane="own",
     price_basis="raw", guides=[20.0, 25.0],
     convention=(
         "Wilder's ADX on raw OHLC: +DM/-DM smoothed with alpha=1/period, "
@@ -678,7 +722,8 @@ def _cci_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 
 
 register(Indicator(
-    name="cci", label="CCI", params={"period": 20}, pane="own",
+    name="cci", label="CCI", params={"period": 20},
+    windows=("period",), pane="own",
     price_basis="raw", guides=[-100.0, 100.0],
     convention=(
         "(typical price - SMA) / (0.015 * mean absolute deviation), raw OHLC. "
@@ -698,7 +743,8 @@ register(Indicator(
 # --- Williams %R ------------------------------------------------------------
 
 register(Indicator(
-    name="willr", label="Williams %R", params={"period": 14}, pane="own",
+    name="willr", label="Williams %R", params={"period": 14},
+    windows=("period",), pane="own",
     price_basis="raw", guides=[-80.0, -20.0],
     convention="-100 * (highest high - close) / (highest high - lowest low), raw OHLC.",
     deps=lambda p: [Base("max", "high", p["period"]), Base("min", "low", p["period"])],
@@ -715,7 +761,8 @@ register(Indicator(
 # --- Rate of change ---------------------------------------------------------
 
 register(Indicator(
-    name="roc", label="Rate of Change", params={"period": 12}, pane="own",
+    name="roc", label="Rate of Change", params={"period": 12},
+    windows=("period",), pane="own",
     price_basis="adjusted", guides=[0.0],
     convention="Percent change of adjusted close over `period` bars.",
     deps=lambda p: [],
@@ -744,7 +791,8 @@ register(Indicator(
 # --- Standard deviation -----------------------------------------------------
 
 register(Indicator(
-    name="stddev", label="Standard Deviation", params={"period": 20}, pane="own",
+    name="stddev", label="Standard Deviation", params={"period": 20},
+    windows=("period",), pane="own",
     price_basis="adjusted",
     convention="Population standard deviation (ddof=0) of adjusted close.",
     deps=lambda p: [Base("std", price_col("adjusted"), p["period"])],
@@ -760,7 +808,8 @@ register(Indicator(
 # --- %B and BandWidth: both reuse the Bollinger bases ------------------------
 
 register(Indicator(
-    name="pct_b", label="%B", params={"period": 20, "k": 2.0}, pane="own",
+    name="pct_b", label="%B", params={"period": 20, "k": 2.0},
+    windows=("period",), pane="own",
     price_basis="adjusted", guides=[0.0, 1.0],
     convention="(close - lower) / (upper - lower), on adjusted close. Shares Bollinger's bases exactly.",
     deps=lambda p: [Base("sma", price_col("adjusted"), p["period"]),
@@ -780,7 +829,8 @@ register(Indicator(
 
 register(Indicator(
     name="bandwidth", label="Bollinger BandWidth",
-    params={"period": 20, "k": 2.0}, pane="own", price_basis="adjusted",
+    params={"period": 20, "k": 2.0},
+    windows=("period",), pane="own", price_basis="adjusted",
     convention="(upper - lower) / middle * 100, on adjusted close. Shares Bollinger's bases exactly.",
     deps=lambda p: [Base("sma", price_col("adjusted"), p["period"]),
                     Base("std", price_col("adjusted"), p["period"])],
@@ -815,7 +865,8 @@ register(Indicator(
 
 register(Indicator(
     name="supertrend", label="Supertrend",
-    params={"period": 10, "multiplier": 3.0}, pane="price",
+    params={"period": 10, "multiplier": 3.0},
+    windows=("period",), pane="price",
     price_basis="raw", iterative=True,
     convention=(
         "Wilder ATR(period)-banded trailing stop on raw OHLC. The band only "
@@ -865,7 +916,8 @@ def _mfi_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 
 
 register(Indicator(
-    name="mfi", label="Money Flow Index", params={"period": 14}, pane="own",
+    name="mfi", label="Money Flow Index", params={"period": 14},
+    windows=("period",), pane="own",
     price_basis="raw", guides=[20.0, 80.0],
     convention=(
         "Typical price (H+L+C)/3, raw money flow = TP*volume, bucketed by the "
@@ -896,7 +948,8 @@ def _cmf_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 
 
 register(Indicator(
-    name="cmf", label="Chaikin Money Flow", params={"period": 20}, pane="own",
+    name="cmf", label="Chaikin Money Flow", params={"period": 20},
+    windows=("period",), pane="own",
     price_basis="raw", guides=[0.0],
     convention=(
         "Sum of money-flow multiplier * volume over `period` bars, divided by "
@@ -926,7 +979,8 @@ def _uo_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 
 register(Indicator(
     name="uo", label="Ultimate Oscillator",
-    params={"fast": 7, "mid": 14, "slow": 28}, pane="own",
+    params={"fast": 7, "mid": 14, "slow": 28},
+    windows=("fast", "mid", "slow"), pane="own",
     price_basis="raw", guides=[30.0, 70.0],
     convention=(
         "Weighted blend of buying-pressure / true-range sum-ratios at three "
@@ -958,7 +1012,8 @@ def _vortex_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 
 
 register(Indicator(
-    name="vortex", label="Vortex Indicator", params={"period": 14}, pane="own",
+    name="vortex", label="Vortex Indicator", params={"period": 14},
+    windows=("period",), pane="own",
     price_basis="raw",
     convention=(
         "VM+ = |high - prior low|, VM- = |low - prior high|, each summed over "
@@ -984,7 +1039,8 @@ def _chop_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 
 
 register(Indicator(
-    name="chop", label="Choppiness Index", params={"period": 14}, pane="own",
+    name="chop", label="Choppiness Index", params={"period": 14},
+    windows=("period",), pane="own",
     price_basis="raw", guides=[38.2, 61.8],
     convention=(
         "100 * log10(sum(TR, n) / (highest high - lowest low)) / log10(n) on "
@@ -1024,6 +1080,7 @@ def _ichimoku_build(p: dict, b: dict[str, Base]) -> list[pl.Expr]:
 register(Indicator(
     name="ichimoku", label="Ichimoku Cloud",
     params={"conversion": 9, "base": 26, "span_b": 52, "displacement": 26},
+    windows=("conversion", "base", "span_b"),
     pane="price", price_basis="raw",
     convention=(
         "Tenkan/Kijun/Senkou B from rolling high-low midpoints on raw OHLC. "

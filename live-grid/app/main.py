@@ -39,7 +39,7 @@ from app.ta.payload import (
     bars_to_frame,
     build_payload,
     chart_subtitle,
-    revised_from,
+    delta_start,
     with_anchor,
 )
 from app.ta.registry import catalog
@@ -524,7 +524,8 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                         or marks != previous_marks):
                     await ws.send_json({"type": "figure", "rev": rev, "figure": figure})
                 else:
-                    payload = ta_delta(frame, panes, revised_from(previous, dates))
+                    payload = ta_delta(frame, panes, delta_start(
+                        panes, previous, dates, frame, params.symbol))
                     await ws.send_json({"type": "delta", "rev": rev, **payload})
                 previous, previous_marks, rev = dates, marks, rev + 1
                 # Drop rather than queue: a recompute that overran its slot must
@@ -615,7 +616,8 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                     # otherwise a fallback column would report the vendor on
                     # every push but the full ones.
                     payload = series_delta(
-                        frame, panes, revised_from(previous, dates),
+                        frame, panes,
+                        delta_start(panes, previous, dates, frame, params.symbol),
                         annotations, params.source,
                     )
                     await ws.send_json({"type": "delta", "rev": rev, **payload})

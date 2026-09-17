@@ -19,6 +19,7 @@ from app.ta.figure import build_ta_figure
 from app.ta.macros import load_all
 from app.ta.panes import Pane, all_reqs, assign
 from app.ta.registry import Req, resolve
+from app.ta.session import running_session_start
 from app.ta.sources import Annotation, LocalSource, columns_of
 
 _NUMERIC = ("period", "k", "d", "fast", "slow", "signal", "smooth_k",
@@ -259,15 +260,18 @@ def any_repaints(panes: list[Pane]) -> bool:
 
     Tail deltas assume causality: a revision to bar t changes bar t alone. That
     is false for ZigZag, whose pivots move well back into history when a new
-    extreme arrives, so such a chart resends in full (spec D10). It is also
-    false for a `bd` (business-day) window: a tick to the running session's
-    close moves every bar of that session, not only the last one, so a
-    unit-bearing request repaints too.
+    extreme arrives, so such a chart resends in full (spec D10).
+
+    A `bd` (business-day) window breaks the same assumption -- a tick to the
+    running session's close moves every bar of that session -- but it is NOT
+    handled here, because the damage is bounded: those bars are the last
+    session's, not the chart's. `delta_start` widens the delta to exactly
+    them. Answering "repaints" instead resends the whole chart every push,
+    forever, for the feature the spec asks the user to type.
     """
     from app.ta.registry import get
 
-    return any(get(req.name).repaints or req.units
-               for pane in panes for req in pane.reqs)
+    return any(get(req.name).repaints for pane in panes for req in pane.reqs)
 
 
 def revised_from(previous_dates: list[str], current_dates: list[str]) -> int:
@@ -281,3 +285,20 @@ def revised_from(previous_dates: list[str], current_dates: list[str]) -> int:
     if current_dates[:len(previous_dates)] != previous_dates:
         return 0
     return max(0, len(previous_dates) - 1)
+
+
+def delta_start(panes: list[Pane], previous_dates: list[str],
+                current_dates: list[str], frame: pl.DataFrame,
+                symbol: str = "") -> int:
+    """`revised_from`, widened to the running session when a `bd` window asks.
+
+    One function for both sockets rather than the same two lines in each: the
+    Plotly loop and the series loop have to agree about which rows a delta
+    covers, and the only way they cannot drift is to have no second copy.
+    """
+    start = revised_from(previous_dates, current_dates)
+    # Any unit-bearing request computes on session closes, so its whole
+    # running session moves with the close -- see running_session_start.
+    if any(req.units for pane in panes for req in pane.reqs):
+        start = min(start, running_session_start(frame, symbol))
+    return start

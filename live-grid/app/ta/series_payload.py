@@ -81,8 +81,13 @@ def _series_of(
                 # the client sent `period=3bd` and matches the series on what
                 # it sent, so a bare 3 here reads as a different study and the
                 # line never finds the instance that asked for it.
+                # `:g` and not str(): the legend formats the same value the
+                # same way (panes._suffix), and the client matches the series
+                # to its study on this text -- `2bd` against `2.0bd` orphans
+                # the line (Minor 1). Only a unit-bearing window reaches here,
+                # so the format never touches a bare parameter.
                 "params": {
-                    k: f"{v}{series.req.units[k]}" if k in series.req.units else v
+                    k: f"{v:g}{series.req.units[k]}" if k in series.req.units else v
                     for k, v in series.req.params.items() if k != "style"
                 },
                 "source": series.req.source,

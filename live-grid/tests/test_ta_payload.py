@@ -285,3 +285,53 @@ def test_a_business_day_window_names_its_own_column():
     bars, days = parse_indicators("sma:period=50,sma:period=50bd")
     assert col_suffix(bars) == "|period=50"
     assert col_suffix(days) == "|period=50bd"
+
+
+def test_a_unit_on_one_window_and_not_another_is_rejected():
+    """A unit moves the WHOLE request onto the session frame, so
+    `macd:fast=12bd:slow=26` computed slow and signal on sessions while the
+    legend, the column and the wire echo all said bars (Important 2). It is a
+    bad request now, refused by the same resolve() that refuses an unknown
+    parameter."""
+    with pytest.raises(ValueError, match="all of 'macd'"):
+        parse_indicators("macd:fast=12bd:slow=26")
+    # The defaulted windows count too: `signal` is bars whether it was typed
+    # or not, and a request that counts it in sessions has to say so.
+    with pytest.raises(ValueError, match="all of 'macd'"):
+        parse_indicators("macd:fast=12bd:slow=26bd")
+
+
+def test_a_unit_on_a_non_window_parameter_is_rejected():
+    """`k` is a standard-deviation multiple, so "two business days" of it
+    means nothing -- and it used to route the whole BBands onto the session
+    frame and name a column `k=2.0bd`."""
+    with pytest.raises(ValueError, match="counts no bars"):
+        parse_indicators("bbands:k=2bd")
+    with pytest.raises(ValueError, match="counts no bars"):
+        parse_indicators("pivots_standard:session_shift=1bd")
+
+
+def test_which_parameters_take_a_unit_comes_from_the_registry():
+    """`k` is a multiplier on bbands and a 14-bar lookback on stoch, so the
+    answer cannot be a list of parameter names -- each indicator declares its
+    own windows."""
+    from app.ta.registry import get
+
+    assert get("bbands").windows == ("period",)
+    (stoch,) = parse_indicators("stoch:k=14bd:smooth_k=1bd:d=3bd")
+    assert stoch.units == {"k": "bd", "smooth_k": "bd", "d": "bd"}
+
+
+def test_every_window_wearing_the_unit_is_accepted_whole():
+    """The accepted form keeps the three spellings consistent: the column
+    suffix, the legend and the wire echo all carry the unit on every window."""
+    from app.ta.panes import assign
+    from app.ta.series_payload import _series_of
+
+    (req,) = parse_indicators("macd:fast=12bd:slow=26bd:signal=9bd")
+    assert col_suffix(req) == "|fast=12bd,signal=9bd,slow=26bd"
+    pane = assign(None, [req])[-1]
+    assert pane.series[0].label == "MACD(12bd,26bd,9bd)"
+    frame = bars_to_frame(BARS)
+    echoed = _series_of(frame, pane)[0]["req"]["params"]
+    assert echoed == {"fast": "12bd", "slow": "26bd", "signal": "9bd"}

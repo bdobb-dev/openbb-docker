@@ -126,6 +126,30 @@ def session_date(feed: str) -> pl.Expr:
     )
 
 
+def running_session_start(frame: pl.DataFrame, symbol: str = "") -> int:
+    """The row index of the first bar of the frame's LAST session.
+
+    How far back a `bd` window's delta has to reach, and no further. A tick
+    revises the running session's close, and `session_closes` hands that close
+    to every bar of the session -- so those bars move together, while every
+    session before them is closed and cannot move. Calling the whole chart
+    "repainting" instead resends all of it: 21,450 bars a second on a
+    55-session 1m chart (3.47 MB/s) against ~390 here.
+
+    A daily-or-coarser frame needs no special case: one bar is one session, so
+    this is the last row and the delta is the tail it always was.
+    """
+    if frame.height == 0 or "date" not in frame.columns:
+        return 0
+    stamps = frame.select(session_date(classify(symbol))).to_series().to_list()
+    # A date that would not parse is null, and `.index(None)` would match the
+    # first such bar rather than this session's first -- resend the tail, the
+    # same thing an unusable timestamp gets everywhere else in this module.
+    if stamps[-1] is None:
+        return frame.height - 1
+    return stamps.index(stamps[-1])
+
+
 def session_closes(frame: pl.DataFrame, feed: str = "us") -> pl.DataFrame:
     """One row per session: that session's bars rolled up into its close.
 
