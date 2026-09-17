@@ -66,6 +66,7 @@ def attach(con, root: str) -> None:
     `delta_scan('<root>/<schema>/<table>')`, per the task-6 brief.
     """
     from tick_vault.schemas import SCHEMAS  # lazy: pulls in pyarrow
+    from tick_vault.storage import table_uri
 
     # I6 (final-review finding): pin the DuckDB session timezone to UTC,
     # here and only here, as the one authoritative place every caller of
@@ -79,14 +80,55 @@ def attach(con, root: str) -> None:
     # one of those casts.
     con.execute("SET TimeZone='UTC'")
 
+    _install_s3_secrets(con)
+
     for name in SCHEMAS:
         layer, table = name.split(".", 1)
         view_name = f"{layer}_{table}"
-        table_path = f"{root}/{layer}/{table}"
+        table_path, _ = table_uri(root, name)
         con.execute(
             f"CREATE OR REPLACE VIEW {view_name} AS "
             f"SELECT * FROM delta_scan('{table_path}')"
         )
+
+
+def _install_s3_secrets(con) -> None:
+    """Give DuckDB one scoped SECRET per object-store tier.
+
+    `delta_scan` does NOT read delta-rs `storage_options`; it authenticates
+    through DuckDB's own secret store. Since hot and cold live on different
+    MinIO endpoints, each tier gets its own secret SCOPEd to that tier's
+    bucket, and DuckDB picks by longest matching prefix. No-op on a local
+    `VAULT_ROOT`.
+    """
+    from tick_vault.storage import configured_tiers
+
+    tiers = configured_tiers()
+    if not tiers:
+        return
+    con.execute("INSTALL httpfs; LOAD httpfs;")
+    for tier, bucket, options in tiers:
+        endpoint = options["aws_endpoint"].split("://", 1)[-1]
+        use_ssl = "false" if options.get("aws_allow_http") == "true" else "true"
+        con.execute(
+            f"CREATE OR REPLACE SECRET tick_vault_{tier} ("
+            "  TYPE S3,"
+            f"  KEY_ID '{_sql_str(options['aws_access_key_id'])}',"
+            f"  SECRET '{_sql_str(options['aws_secret_access_key'])}',"
+            f"  REGION '{_sql_str(options['aws_region'])}',"
+            f"  ENDPOINT '{_sql_str(endpoint)}',"
+            "  URL_STYLE 'path',"
+            f"  USE_SSL {use_ssl},"
+            f"  SCOPE '{_sql_str(bucket)}'"
+            ")"
+        )
+
+
+def _sql_str(value: str) -> str:
+    """Escape a single-quoted SQL literal (same guard as `master.
+    _quote_sql_literal`); secrets come from env, but one stray quote would
+    otherwise break the statement."""
+    return str(value).replace("'", "''")
 
 
 def install_macros(con, venue_priorities: dict | None = None) -> None:

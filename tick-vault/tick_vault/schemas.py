@@ -718,12 +718,18 @@ def create_all(root: str) -> None:
     """
     import deltalake
 
+    from tick_vault.storage import table_uri
+
     for name, schema in SCHEMAS.items():
-        layer, table = name.split(".", 1)
-        path = f"{root}/{layer}/{table}"
-        if deltalake.DeltaTable.is_deltatable(path):
+        path, storage_options = table_uri(root, name)
+        if deltalake.DeltaTable.is_deltatable(
+            path, storage_options=storage_options
+        ):
             continue
         empty_table = pa.Table.from_pylist([], schema=schema)
         deltalake.write_deltalake(
-            path, empty_table, partition_by=PARTITIONING.get(name)
+            path,
+            empty_table,
+            partition_by=PARTITIONING.get(name),
+            storage_options=storage_options,
         )

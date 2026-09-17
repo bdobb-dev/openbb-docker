@@ -618,12 +618,100 @@ services:
           if mc alias set store "https://$${DELTA_S3_ENDPOINT}:$${DELTA_S3_PORT}" \
                "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" >/dev/null 2>&1; then
             mc mb --ignore-existing "store/$${DELTA_S3_BUCKET}"
-            echo "minio-init: bucket $${DELTA_S3_BUCKET} ready"
+            # Ep. 15 hot tier: the small, per-item-read tables plus gold and
+            # the ops receipts. The bulk (bronze, silver) lives on minio-hdd
+            # and is created by minio-hdd-init instead.
+            mc mb --ignore-existing store/silver-hot
+            mc mb --ignore-existing store/gold
+            mc mb --ignore-existing store/receipts
+            echo "minio-init: buckets $${DELTA_S3_BUCKET}, silver-hot, gold, receipts ready"
             exit 0
           fi
           sleep 2
         done
         echo "minio-init: MinIO did not become reachable" >&2
+        exit 1
+    restart: "no"
+
+  # Cold tier (Ep. 15): a SECOND MinIO, on the HDD raidz1 rather than the
+  # NVMe mirror the `minio` service above sits on. Bronze captures and the
+  # ~19.6 TB of silver tick history land here; the hot NVMe store keeps the
+  # small reference tables, gold and the ops receipts (see
+  # tick_vault/storage.py's TIER_BY_TABLE, which is the whole routing policy).
+  #
+  # STOCK minio image, NOT openbb-minio:11.0.0. That image is a Tailscale node
+  # whose entrypoint refuses to start without TS_AUTHKEY and serves S3 over a
+  # Tailscale-issued certificate for its own MagicDNS name. This tier is
+  # reached only from inside openbb-internal, by container alias, so it needs
+  # neither a tailnet identity nor ACME -- plain HTTP on the internal network
+  # is the endpoint tick-vault is configured for (DELTA_S3_COLD_ENDPOINT).
+  # It is deliberately NOT published to the tailnet; putting 19.6 TB behind a
+  # second ACME-renewing node buys nothing and doubles the failure modes.
+  minio-hdd:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: openbb-minio-hdd
+    hostname: minio-hdd
+    restart: unless-stopped
+    profiles: ["tick-vault"]
+    networks:
+      openbb-internal:
+        aliases: [minio-hdd]
+    # MINIO_ROOT_USER/PASSWORD come from minio.env -- the same root credential
+    # as the hot store, per minio.env's documented one-credential trade-off.
+    # They are deliberately NOT re-declared under `environment:`: compose
+    # interpolates ${...} from the shell or a root .env ONLY, never from an
+    # env_file, so `${MINIO_ROOT_USER:?}` here would fail even with the value
+    # correctly set in minio.env (same trap the `minio` service documents).
+    env_file:
+      - path: ./minio.env
+        required: true
+    command: ["server", "/data", "--console-address", ":9001"]
+    ports:
+      # Host-side only, for `mc` and the console. 9000/9001 belong to the
+      # hot store's tailnet node.
+      - "9002:9000"
+      - "9003:9001"
+    volumes:
+      # Set COLD_DATA_DIR to a path on the HDD raidz1 share and this becomes a
+      # BIND MOUNT. Unset, it falls back to a named volume -- which lives on
+      # the Docker storage pool (99 GB on this NAS) and cannot hold a 19.6 TB
+      # walk, so it is a dev/local convenience only.
+      #
+      # NOT `${COLD_DATA_DIR:?}`: compose interpolates every service in the
+      # file regardless of `profiles`, so a required-variable error here would
+      # break plain `docker compose up` for everyone not running tick-vault.
+      - ${COLD_DATA_DIR:-minio-hdd-data}:/data
+
+  # One-shot: create the per-tier buckets. Delta Lake will not create them,
+  # so without this the first write 404s. Hot buckets go to the tailnet store,
+  # cold buckets to minio-hdd.
+  minio-hdd-init:
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+    container_name: openbb-minio-hdd-init
+    profiles: ["tick-vault"]
+    networks:
+      - openbb-internal
+    depends_on:
+      - minio-hdd
+    # Credentials via env_file, not `environment:` -- see minio-hdd above.
+    env_file:
+      - path: ./minio.env
+        required: true
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        for i in $$(seq 1 60); do
+          if mc alias set cold "http://minio-hdd:9000" \
+               "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" >/dev/null 2>&1; then
+            mc mb --ignore-existing cold/bronze
+            mc mb --ignore-existing cold/silver
+            echo "minio-hdd-init: buckets bronze, silver ready"
+            exit 0
+          fi
+          sleep 2
+        done
+        echo "minio-hdd-init: minio-hdd did not become reachable" >&2
         exit 1
     restart: "no"
 
@@ -668,8 +756,22 @@ services:
       # (per the Phase-0 runbook, Step 3) and from this container, and
       # actually persists on the mounted volume.
       - CALIBRATION_REPORT=${CALIBRATION_REPORT:-/data/vault/calibration/ep15-calibration.md}
+    # Ep. 15 tiered storage: LAKE_*_URI + DELTA_S3_HOT_*/COLD_* live in
+    # minio.env. With none of them set, tick_vault.storage falls back to
+    # VAULT_ROOT on the mounted volume, which is the pre-tiering behaviour
+    # and still what the tests and a local `vault calibrate` run use.
+    env_file:
+      - path: ./minio.env
+        required: true
     volumes:
-      - tick-vault-data:${VAULT_ROOT:-/data/vault}
+      # Tiering moves the Delta TABLES to MinIO, but NOT the raw payload
+      # store: capture.write_payload is plain POSIX (os.makedirs + gzip.open),
+      # so <VAULT_ROOT>/_payloads/**.json.gz always lands on whatever is
+      # mounted here. Left as the named volume that is the Docker storage
+      # pool (99 GB on the NAS) -- far too small for the walk. Set
+      # VAULT_DATA_DIR to a path on the big share to make this a bind mount
+      # instead; unset, it stays the named volume for local/dev runs.
+      - ${VAULT_DATA_DIR:-tick-vault-data}:${VAULT_ROOT:-/data/vault}
     command: ["vault", "backfill", "--loop"]
 
   # tick-vault-status: read-only widget backend for the same VAULT_ROOT,
@@ -691,8 +793,20 @@ services:
       - VAULT_ROOT=${VAULT_ROOT:-/data/vault}
       - HOST=0.0.0.0
       - PORT=8600
+    # Same tier config as tick-vault: /status reads ops.data_quality_issue,
+    # which is on the hot tier once tiering is configured.
+    env_file:
+      - path: ./minio.env
+        required: true
     volumes:
-      - tick-vault-data:${VAULT_ROOT:-/data/vault}
+      # Tiering moves the Delta TABLES to MinIO, but NOT the raw payload
+      # store: capture.write_payload is plain POSIX (os.makedirs + gzip.open),
+      # so <VAULT_ROOT>/_payloads/**.json.gz always lands on whatever is
+      # mounted here. Left as the named volume that is the Docker storage
+      # pool (99 GB on the NAS) -- far too small for the walk. Set
+      # VAULT_DATA_DIR to a path on the big share to make this a bind mount
+      # instead; unset, it stays the named volume for local/dev runs.
+      - ${VAULT_DATA_DIR:-tick-vault-data}:${VAULT_ROOT:-/data/vault}
     command: ["python", "-m", "tick_vault.status_app"]
 
 volumes:
@@ -700,6 +814,8 @@ volumes:
   rss-ticker-data:
   minio-data:
   minio-ts-state:
+  # Fallback only; a real walk sets COLD_DATA_DIR to the HDD share instead.
+  minio-hdd-data:
   tick-vault-data:
   # Only used when KEY_MAINT_ADMIN names it (see key-maint's admin mount).
   # Declaring it unconditionally costs nothing on the Linux default, where the

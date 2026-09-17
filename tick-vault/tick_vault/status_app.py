@@ -222,8 +222,11 @@ def _default_dq_open(root: str) -> int:
     `status == "OPEN"` (same query `cli.handle_status` runs)."""
     from deltalake import DeltaTable
 
+    from tick_vault.storage import table_uri
+
     try:
-        df = DeltaTable(f"{root}/ops/data_quality_issue").to_pandas()
+        path, opts = table_uri(root, "ops.data_quality_issue")
+        df = DeltaTable(path, storage_options=opts).to_pandas()
     except Exception:
         return 0
     if df is None or df.empty:

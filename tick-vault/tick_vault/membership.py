@@ -513,7 +513,10 @@ def compute_membership(
 def _default_memberships_reader(root: str) -> pd.DataFrame:
     from deltalake import DeltaTable
 
-    return DeltaTable(f"{root}/silver/index_membership_version").to_pandas()
+    from tick_vault.storage import table_uri
+
+    path, opts = table_uri(root, "silver.index_membership_version")
+    return DeltaTable(path, storage_options=opts).to_pandas()
 
 
 def _default_writer(root: str, table: str, df: pd.DataFrame) -> None:

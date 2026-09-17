@@ -199,9 +199,9 @@ def append_rows(root: str, table: str, df: "pd.DataFrame") -> None:
     from deltalake import write_deltalake
 
     from tick_vault.schemas import SCHEMAS
+    from tick_vault.storage import table_uri
 
-    layer, name = table.split(".", 1)
-    path = f"{root}/{layer}/{name}"
+    path, storage_options = table_uri(root, table)
     schema = SCHEMAS[table]
     # Direct typed construction from records rather than `from_pandas`:
     # pandas has no native nullable-scalar representation for a lone `None`
@@ -212,7 +212,7 @@ def append_rows(root: str, table: str, df: "pd.DataFrame") -> None:
     # target arrow types.
     clean = df.astype(object).where(df.notna(), None)
     arrow_table = pa.Table.from_pylist(clean.to_dict("records"), schema=schema)
-    write_deltalake(path, arrow_table, mode="append")
+    write_deltalake(path, arrow_table, mode="append", storage_options=storage_options)
 
 
 @dataclass(frozen=True)

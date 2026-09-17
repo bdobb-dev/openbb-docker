@@ -771,7 +771,10 @@ def compute_attach_issue_ids(
 def _default_assignments_reader(root: str) -> pd.DataFrame:
     from deltalake import DeltaTable
 
-    return DeltaTable(f"{root}/silver/identifier_assignment_version").to_pandas()
+    from tick_vault.storage import table_uri
+
+    path, opts = table_uri(root, "silver.identifier_assignment_version")
+    return DeltaTable(path, storage_options=opts).to_pandas()
 
 
 def _default_writer(root: str, table: str, df: pd.DataFrame) -> None:
@@ -803,8 +806,10 @@ def _default_system_closer(root: str, table: str, closes: "list[tuple[str, objec
     """
     from deltalake import DeltaTable
 
-    layer, name = table.split(".", 1)
-    dt_table = DeltaTable(f"{root}/{layer}/{name}")
+    from tick_vault.storage import table_uri
+
+    path, opts = table_uri(root, table)
+    dt_table = DeltaTable(path, storage_options=opts)
     for assignment_version_id, system_to_ts in closes:
         ts = _to_utc_ts(system_to_ts)
         ts_literal = ts.strftime("%Y-%m-%d %H:%M:%S.%f")

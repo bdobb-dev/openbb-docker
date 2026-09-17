@@ -456,13 +456,19 @@ def build_queue_update(
 def _default_assignments_reader(root: str) -> pd.DataFrame:
     from deltalake import DeltaTable
 
-    return DeltaTable(f"{root}/silver/identifier_assignment_version").to_pandas()
+    from tick_vault.storage import table_uri
+
+    path, opts = table_uri(root, "silver.identifier_assignment_version")
+    return DeltaTable(path, storage_options=opts).to_pandas()
 
 
 def _default_queue_reader(root: str) -> pd.DataFrame:
     from deltalake import DeltaTable
 
-    return DeltaTable(f"{root}/ops/openfigi_resolution_queue").to_pandas()
+    from tick_vault.storage import table_uri
+
+    path, opts = table_uri(root, "ops.openfigi_resolution_queue")
+    return DeltaTable(path, storage_options=opts).to_pandas()
 
 
 def _default_queue_writer(root: str, table: str, df: pd.DataFrame) -> None:
@@ -474,13 +480,19 @@ def _default_queue_writer(root: str, table: str, df: pd.DataFrame) -> None:
     from deltalake import write_deltalake
 
     from tick_vault.schemas import SCHEMAS
+    from tick_vault.storage import table_uri
 
-    layer, name = table.split(".", 1)
-    path = f"{root}/{layer}/{name}"
+    path, storage_options = table_uri(root, table)
     schema = SCHEMAS[table]
     clean = df.astype(object).where(df.notna(), None)
     arrow_table = pa.Table.from_pylist(clean.to_dict("records"), schema=schema)
-    write_deltalake(path, arrow_table, mode="overwrite", schema_mode="overwrite")
+    write_deltalake(
+        path,
+        arrow_table,
+        mode="overwrite",
+        schema_mode="overwrite",
+        storage_options=storage_options,
+    )
 
 
 def _default_writer(root: str, table: str, df: pd.DataFrame) -> None:

@@ -71,7 +71,10 @@ def calibration_report_path() -> str:
 def _default_manifest_reader(root: str) -> pd.DataFrame:
     from deltalake import DeltaTable
 
-    return DeltaTable(f"{root}/ops/backfill_manifest").to_pandas()
+    from tick_vault.storage import table_uri
+
+    path, storage_options = table_uri(root, "ops.backfill_manifest")
+    return DeltaTable(path, storage_options=storage_options).to_pandas()
 
 
 def _sql_escape(value: str) -> str:
@@ -118,8 +121,9 @@ def _default_manifest_row_writer(root: str, updated_row: dict) -> None:
     from deltalake import DeltaTable
 
     from tick_vault.capture import append_rows
+    from tick_vault.storage import table_uri
 
-    path = f"{root}/ops/backfill_manifest"
+    path, storage_options = table_uri(root, "ops.backfill_manifest")
     work_id = updated_row.get("work_id")
     # Only `update_manifest_row`'s mutable columns; everything else on the row
     # was fixed at generation time and must not be rewritten.
@@ -130,7 +134,7 @@ def _default_manifest_row_writer(root: str, updated_row: dict) -> None:
         "updated_at_ts": _sql_timestamp(updated_row.get("updated_at_ts")),
         "completed_at_ts": _sql_timestamp(updated_row.get("completed_at_ts")),
     }
-    metrics = DeltaTable(path).update(
+    metrics = DeltaTable(path, storage_options=storage_options).update(
         updates=updates, predicate=f"work_id = '{_sql_escape(str(work_id))}'"
     )
     if not metrics.get("num_updated_rows"):
@@ -151,8 +155,11 @@ def _default_existing_ticks_reader(
     yet"."""
     from deltalake import DeltaTable
 
+    from tick_vault.storage import table_uri
+
+    path, storage_options = table_uri(root, "silver.us_trade_tick_version")
     try:
-        table = DeltaTable(f"{root}/silver/us_trade_tick_version")
+        table = DeltaTable(path, storage_options=storage_options)
     except Exception:
         return None
     # Push the filter down. Loading the whole table and filtering in pandas
@@ -179,9 +186,11 @@ def _default_splits_reader(root: str, symbol: str) -> "pd.DataFrame | None":
     from deltalake import DeltaTable
 
     from tick_vault.eodhd_reference import parse_splits
+    from tick_vault.storage import table_uri
 
+    path, storage_options = table_uri(root, "bronze.eodhd_corporate_actions_capture")
     try:
-        caps = DeltaTable(f"{root}/bronze/eodhd_corporate_actions_capture").to_pandas(
+        caps = DeltaTable(path, storage_options=storage_options).to_pandas(
             filters=[("request_symbol", "=", f"{symbol}.US")]
         )
     except Exception:

@@ -266,11 +266,12 @@ def _pinned_delta_versions(root: str) -> dict:
     `_PINNED_TABLES`, keyed by their `SCHEMAS`-registry dotted name."""
     from deltalake import DeltaTable
 
+    from tick_vault.storage import table_uri
+
     versions = {}
     for name in _PINNED_TABLES:
-        layer, table = name.split(".", 1)
-        path = f"{root}/{layer}/{table}"
-        versions[name] = DeltaTable(path).version()
+        path, opts = table_uri(root, name)
+        versions[name] = DeltaTable(path, storage_options=opts).version()
     return versions
 
 
