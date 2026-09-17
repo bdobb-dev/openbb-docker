@@ -1,14 +1,22 @@
 # Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 import json
+import sys
 import threading
+import types
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
 from openbb_security_master.client import SecurityMasterClient
 from openbb_security_master.models import MarketCalendarData, MarketCalendarQueryParams
-from openbb_security_master.router import exchange_details, market_calendar, router
+from openbb_security_master.router import (
+    exchange_details,
+    market_calendar,
+    router,
+    security_master_resolve,
+)
 
 
 class Stub:
@@ -100,3 +108,92 @@ def test_client_builds_context_from_odp_parameters():
     assert c.context_for(as_of="2027-03-01", knowledge_at=None) == {
         "mode": "effective_on", "effective_at": "2027-03-01T00:00:00Z"}
     assert c.context_for(as_of=None, knowledge_at=None) == {"mode": "current_corrected"}
+
+
+def test_eodhd_client_unwraps_the_secret(monkeypatch):
+    """`credentials.model_dump()` (python mode) leaves SecretStr fields masked;
+
+    `_eodhd_client` must use `mode="json"` so `get_client` (and the SDK
+    beneath it) receives the real key as a plain string, not a masked
+    `SecretStr('**********')`.
+    """
+    seen = {}
+
+    def fake_get_client(credentials):
+        seen["credentials"] = credentials
+        return object()
+
+    fake_client_module = types.ModuleType("openbb_eodhd.models._client")
+    fake_client_module.get_client = fake_get_client
+    fake_client_module.rest_json = lambda client, endpoint, params: {}
+    fake_client_module.sdk_call = lambda credentials, call, context: call(
+        fake_get_client(credentials)
+    )
+    monkeypatch.setitem(sys.modules, "openbb_eodhd.models._client", fake_client_module)
+
+    class FakeCredentials:
+        def model_dump(self, mode=None):
+            assert mode == "json"
+            return {"eodhd_api_key": "REALKEY123"}
+
+    class FakeUserSettings:
+        credentials = FakeCredentials()
+
+    monkeypatch.setattr(
+        "openbb_core.app.service.user_service.UserService.read_from_file",
+        classmethod(lambda cls: FakeUserSettings()),
+    )
+
+    from openbb_security_master.router import _eodhd_client, _eodhd_rest_json
+
+    _eodhd_rest_json(_eodhd_client(), "exchange-details/US", {})
+
+    assert seen["credentials"] == {"eodhd_api_key": "REALKEY123"}
+    assert isinstance(seen["credentials"]["eodhd_api_key"], str)
+
+
+def test_market_calendar_treats_naive_knowledge_at_as_utc(monkeypatch):
+    stub = Stub(200, {"results": [], "extra": {}})
+    monkeypatch.setenv("SECURITY_MASTER_URL", stub.url)
+    market_calendar(start_date="2027-03-01", end_date="2027-03-02",
+                     knowledge_at=datetime(2027, 3, 10, 8, 0, 0))
+    _, body = stub.calls[0]
+    assert body["context"]["known_at"] == "2027-03-10T08:00:00Z"
+
+
+def test_security_master_resolve_typed_temporal_params(monkeypatch):
+    from datetime import date
+
+    stub = Stub(200, {"candidates": [], "receipt": {}})
+    monkeypatch.setenv("SECURITY_MASTER_URL", stub.url)
+    security_master_resolve(identifier="AAPL", as_of=date(2027, 3, 1),
+                            knowledge_at=datetime(2027, 3, 10, 8, 0, 0, tzinfo=timezone.utc))
+    _, body = stub.calls[0]
+    assert body["context"] == {"mode": "known_at", "known_at": "2027-03-10T08:00:00Z",
+                               "effective_at": "2027-03-01T00:00:00Z"}
+
+
+def test_security_master_resolve_treats_naive_knowledge_at_as_utc(monkeypatch):
+    stub = Stub(200, {"candidates": [], "receipt": {}})
+    monkeypatch.setenv("SECURITY_MASTER_URL", stub.url)
+    security_master_resolve(identifier="AAPL", knowledge_at=datetime(2027, 3, 10, 8, 0, 0))
+    _, body = stub.calls[0]
+    assert body["context"]["known_at"] == "2027-03-10T08:00:00Z"
+
+
+def test_market_calendar_guards_unexpected_response_shape(monkeypatch):
+    stub = Stub(200, {})
+    monkeypatch.setenv("SECURITY_MASTER_URL", stub.url)
+    from openbb_core.app.model.abstract.error import OpenBBError
+
+    with pytest.raises(OpenBBError, match="without results"):
+        market_calendar(start_date="2027-03-01", end_date="2027-03-02")
+
+
+def test_security_master_resolve_guards_unexpected_response_shape(monkeypatch):
+    stub = Stub(200, {})
+    monkeypatch.setenv("SECURITY_MASTER_URL", stub.url)
+    from openbb_core.app.model.abstract.error import OpenBBError
+
+    with pytest.raises(OpenBBError, match="without results"):
+        security_master_resolve(identifier="AAPL")
