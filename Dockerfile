@@ -178,6 +178,7 @@ assert 'kdb' in obb.coverage.providers, 'kdb provider not registered'; \
 assert 'deltalake' in obb.coverage.providers, 'deltalake provider not registered'; \
 from openbb_core.api.router.commands import router as cmds; \
 assert any(r.path == '/reference/market_calendar' for r in cmds.routes), 'security-master router not registered'; \
+from openbb_core.api.rest_api import app as rest_app; assert '/api/v1/reference/market_calendar' in rest_app.openapi()['paths'], 'reference routes missing from the OpenAPI schema'; \
 print('OpenBB Platform OK:', len(obb.coverage.providers), 'providers (incl. eodhd, kdb, deltalake)')"
 
 # The FastAPI app factory `openbb-api --factory` serves (see api_app.py):

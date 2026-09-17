@@ -8,8 +8,6 @@ named `reference`, so the commands land on `/api/v1/reference/...` and on
 `obb.reference.*`. A prefix here would nest a second segment under that.
 """
 
-from __future__ import annotations
-
 from datetime import date as dateType
 from datetime import datetime, timezone
 from typing import Literal
