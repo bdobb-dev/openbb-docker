@@ -594,44 +594,78 @@ def select_fetch_batch(ctx: LoopContext, manifest_df, state: dict, limit: int) -
     return [row.to_dict() for _, row in ordered.head(limit).iterrows()]
 
 
-def _execute_fetch_batch(ctx: LoopContext, items: list, state: dict, mapper) -> None:
-    """Run `items` through worker processes, then apply every result in the
-    PARENT: rebuild each `FetchResult`, persist the worker's divergence rows,
-    rule with `ctx.gate` in dispatch order (so gate sequence numbers stay
-    deterministic whatever order workers finish in), and write the manifest
-    row. Workers never touch `ops.backfill_manifest` or the gate."""
+def _worker_job(ctx: LoopContext, item: dict) -> dict:
+    """The picklable job one worker runs (see `tick_vault.parallel`)."""
+    return {
+        "root": ctx.root, "item": item, "api_token": ctx.api_token,
+        "now": ctx.now().isoformat(), "reconcile": ctx.reconcile_step is not None,
+    }
+
+
+def _apply_worker_result(ctx: LoopContext, state: dict, item: dict, sequence_number: int, payload: dict) -> None:
+    """Parent-side application of one worker result: rebuild the
+    `FetchResult`, persist the worker's divergence rows, rule with `ctx.gate`
+    and write the manifest row. Workers never touch `ops.backfill_manifest`,
+    the gate, or `ops.data_quality_issue`."""
     from tick_vault.parallel import records_to_report
 
-    if not items:
+    if payload.get("error"):
+        state.setdefault("errors", []).append(f"FETCH {item.get('work_id')}: {payload['error']}")
         return
-    if not _session_ready(ctx, state, items[0].get("week_monday")):
-        return
-    now = ctx.now()
-    jobs = [
-        {"root": ctx.root, "item": item, "api_token": ctx.api_token,
-         "now": now.isoformat(), "reconcile": ctx.reconcile_step is not None}
-        for item in items
-    ]
-    for item, payload in zip(items, mapper(jobs)):
-        if payload.get("error"):
-            state.setdefault("errors", []).append(f"FETCH {item.get('work_id')}: {payload['error']}")
-            continue
-        r = payload["result"]
-        result = FetchResult(
-            status=r["status"], rows_written=r["rows_written"], captures=r["captures"],
-            wall_minutes=r["wall_minutes"], error=r["error"],
-        )
-        updated_row = update_manifest_row(item, result, completed_at=ctx.now())
-        report = records_to_report(payload.get("report"))
-        if report is not None:
-            from tick_vault.cli import persist_reconcile_issues
+    r = payload["result"]
+    result = FetchResult(
+        status=r["status"], rows_written=r["rows_written"], captures=r["captures"],
+        wall_minutes=r["wall_minutes"], error=r["error"],
+    )
+    updated_row = update_manifest_row(item, result, completed_at=ctx.now())
+    report = records_to_report(payload.get("report"))
+    if report is not None:
+        from tick_vault.cli import persist_reconcile_issues
 
-            persist_reconcile_issues(ctx, report)
+        persist_reconcile_issues(ctx, report)
+        updated_row = apply_gate_decision(updated_row, ctx.gate.check(sequence_number, report))
+    if ctx.manifest_row_writer is not None:
+        ctx.manifest_row_writer(ctx.root, updated_row)
+
+
+def run_fetch_stream(ctx: LoopContext, state: dict, executor, *, slate_factor: int = 8) -> int:
+    """Keep `ctx.config.workers` items in flight, submitting the next as each
+    finishes - a batch that waits for its slowest item idles every other
+    worker (measured: 2.7x on 6 workers with `pool.map`).
+
+    The gate sequence number is assigned at DISPATCH, so hold decisions stay
+    deterministic however the workers interleave. Items come from a slate
+    selected off one manifest read (`slate_factor x workers`); re-reading a
+    262k-row manifest per item would itself throttle the pool. Returns the
+    number of items applied."""
+    import concurrent.futures as cf
+
+    workers = max(1, int(ctx.config.workers))
+    manifest_df = ctx.manifest_reader(ctx.root) if ctx.manifest_reader else None
+    slate = select_fetch_batch(ctx, manifest_df, state, workers * slate_factor)
+    if not slate or not _session_ready(ctx, state, slate[0].get("week_monday")):
+        return 0
+
+    inflight: dict = {}
+    applied = 0
+    while slate or inflight:
+        while slate and len(inflight) < workers:
+            item = slate.pop(0)
             sequence_number = state.get("gate_sequence", 0)
             state["gate_sequence"] = sequence_number + 1
-            updated_row = apply_gate_decision(updated_row, ctx.gate.check(sequence_number, report))
-        if ctx.manifest_row_writer is not None:
-            ctx.manifest_row_writer(ctx.root, updated_row)
+            inflight[executor.submit(_fetch_job_entry, _worker_job(ctx, item))] = (item, sequence_number)
+        if not inflight:
+            break
+        done, _ = cf.wait(list(inflight), return_when=cf.FIRST_COMPLETED)
+        for future in done:
+            item, sequence_number = inflight.pop(future)
+            try:
+                payload = future.result()
+            except Exception as exc:  # a worker died outright
+                payload = {"error": f"{type(exc).__name__}: {exc}"}
+            _apply_worker_result(ctx, state, item, sequence_number, payload)
+            applied += 1
+    return applied
 
 
 def _execute_settle(ctx: LoopContext, action: CycleAction, state: dict) -> None:
@@ -730,23 +764,29 @@ def _execute_action(ctx: LoopContext, action: CycleAction, state: dict) -> None:
         raise ValueError(f"unknown CycleAction.kind: {action.kind!r}")
 
 
-def _process_pool_mapper(workers: int):
-    """`jobs -> results` over a process pool, created once for the whole run.
-    Returns `(mapper, shutdown)`; `None` when `workers < 2` (serial loop)."""
-    if workers < 2:
-        return None, (lambda: None)
-    from concurrent.futures import ProcessPoolExecutor
-    import multiprocessing as mp
-
+def _fetch_job_entry(job: dict) -> dict:
+    """Module-level indirection so the submitted callable is picklable under
+    `spawn` (a lambda or local function is not)."""
     from tick_vault.parallel import fetch_job
 
+    return fetch_job(job)
+
+
+def _executor_for(workers: int):
+    """`(executor, shutdown)` for the parallel walk; `(None, noop)` when
+    `workers < 2` (the serial loop)."""
+    if workers < 2:
+        return None, (lambda: None)
+    import multiprocessing as mp
+    from concurrent.futures import ProcessPoolExecutor
+
     pool = ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context("spawn"))
-    return (lambda jobs: list(pool.map(fetch_job, jobs))), (lambda: pool.shutdown(wait=True))
+    return pool, (lambda: pool.shutdown(wait=True))
 
 
 def run_loop(
     ctx: LoopContext, *, max_cycles: "int | None" = None, run_type: str = "backfill_loop",
-    mapper=None,
+    executor=None,
 ) -> dict:
     """Thin, impure driver: opens one `ops.ingestion_run` row, repeatedly
     reads the manifest / calls `run_cycle` / executes exactly one
@@ -769,8 +809,8 @@ def run_loop(
         "errors": [],
     }
     shutdown = (lambda: None)
-    if mapper is None:
-        mapper, shutdown = _process_pool_mapper(ctx.config.workers)
+    if executor is None:
+        executor, shutdown = _executor_for(ctx.config.workers)
     run_id = open_run(ctx, run_type)
     status = RUN_STATUS_COMPLETED
     cycles = 0
@@ -780,11 +820,8 @@ def run_loop(
             manifest_df = ctx.manifest_reader(ctx.root) if ctx.manifest_reader else None
             action = run_cycle(ctx, manifest_df, state)
             try:
-                if mapper is not None and action.kind in (CYCLE_FETCH, CYCLE_RETRY):
-                    _execute_fetch_batch(
-                        ctx, select_fetch_batch(ctx, manifest_df, state, ctx.config.workers),
-                        state, mapper,
-                    )
+                if executor is not None and action.kind in (CYCLE_FETCH, CYCLE_RETRY):
+                    run_fetch_stream(ctx, state, executor)
                 else:
                     _execute_action(ctx, action, state)
             except Exception as exc:  # per-action isolation, not caller-fatal

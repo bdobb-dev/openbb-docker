@@ -397,7 +397,12 @@ def handle_backfill(args: argparse.Namespace, ctx_factory) -> int:
         ctx = ctx_factory()
         config = getattr(ctx, "config", None)
         if config is not None:  # test ctxs are bare stubs without a LoopConfig
-            config.workers = max(1, int(getattr(args, "workers", 1) or 1))
+            # LoopConfig is frozen: rebuild it rather than assigning a field.
+            import dataclasses
+
+            ctx.config = dataclasses.replace(
+                config, workers=max(1, int(getattr(args, "workers", 1) or 1))
+            )
 
         # Second gate (C2 fix-round): `--loop` also refuses when
         # reconciliation Phase-A isn't wired on this ctx - running the

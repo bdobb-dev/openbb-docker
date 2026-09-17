@@ -664,3 +664,35 @@ def test_handle_calibrate_measures_real_bytes_written():
         assert float(m.group(1)) > 0.0
     finally:
         shutil.rmtree(d)
+
+
+def test_backfill_loop_workers_flag_replaces_the_frozen_config():
+    # Regression (2026-09-17): LoopConfig is frozen, so `--workers N` must
+    # REBUILD it. Assigning the field raised FrozenInstanceError in production
+    # while every ctx stub in these tests has no `.config` to catch it.
+    d = _tmpdir()
+    try:
+        report_path = os.path.join(d, "ep15-calibration.md")
+        with open(report_path, "w") as f:
+            f.write("# calibration report\n")
+        old_env = os.environ.get("CALIBRATION_REPORT")
+        os.environ["CALIBRATION_REPORT"] = report_path
+
+        ctx = cli.loop_mod.LoopContext(root="mem://test", reconcile_step=(lambda *a, **k: None))
+        assert ctx.config.workers == 1  # default: the serial loop
+
+        recorder = _Recorder(return_value=0)
+        original = _patch_handler("run_backfill_loop", recorder)
+        try:
+            args = cli.build_parser().parse_args(["backfill", "--loop", "--workers", "6"])
+            assert cli.handle_backfill(args, ctx_factory=lambda: ctx) == 0
+            assert ctx.config.workers == 6
+            assert len(recorder.calls) == 1
+        finally:
+            _restore_handler("run_backfill_loop", original)
+            if old_env is None:
+                os.environ.pop("CALIBRATION_REPORT", None)
+            else:
+                os.environ["CALIBRATION_REPORT"] = old_env
+    finally:
+        shutil.rmtree(d)
