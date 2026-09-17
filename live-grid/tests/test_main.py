@@ -328,12 +328,31 @@ def test_advanced_chart_macro_options_are_filled_in_like_ta_chart():
     assert "classic-momentum" in values
 
 
-def test_advanced_chart_offers_a_price_basis_distinct_from_source():
+def test_the_library_offers_two_arts_charts_widgets():
+    """One chart, one source (v12.3.1): the source is fixed per widget rather
+    than chosen on the card, so the library carries a Live grid entry with no
+    `source` parameter at all and an EODHD entry whose `source` has exactly
+    one option. Both are still the same renderer and the same endpoints."""
     spec = make_client().get("/widgets.json").json()
-    names = [p["paramName"] for p in spec["advanced_chart"]["params"]]
-    assert "basis" in names and "source" in names
-    source = next(p for p in spec["advanced_chart"]["params"] if p["paramName"] == "source")
-    assert [o["value"] for o in source["options"]] == ["local", "eodhd"]
+    local, eodhd = spec["advanced_chart"], spec["advanced_chart_eodhd"]
+    assert local["name"] == "Art's Charts — Live grid"
+    assert eodhd["name"] == "Art's Charts — EODHD"
+    for widget in (local, eodhd):
+        assert widget["type"] == "advanced_chart"
+        assert widget["endpoint"] == "series"
+        assert widget["wsEndpoint"] == "ta_series_ws"
+
+    assert "source" not in [p["paramName"] for p in local["params"]]
+    source = next(p for p in eodhd["params"] if p["paramName"] == "source")
+    assert source["value"] == "eodhd"
+    assert source["options"] == [{"label": "EODHD", "value": "eodhd"}]
+
+    # Everything but the source is the same card.
+    def rest(widget):
+        return [p for p in widget["params"] if p["paramName"] != "source"]
+
+    assert rest(local) == rest(eodhd)
+    assert "basis" in [p["paramName"] for p in local["params"]]
 
 
 def test_advanced_chart_offers_start_and_end_dates_for_the_custom_range():

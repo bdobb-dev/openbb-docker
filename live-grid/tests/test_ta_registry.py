@@ -113,29 +113,77 @@ def test_registry_is_thirty_four_indicators_with_twelve_eodhd_maps():
     assert len(mapped) == 12, sorted(mapped)  # cci is local-only (see registry)
 
 
-# Studies picker (v12.3.1, studies addendum S3): the six group tabs, verbatim
-# and in this order.
-GROUPS = ["Moving averages", "Bands & channels", "Trend", "Oscillators", "Volume", "Volatility"]
+# Studies picker (v12.3.1, addendum 2): the nine groups of the layout pack,
+# verbatim and in this order.
+GROUPS = ["Moving averages", "Bands & channels", "Trend", "Anchored & volume",
+          "Session levels", "Momentum", "Trend strength", "Volume", "Volatility"]
 
 
 def test_catalog_projects_group_title_description_wiki():
     entries = {e["name"]: e for e in catalog()}
     assert entries["sma"]["group"] == "Moving averages"
-    assert entries["sma"]["title"] == "Simple Moving Average"
+    assert entries["sma"]["full"] == "Simple moving average"
     assert entries["bbands"]["group"] == "Bands & channels"
-    assert entries["rsi"]["group"] == "Oscillators"
+    assert entries["rsi"]["group"] == "Momentum"
     assert entries["obv"]["group"] == "Volume"
     assert entries["atr"]["group"] == "Volatility"
     assert entries["sar"]["group"] == "Trend"
+    assert entries["vwap"]["group"] == "Anchored & volume"
+    assert entries["pivots_standard"]["group"] == "Session levels"
+    assert entries["adx"]["group"] == "Trend strength"
     for e in entries.values():
         assert e["group"] in GROUPS, e["name"]
-        assert e["title"].strip() and e["title"] != e["name"], e["name"]
+        assert e["full"].strip() and e["full"] != e["name"], e["name"]
+        # `title` is `full` under B1's key, kept for one release.
+        assert e["title"] == e["full"], e["name"]
+        assert e["desc"].strip(), e["name"]
         assert len(e["description"].split()) >= 8, e["name"]
         assert e["wiki"] is None or e["wiki"].startswith("https://en.wikipedia.org/wiki/"), e["name"]
 
 
 def test_every_group_is_used():
     assert {e["group"] for e in catalog()} == set(GROUPS)
+
+
+def test_every_param_carries_a_label_and_every_float_a_step():
+    """The picker's editor prints these; nothing about a parameter's
+    presentation is hardcoded client-side. An int steps by 1, so only a
+    float needs the registry to say what its spinner does."""
+    for e in catalog():
+        for p in e["params"]:
+            assert p["label"].strip() and p["label"] != p["name"], (e["name"], p["name"])
+            if p["float"]:
+                assert p["step"] > 0, (e["name"], p["name"])
+            else:
+                assert "step" not in p, (e["name"], p["name"])
+
+
+def test_the_packs_metadata_reaches_the_catalog_verbatim():
+    entries = {e["name"]: e for e in catalog()}
+
+    def params(name):
+        return {p["name"]: p for p in entries[name]["params"]}
+
+    assert entries["sma"]["desc"] == "Arithmetic mean of adjusted close over N bars."
+    assert params("sma")["period"]["label"] == "Length"
+
+    assert entries["bbands"]["full"] == "Bollinger Bands"
+    assert entries["bbands"]["desc"] == "Mid = SMA(N); bands = mid ± k · population σ."
+    assert params("bbands")["period"]["label"] == "Length"
+    assert params("bbands")["k"]["label"] == "StdDev multiplier"
+    assert params("bbands")["k"]["step"] == 0.5
+
+    assert entries["macd"]["full"] == "MACD"
+    assert entries["macd"]["desc"] == "EMA(fast) − EMA(slow); signal is its EMA."
+    assert [(p["name"], p["label"]) for p in entries["macd"]["params"]] == [
+        ("fast", "Fast EMA"), ("slow", "Slow EMA"), ("signal", "Signal")]
+
+    assert entries["sar"]["full"] == "Parabolic SAR"
+    assert entries["sar"]["desc"] == "Wilder stop-and-reverse dots. Path-dependent."
+    assert params("sar")["acceleration"]["label"] == "Accel. step"
+    assert params("sar")["acceleration"]["step"] == 0.01
+    assert params("sar")["maximum"]["label"] == "Accel. max"
+    assert params("sar")["maximum"]["step"] == 0.01
 
 
 def test_resolve_rejects_a_style_that_is_not_a_mapping():
