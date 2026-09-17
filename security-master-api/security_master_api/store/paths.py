@@ -19,3 +19,14 @@ def split(relation: str) -> tuple[str, str]:
 def relation_path(settings: Settings, relation: str) -> str:
     layer, name = split(relation)
     return f"{settings.root}/{layer}__{name}"
+
+
+def physical_path(settings: Settings, relation: str) -> str:
+    """Declared relations live under root; `bronze.<library>.<symbol>` is an external table."""
+    if relation in RELATIONS:
+        return relation_path(settings, relation)
+    layer, _, rest = relation.partition(".")
+    library, _, symbol = rest.partition(".")
+    if layer == "bronze" and symbol and settings.delta_base and library in settings.external_libraries:
+        return f"{settings.delta_base}/{library}/{symbol}"
+    raise DomainError("QUERY_REJECTED", f"unknown relation: {relation}", {"relation": relation})

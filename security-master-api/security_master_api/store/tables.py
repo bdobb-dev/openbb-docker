@@ -13,7 +13,7 @@ from deltalake.exceptions import TableNotFoundError
 
 from security_master_api.config import Settings
 from security_master_api.errors import DomainError
-from security_master_api.store.paths import relation_path
+from security_master_api.store.paths import physical_path, relation_path
 from security_master_api.store.schemas import RELATIONS
 from security_master_api.temporal_fixture import _instant
 
@@ -41,7 +41,7 @@ def _coerce(rows: list[dict], schema: pa.Schema) -> pa.Table:
 
 
 def _open(settings: Settings, relation: str, version: int | None) -> DeltaTable:
-    path = relation_path(settings, relation)
+    path = physical_path(settings, relation)
     try:
         table = DeltaTable(path, storage_options=settings.storage_options or None)
     except TableNotFoundError as exc:
