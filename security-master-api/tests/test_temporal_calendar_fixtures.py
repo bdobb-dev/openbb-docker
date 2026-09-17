@@ -184,3 +184,19 @@ def test_dubai_event_provenance_and_stable_ids():
     assert events["dubai-t2-derived-branch-selection"]["source_kind"] == (
         "derived_calendar_resolution"
     )
+
+
+def test_loader_rejects_duplicate_event_id(tmp_path):
+    fixture = valid_fixture()
+    fixture["events"].append(deepcopy(fixture["events"][0]))
+
+    with pytest.raises(ValueError, match="duplicate event_id"):
+        load_temporal_fixture(write_fixture(tmp_path, fixture))
+
+
+def test_loader_rejects_evidence_known_after_its_state(tmp_path):
+    fixture = valid_fixture()
+    fixture["events"][0]["known_from"] = "2024-01-01T00:00:01Z"
+
+    with pytest.raises(ValueError, match="later than state known_from"):
+        load_temporal_fixture(write_fixture(tmp_path, fixture))

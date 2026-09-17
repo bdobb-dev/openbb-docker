@@ -217,4 +217,3 @@ git diff --check
 git add security-master-api
 git commit -m "test: add temporal holiday correction fixtures"
 ```
-

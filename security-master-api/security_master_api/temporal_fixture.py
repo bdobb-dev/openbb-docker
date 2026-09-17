@@ -73,7 +73,7 @@ def load_temporal_fixture(path: str | Path) -> dict[str, Any]:
     if not isinstance(states, list) or not states:
         raise ValueError("fixture expected_states must be non-empty")
 
-    event_ids: set[str] = set()
+    events_by_id: dict[str, dict[str, Any]] = {}
     for event in events:
         if not isinstance(event, dict):
             raise ValueError("event must be an object")
@@ -81,7 +81,10 @@ def load_temporal_fixture(path: str | Path) -> dict[str, Any]:
         date.fromisoformat(event["published_on"])
         _instant(event["known_from"])
         _validate_source_url(event["source_url"])
-        event_ids.add(event["event_id"])
+        event_id = event["event_id"]
+        if event_id in events_by_id:
+            raise ValueError(f"duplicate event_id: {event_id}")
+        events_by_id[event_id] = event
 
     previous: datetime | None = None
     for state in states:
@@ -93,8 +96,13 @@ def load_temporal_fixture(path: str | Path) -> dict[str, Any]:
             raise ValueError("state known_from timestamps must be strictly increasing")
         previous = known_from
         for event_id in state["evidence_event_ids"]:
-            if event_id not in event_ids:
+            event = events_by_id.get(event_id)
+            if event is None:
                 raise ValueError(f"state evidence references unknown event: {event_id}")
+            if _instant(event["known_from"]) > known_from:
+                raise ValueError(
+                    f"evidence event {event_id} is later than state known_from"
+                )
 
     return fixture
 
