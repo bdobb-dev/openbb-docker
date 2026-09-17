@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 from security_master_api.errors import DomainError
 from security_master_api.temporal_fixture import _instant
@@ -36,6 +36,18 @@ class Context:
 
 def _iso(value: datetime | None) -> str | None:
     return None if value is None else value.isoformat().replace("+00:00", "Z")
+
+
+def iso_utc(value):
+    """UTC ISO-8601 for a value read out of a query; anything else passes through.
+
+    DuckDB hands TIMESTAMPTZ back in the connection's own local zone, so the instant is
+    correct but the offset is not UTC. Normalizing here keeps every timestamp the API emits
+    on one wire format, whatever timezone the host happens to be in.
+    """
+    if isinstance(value, datetime):
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    return value.isoformat() if hasattr(value, "isoformat") else value
 
 
 def _when(raw: dict, key: str, required: bool) -> datetime | None:
