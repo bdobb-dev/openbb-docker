@@ -1,7 +1,17 @@
 # Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Delta Lake connection helpers shared by the provider and the OBBject accessor."""
+"""Delta Lake connection helpers shared by the provider and the OBBject accessor.
+
+`tick_lab.config.from_env` is a deliberate second implementation of the same
+DELTA_S3_* contract: tick-lab is standalone (deltalake/pyarrow/pandas/yfinance)
+and importing this module would pull openbb-core into a laptop CLI to share ~25
+lines of dictionary building. They must still produce IDENTICAL
+`storage_options` -- they point at one store, so a divergence means the laptop
+and the container authenticate differently against the same MinIO. Change one,
+change the other; `openbb-deltalake/tests/test_s3_options_contract.py` fails if
+you don't.
+"""
 
 import os
 from typing import Any
