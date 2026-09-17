@@ -33,6 +33,7 @@ from app.studies import parse_anchors, studies_for, window_start
 from app.symbol_meta import get_meta
 from app.ta.figure import delta as ta_delta
 from app.ta.macros import load_all as load_macros_all
+from app.ta.registry import catalog
 from app.ta.payload import (
     ChartParams,
     any_repaints,
@@ -282,6 +283,23 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
         else:
             spec.pop("subscriptions", None)
         return JSONResponse(spec)
+
+    # Built once: register() runs at import and nothing mutates REGISTRY
+    # afterwards, so the projection cannot change while the process lives --
+    # the same reason /widgets.json reads its file per request but this does
+    # not (the registry is code, not a file an operator edits).
+    _catalog = catalog()
+
+    @app.get("/ta_registry")
+    async def ta_registry() -> JSONResponse:
+        """The indicator catalog for the advanced chart's studies picker.
+
+        The registry is the single source of truth for what a study is: its
+        params and their defaults, which pane it belongs in, its guides, its
+        render hints and whether EODHD can serve it. A client that hardcoded
+        any of that would drift the first time an indicator changed here.
+        """
+        return JSONResponse(_catalog)
 
     @app.get("/live_grid")
     def live_grid(symbol: str = Query(default="")):

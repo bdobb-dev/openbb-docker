@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from app.main import create_app
+from app.ta.registry import REGISTRY
 
 
 def client():
@@ -279,3 +280,26 @@ def test_ta_series_ws_closes_on_an_unknown_macro():
     with pytest.raises(WebSocketDisconnect):
         with client().websocket_connect("/ta_series_ws?symbol=AAPL&macro=nope") as ws:
             ws.receive_json()
+
+
+def test_ta_registry_projects_every_indicator_but_volume():
+    resp = client().get("/ta_registry")
+    assert resp.status_code == 200
+    names = [e["name"] for e in resp.json()]
+    assert "sma" in names and "avwap" in names and "volume" not in names
+    assert len(names) == len(REGISTRY) - 1
+
+
+def test_ta_registry_entry_shape_for_bbands_and_avwap():
+    entries = {e["name"]: e for e in client().get("/ta_registry").json()}
+    bb = entries["bbands"]
+    assert bb["pane"] == "price" and bb["band"] is True and bb["render"] == "line"
+    assert [p["name"] for p in bb["params"]] == ["period", "k"]
+    assert bb["params"][1]["default"] == 2.0
+    assert bb["eodhd"]["function"] == "bbands" and "adjusted" in bb["eodhd"]["note"]
+    av = entries["avwap"]
+    assert av["params"][0] == {"name": "anchor", "default": None, "text": True}
+    assert av["eodhd"] is None
+    assert entries["sar"]["render"] == "dots"
+    assert entries["rsi"]["guides"] == [30, 70]
+    assert entries["pivots_standard"]["sessioned"] is True and entries["sma"]["sessioned"] is False

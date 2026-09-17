@@ -138,6 +138,34 @@ def col_suffix(req: Req) -> str:
     return "|" + ",".join(parts) if parts else ""
 
 
+def catalog() -> list[dict]:
+    """The registry as the widget's catalog (studies addendum §3): every
+    field a picker or an editor needs, none of the compute callables. The
+    frontend never hardcodes this; if the two disagree the registry wins
+    and the catalog is regenerated -- which this function is."""
+    out = []
+    for ind in REGISTRY.values():
+        if ind.name == "volume":            # raw bar data, not a study
+            continue
+        outputs = list(ind.render)
+        types = {r.get("type", "line") for r in ind.render.values()}
+        out.append({
+            "name": ind.name, "label": ind.label, "pane": ind.pane,
+            "price_basis": ind.price_basis, "convention": ind.convention,
+            "params": [{"name": k, "default": v, "text": v is None or isinstance(v, str)}
+                       for k, v in ind.params.items()],
+            "guides": list(ind.guides),
+            "band": any(o.endswith("_up") for o in outputs) and any(o.endswith("_lo") for o in outputs),
+            "render": "dots" if "scatter" in types else "bar" if "bar" in types else "line",
+            "colors": {o: r.get("color") for o, r in ind.render.items()},
+            # Sessioned studies render as steps (addendum §6): the client
+            # needs to know, and the registry is the only place that does.
+            "sessioned": ind.sessioned,
+            "eodhd": None if ind.eodhd is None else {"function": ind.eodhd.function, "note": ind.eodhd.note},
+        })
+    return out
+
+
 def _line(color: str | None = None) -> dict:
     return {"type": "line", "color": color}
 
