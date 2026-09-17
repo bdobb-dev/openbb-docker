@@ -464,11 +464,11 @@
    "kdb+"
   ]
  },
- "advanced_chart": {
+ "arts_charts": {
   "name": "Art's Charts — Live grid",
   "description": "Live grid: candles from the kdb+ tick cache with server-computed studies, drawing tools and anchored VWAP. Requires the stack on the same machine as the app.",
   "category": "Live",
-  "type": "advanced_chart",
+  "type": "arts_charts",
   "endpoint": "series",
   "wsEndpoint": "ta_series_ws",
   "gridData": {
@@ -575,11 +575,11 @@
    "kdb+"
   ]
  },
- "advanced_chart_eodhd": {
+ "arts_charts_eodhd": {
   "name": "Art's Charts — EODHD",
   "description": "EODHD: candles and studies both served by EODHD, with drawing tools. Requires the stack on the same machine as the app.",
   "category": "Live",
-  "type": "advanced_chart",
+  "type": "arts_charts",
   "endpoint": "series",
   "wsEndpoint": "ta_series_ws",
   "gridData": {
