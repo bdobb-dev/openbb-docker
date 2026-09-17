@@ -93,6 +93,32 @@ treated as failures.
   was touched. The deployment procedure below is documentation only, to be
   executed on the user's explicit go after 4 PM ET, per the plan.
 
+## Hosted CI after the PR
+
+PR #55's first hosted run failed `build-smoke`: the `openbb-local:ci` image
+built (the route assertion and the `api_app` factory import passed) but the
+`openbb-api` container exited within 15 s, before `/widgets.json` answered.
+Reproduced locally without Docker (uv venv, `openbb==4.7.2` under
+`extension-constraints.txt`, the same `openbb-api --app api_app.py --factory`
+launcher): the launcher calls `app.openapi()` at import, and with
+`from __future__ import annotations` in `router.py` the `market_calendar`
+return annotation was captured as the string `'OBBject[list[MarketCalendarData]]'`,
+which pydantic could not resolve (`class-not-fully-defined`).
+
+Fix, commit `649d4ec`: the future import is dropped (Python 3.12 unions are
+native) and the Dockerfile's build-time check now also builds the OpenAPI
+schema, so this class of failure fails the image build instead of the boot
+smoke. The new assertion was shown to fail on the old code and pass on the
+fix. Extension tests `13 passed, 1 skipped`, ruff and scrub clean; the
+launcher then served `/widgets.json` (401 without, 200 with Basic auth) with
+the three `/api/v1/reference/*` routes in `openapi.json`.
+
+Hosted run on `649d4ec`: `build-smoke`, `security-master-api`,
+`openbb-security-master`, `api-auth-guard`, `scrub` and every other job
+green except `mcp-stores` and `stores-explorer`, which fail on the base
+branch `release/v11.2.x` too (run 33851376928, an `mcp_stores` install step)
+and are not touched by this branch.
+
 ## Rulings
 
 Copied verbatim from `.superpowers/sdd/2026-09-17-security-master-browser/progress.md`:
