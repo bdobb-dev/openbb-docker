@@ -226,8 +226,10 @@ def test_extract_reads_fiscal_year_end_from_general(monkeypatch):
         }},
     }
     monkeypatch.setattr(F, "_fetch_sync", lambda s, c: bundle)
-    monkeypatch.setattr(F, "_l2_get", lambda sym: None)
-    monkeypatch.setattr(F, "_l2_put", lambda sym, b: None)
+    # No _l2_get/_l2_put stubs here, unlike the line this fix was written on:
+    # the persistent L2 tier is episode 10's, and `_fundamentals` at this
+    # episode has no second cache level to stub. The in-process cache that
+    # _reset_cache_for_tests() clears is the only one.
     q = EODHDIncomeStatementQueryParams(symbol="AAPL", period="quarter")
     rows = asyncio.run(EODHDIncomeStatementFetcher.aextract_data(q, {"eodhd_api_key": "k"}))
     assert (rows[0]["fiscal_year"], rows[0]["fiscal_period"]) == (2026, "Q3")
