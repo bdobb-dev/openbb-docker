@@ -114,6 +114,13 @@ def resolve(name: str, source: str | None = None, **overrides: Any) -> Req:
     an override, and never reaches `params`.
     """
     ind = get(name)
+    # Validated HERE and not only in parse_indicators: the macro loader calls
+    # resolve(name, **spec) straight from YAML, so a `source:` key in a macro
+    # binds this argument without ever passing the query-string parser. An
+    # unchecked value would reach col_suffix and name a column after a source
+    # that does not exist.
+    if source not in (None, "local", "eodhd"):
+        raise ValueError(f"source must be 'local' or 'eodhd', got {source!r}")
     style = overrides.pop("style", None)
     if style is not None and not isinstance(style, dict):
         raise ValueError(f"style must be a mapping, got {style!r}")
@@ -132,9 +139,19 @@ def col_suffix(req: Req) -> str:
     Columns were named per indicator while requests dedup per (indicator,
     params), so two periods of one indicator collapsed onto a single column
     and the second was silently dropped as a duplicate.
+
+    An EXPLICIT source is part of that signature for the same reason
+    (v12.3.0): request identity now includes it, so `sma:period=50:source=eodhd`
+    and `sma:period=50` are two requests -- and without the suffix they are
+    one column. The vendor's join would then land in `sma|period=50_right`,
+    which nothing reads, and the eodhd-labelled series would ship the local
+    numbers. A request that names NO source keeps the historic column name
+    exactly, so nothing already on the wire moves.
     """
     parts = [f"{k}={v}" for k, v in sorted(req.params.items())
              if k != "style" and v is not None]
+    if req.source is not None:
+        parts.append(f"source={req.source}")
     return "|" + ",".join(parts) if parts else ""
 
 

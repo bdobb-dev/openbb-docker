@@ -33,7 +33,6 @@ from app.studies import parse_anchors, studies_for, window_start
 from app.symbol_meta import get_meta
 from app.ta.figure import delta as ta_delta
 from app.ta.macros import load_all as load_macros_all
-from app.ta.registry import catalog
 from app.ta.payload import (
     ChartParams,
     any_repaints,
@@ -43,6 +42,7 @@ from app.ta.payload import (
     revised_from,
     with_anchor,
 )
+from app.ta.registry import catalog
 from app.ta.series_payload import build_series_payload, series_delta
 from app.ta.sources import EodhdSource
 

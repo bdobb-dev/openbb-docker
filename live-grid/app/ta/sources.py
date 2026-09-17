@@ -45,7 +45,7 @@ class Result:
     calls: int = 0
 
 
-def _columns(req: Req) -> list[str]:
+def columns_of(req: Req) -> list[str]:
     """The frame columns this request produces, suffixed per its parameters."""
     suffix = col_suffix(req)
     return [c + suffix for c in get(req.name).render]
@@ -108,7 +108,7 @@ class EodhdSource:
         if interval != "1d":
             return Result(compute(df, reqs), [
                 Annotation(col, "local", "EODHD has no intraday data")
-                for r in reqs for col in _columns(r)
+                for r in reqs for col in columns_of(r)
             ])
 
         mapped = [r for r in reqs if get(r.name).eodhd is not None]
@@ -116,7 +116,7 @@ class EodhdSource:
 
         annotations = [
             Annotation(col, "local", f"{r.name} has no EODHD equivalent")
-            for r in unmapped for col in _columns(r)
+            for r in unmapped for col in columns_of(r)
         ]
         frame = compute(df, unmapped) if unmapped else df
         calls = 0
@@ -134,7 +134,7 @@ class EodhdSource:
                 # A recent ATTEMPT failed and the floor has not elapsed.
                 annotations.extend(
                     Annotation(col, "local", "EODHD refetch throttled")
-                    for col in _columns(req)
+                    for col in columns_of(req)
                 )
                 fetched.append((req, None))
                 continue
@@ -155,7 +155,7 @@ class EodhdSource:
                 log.warning("eodhd %s failed for %s: %s", req.name, symbol, exc)
                 annotations.extend(
                     Annotation(col, "local", f"EODHD fetch failed: {exc}")
-                    for col in _columns(req)
+                    for col in columns_of(req)
                 )
                 fetched.append((req, None))
 
@@ -173,7 +173,7 @@ class EodhdSource:
                 frame = compute(frame, [req])
                 annotations.extend(
                     Annotation(col, "local", f"EODHD response unusable: {exc}")
-                    for col in _columns(req)
+                    for col in columns_of(req)
                 )
                 continue
             annotations.extend(

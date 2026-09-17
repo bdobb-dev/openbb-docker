@@ -19,7 +19,7 @@ from app.ta.figure import build_ta_figure
 from app.ta.macros import load_all
 from app.ta.panes import Pane, all_reqs, assign
 from app.ta.registry import Req, resolve
-from app.ta.sources import Annotation, LocalSource, _columns
+from app.ta.sources import Annotation, LocalSource, columns_of
 
 _NUMERIC = ("period", "k", "d", "fast", "slow", "signal", "smooth_k",
             "stoch_period", "atr_period", "mult", "acceleration", "maximum",
@@ -208,7 +208,7 @@ async def build_payload(
         # an intraday request is answered.
         computed = LocalSource().series(computed, vendor).frame
         annotations = [Annotation(col, "local", "no EODHD source configured")
-                       for r in vendor for col in _columns(r)]
+                       for r in vendor for col in columns_of(r)]
 
     figure = build_ta_figure(
         params.symbol, computed, panes, annotations, chart_subtitle(params)

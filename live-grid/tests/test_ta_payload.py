@@ -224,3 +224,46 @@ def test_series_payload_carries_the_request_and_the_served_source():
     rsi_col = next(c for c in series if c.startswith("rsi|"))
     assert series[rsi_col]["req"]["source"] is None
     assert series[rsi_col]["render"]["source"] == "local"
+
+
+async def test_two_sources_of_one_indicator_land_in_two_columns():
+    """Distinct requests must be distinct COLUMNS, or the vendor's join lands
+    in `<col>_right`, nothing reads it, and the eodhd-labelled series ships
+    the locally computed numbers under the vendor's name."""
+    from app.ta.series_payload import build_series_payload
+    from app.ta.sources import EodhdSource
+
+    async def fake_fetch(query):
+        return [{"date": "2024-10-25", "sma": 999.0},
+                {"date": "2024-10-26", "sma": 999.0}]
+
+    params = ChartParams(symbol="AAPL", interval="1d", source="local",
+                         indicators="sma:period=50:source=eodhd,sma:period=50")
+    _, panes, frame, annotations = await build_payload(
+        params, fixture_frame(),
+        eodhd_source=EodhdSource(api_key="k", fetch=fake_fetch),
+    )
+    columns = [s.column for p in panes for s in p.series]
+    assert columns == ["sma|period=50,source=eodhd", "sma|period=50"]
+    assert all(c in frame.columns for c in columns)
+    assert not any(c.endswith("_right") for c in frame.columns)
+    assert annotations == []
+
+    vendor = frame["sma|period=50,source=eodhd"][-1]
+    local = frame["sma|period=50"][-1]
+    assert vendor == 999.0
+    assert local is not None and local != 999.0
+
+    payload = build_series_payload(frame, panes, "AAPL")
+    series = {s["column"]: s for p in payload["panes"] for s in p["series"]}
+    assert series["sma|period=50,source=eodhd"]["render"]["source"] == "eodhd"
+    assert series["sma|period=50"]["render"]["source"] == "local"
+
+
+def test_a_source_less_request_keeps_its_historic_column_name():
+    """The suffix is appended only for an EXPLICIT source, so every chart and
+    every saved dashboard that names no source keeps the column it had."""
+    from app.ta.registry import col_suffix
+
+    (plain,) = parse_indicators("sma:period=50")
+    assert col_suffix(plain) == "|period=50"
