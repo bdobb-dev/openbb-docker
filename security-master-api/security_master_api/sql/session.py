@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 
 import duckdb
 import pyarrow as pa
@@ -13,17 +13,18 @@ import pyarrow as pa
 from security_master_api.config import Settings
 from security_master_api.errors import DomainError
 from security_master_api.resolver.context import Context
+from security_master_api.resolver.views import gold_sql
 from security_master_api.sql.policy import validate_sql
 from security_master_api.store.tables import dataset
 
 
 class QuerySession:
     def __init__(self, settings: Settings, ctx: Context, manifest: Mapping[str, int],
-                 view_sql: Mapping[str, str] | None = None):
+                 view_sql: Mapping[str, str] | None = None, views: Iterable[str] = ()):
         self.settings = settings
         self.ctx = ctx
         self.manifest = dict(manifest)
-        self.view_sql = dict(view_sql or {})
+        self.view_sql = {**{n: gold_sql(n, ctx) for n in views}, **dict(view_sql or {})}
         self.allowed: set[str] = set(self.manifest) | {f"gold.{n}" for n in self.view_sql}
         self.con: duckdb.DuckDBPyConnection | None = None
         self._cancelled = threading.Event()
@@ -116,3 +117,13 @@ class QuerySession:
             self._cancelled.clear()
             raise DomainError("QUERY_CANCELLED", "the query was cancelled")
         return result
+
+
+def open_session(settings: Settings, ctx: Context, relations: Iterable[str]) -> QuerySession:
+    """An entered session holding every requested Gold view and its pinned dependencies."""
+    from security_master_api.resolver.manifest import resolve_manifest
+
+    wanted = list(relations)
+    views = tuple(r.split(".", 1)[1] for r in wanted if r.startswith("gold."))
+    manifest = resolve_manifest(settings, ctx, wanted)
+    return QuerySession(settings, ctx, manifest, views=views).__enter__()
