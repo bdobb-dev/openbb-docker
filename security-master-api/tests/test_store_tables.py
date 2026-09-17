@@ -1,5 +1,7 @@
 # Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
+from datetime import UTC, datetime
+
 import pytest
 
 from security_master_api.config import Settings
@@ -8,6 +10,14 @@ from security_master_api.store.schemas import INTERVAL_FIELDS, RELATIONS
 from security_master_api.store.tables import (
     append, dataset, ensure, history, latest_version, open_table, relation_path,
 )
+
+_ISSUER_ROW = {
+    "issuer_id": "iss_1", "name": "Example", "effective_from": "2020-01-01T00:00:00Z",
+    "effective_to": None, "observed_at": "2020-01-02T00:00:00Z",
+    "available_at": "2020-01-02T00:00:00Z", "system_from": "2020-01-02T00:00:00Z",
+    "system_to": None, "capture_id": "cap_1", "assertion_id": "as_1",
+    "assertion_status": "current", "supersedes_assertion_id": None,
+}
 
 
 @pytest.fixture
@@ -67,3 +77,24 @@ def test_append_rejects_unknown_columns(settings):
     ensure(settings, "silver.issuers")
     with pytest.raises(ValueError, match="unknown column"):
         append(settings, "silver.issuers", [{"issuer_id": "x", "bogus": 1}])
+
+
+def test_append_unknown_relation_is_rejected(settings):
+    with pytest.raises(DomainError) as exc:
+        append(settings, "silver.nope", [{"issuer_id": "x"}])
+    assert exc.value.code == "QUERY_REJECTED"
+
+
+def test_latest_version_unknown_relation_is_rejected(settings):
+    with pytest.raises(DomainError) as exc:
+        latest_version(settings, "silver.nope")
+    assert exc.value.code == "QUERY_REJECTED"
+
+
+def test_history_timestamp_is_utc_and_recent(settings):
+    ensure(settings, "silver.issuers")
+    append(settings, "silver.issuers", [_ISSUER_ROW])
+    ts = history(settings, "silver.issuers")[0]["timestamp"]
+    assert ts.endswith("Z")
+    parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    assert abs((datetime.now(UTC) - parsed).total_seconds()) < 60

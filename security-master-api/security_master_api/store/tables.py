@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
 import pyarrow as pa
 import pyarrow.dataset as pads
@@ -59,8 +59,10 @@ def _open(settings: Settings, relation: str, version: int | None) -> DeltaTable:
 def latest_version(settings: Settings, relation: str) -> int | None:
     try:
         return _open(settings, relation, None).version()
-    except DomainError:
-        return None
+    except DomainError as exc:
+        if exc.code == "NO_LOCAL_EVIDENCE":
+            return None
+        raise
 
 
 def ensure(settings: Settings, relation: str) -> None:
@@ -73,8 +75,8 @@ def ensure(settings: Settings, relation: str) -> None:
 
 
 def append(settings: Settings, relation: str, rows: list[dict]) -> int:
-    schema = RELATIONS[relation]
     ensure(settings, relation)
+    schema = RELATIONS[relation]
     write_deltalake(relation_path(settings, relation), _coerce(rows, schema), mode="append",
                     storage_options=settings.storage_options or None)
     return _open(settings, relation, None).version()
@@ -93,7 +95,7 @@ def history(settings: Settings, relation: str) -> list[dict]:
     for entry in _open(settings, relation, None).history():
         ts = entry.get("timestamp")
         if isinstance(ts, int):
-            ts = datetime.fromtimestamp(ts / 1000, tz=None).isoformat(timespec="seconds") + "Z"
+            ts = datetime.fromtimestamp(ts / 1000, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         out.append({"version": int(entry["version"]), "timestamp": str(ts)})
     out.sort(key=lambda h: h["version"], reverse=True)
     return out
