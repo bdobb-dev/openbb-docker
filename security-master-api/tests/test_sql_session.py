@@ -93,6 +93,40 @@ def test_params_bind_by_name_and_position(settings):
         assert by_pos.to_pylist()[0]["n"] >= 1
 
 
+def test_cancel_before_run_is_not_lost_and_does_not_mislabel_a_later_timeout(settings):
+    ctx = parse_context(None)
+    manifest = resolve_manifest(settings, ctx, ["silver.listings"])
+    with QuerySession(settings, ctx, manifest) as s:
+        s.cancel()
+        started = time.monotonic()
+        with pytest.raises(DomainError) as exc:
+            s.run(SLOW, timeout_ms=10_000)
+        elapsed = time.monotonic() - started
+        assert exc.value.code == "QUERY_CANCELLED"
+        assert elapsed < 0.5, f"cancel-before-run should not wait out the budget, took {elapsed}s"
+
+        # The cancel was consumed above; a fresh timeout on the same session must not inherit it.
+        with pytest.raises(DomainError) as exc:
+            s.run(SLOW, timeout_ms=300)
+        assert exc.value.code == "QUERY_BUDGET_EXCEEDED"
+
+
+def test_bind_error_is_query_rejected_for_run_and_describe(settings):
+    ctx = parse_context(None)
+    with QuerySession(settings, ctx, resolve_manifest(settings, ctx, ["silver.listings"])) as s:
+        with pytest.raises(DomainError) as exc:
+            s.run("SELECT no_such_column FROM silver.listings")
+        assert exc.value.code == "QUERY_REJECTED"
+        assert exc.value.message == "the statement could not be bound"
+        assert exc.value.details["duckdb"]
+
+        with pytest.raises(DomainError) as exc:
+            s.describe("SELECT no_such_column FROM silver.listings")
+        assert exc.value.code == "QUERY_REJECTED"
+        assert exc.value.message == "the statement could not be bound"
+        assert exc.value.details["duckdb"]
+
+
 def test_an_external_delta_table_is_reachable_by_manifest(tmp_path):
     bucket = tmp_path / "bucket"
     write_deltalake(str(bucket / "openbb" / "AAPL"),

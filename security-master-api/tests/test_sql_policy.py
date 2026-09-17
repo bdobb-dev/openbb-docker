@@ -83,3 +83,19 @@ def test_the_walk_reaches_subqueries_and_modifiers(con, sql):
     with pytest.raises(DomainError) as exc:
         validate_sql(con, sql, ALLOWED)
     assert exc.value.code == "QUERY_REJECTED"
+
+
+def test_window_call_with_a_disallowed_function_is_rejected(con):
+    with pytest.raises(DomainError) as exc:
+        validate_sql(con, "SELECT histogram(symbol) OVER () AS h FROM silver.listings", ALLOWED)
+    assert exc.value.code == "QUERY_REJECTED"
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT row_number() OVER (ORDER BY symbol) AS r FROM silver.listings",
+    "SELECT lag(symbol) OVER (ORDER BY symbol) AS r FROM silver.listings",
+    "SELECT sum(1) OVER () AS r FROM silver.listings",
+])
+def test_allowed_window_calls_pass(con, sql):
+    info = validate_sql(con, sql, ALLOWED)
+    assert info.relations == ["silver.listings"]

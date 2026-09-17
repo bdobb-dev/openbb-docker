@@ -46,6 +46,24 @@ ALLOWED_FUNCTIONS = frozenset({
 
 SELECT_NODES = {"SELECT_NODE", "SET_OPERATION_NODE", "RECURSIVE_CTE_NODE", "CTE_NODE"}
 
+# Window calls serialize with class "WINDOW", not "FUNCTION" - a separate node kind that the
+# function allow-list must also see. Verified against duckdb 1.5.5: every built-in window type
+# (WINDOW_ROW_NUMBER, WINDOW_RANK, ...) already carries its own "function_name", but the spelling
+# is not guaranteed across versions, so a type-name fallback covers a future build that omits it.
+WINDOW_TYPE_FUNCTION_NAMES = {
+    "WINDOW_ROW_NUMBER": "row_number",
+    "WINDOW_RANK": "rank",
+    "WINDOW_RANK_DENSE": "dense_rank",
+    "WINDOW_PERCENT_RANK": "percent_rank",
+    "WINDOW_CUME_DIST": "cume_dist",
+    "WINDOW_NTILE": "ntile",
+    "WINDOW_LEAD": "lead",
+    "WINDOW_LAG": "lag",
+    "WINDOW_FIRST_VALUE": "first_value",
+    "WINDOW_LAST_VALUE": "last_value",
+    "WINDOW_NTH_VALUE": "nth_value",
+}
+
 
 @dataclass
 class PlanInfo:
@@ -78,8 +96,15 @@ def _walk(node, info: PlanInfo, cte_names: set[str]) -> None:
         table = node.get("table_name") or ""
         if schema or table not in cte_names:
             info.relations.append(f"{schema}.{table}" if schema else table)
-    if node.get("class") == "FUNCTION":
-        info.functions.append(str(node.get("function_name", "")).lower())
+    # "FUNCTION" covers scalar/aggregate calls; "WINDOW" covers the same calls used with an
+    # OVER (...) clause, which DuckDB serializes as a distinct node kind - the allow-list must
+    # see both, or e.g. `histogram(x) OVER ()` bypasses it entirely.
+    if node.get("class") in ("FUNCTION", "WINDOW"):
+        name = str(node.get("function_name") or "").lower()
+        if not name:
+            name = WINDOW_TYPE_FUNCTION_NAMES.get(node_type, "")
+        if name:
+            info.functions.append(name)
     for value in node.values():
         _walk(value, info, cte_names)
 

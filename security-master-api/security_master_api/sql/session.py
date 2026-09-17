@@ -61,25 +61,58 @@ class QuerySession:
             self.con.interrupt()
 
     def describe(self, sql: str) -> list[dict]:
+        assert self.con is not None, "session not entered"
         validate_sql(self.con, sql, self.allowed)
-        rows = self.con.execute(f"DESCRIBE {sql}").fetchall()
+        try:
+            rows = self.con.execute(f"DESCRIBE {sql}").fetchall()
+        except duckdb.Error as exc:
+            raise DomainError("QUERY_REJECTED", "the statement could not be bound",
+                              {"duckdb": str(exc)[:300]}) from exc
         return [{"name": r[0], "dtype": r[1]} for r in rows]
 
     def run(self, sql: str, params: list | dict | None = None, timeout_ms: int | None = None,
             allow_explain: bool = False) -> pa.Table:
         assert self.con is not None, "session not entered"
         validate_sql(self.con, sql, self.allowed, allow_explain=allow_explain)
+        # A cancel() that lands before this run starts must not be lost: interrupt() on an idle
+        # connection does not affect the *next* execute (verified against duckdb 1.5.5 - the query
+        # runs to completion), so it has to be caught here instead, before execute is ever called.
+        # Consuming it (producing this QUERY_CANCELLED) clears the flag so it cannot also mislabel
+        # a later, unrelated timeout on the same session.
+        if self._cancelled.is_set():
+            self._cancelled.clear()
+            raise DomainError("QUERY_CANCELLED", "the query was cancelled")
         budget = (timeout_ms or self.settings.timeout_ms) / 1000
-        timer = threading.Timer(budget, self.con.interrupt)
+        timed_out = threading.Event()
+
+        def _interrupt():
+            timed_out.set()
+            self.con.interrupt()
+
+        timer = threading.Timer(budget, _interrupt)
         timer.start()
         try:
-            return self.con.execute(sql, params if params is not None else []).to_arrow_table()
+            result = self.con.execute(sql, params if params is not None else []).to_arrow_table()
         except duckdb.InterruptException as exc:
+            # Which flag fired decides the code: a cancel() that raced in during execute() takes
+            # priority over the timer, since cancel() is an explicit request and the timer firing
+            # a moment later is incidental.
             if self._cancelled.is_set():
+                self._cancelled.clear()
                 raise DomainError("QUERY_CANCELLED", "the query was cancelled") from exc
             raise DomainError("QUERY_BUDGET_EXCEEDED", f"the query exceeded {budget:.1f}s",
                               {"timeout_ms": int(budget * 1000)}) from exc
         except duckdb.OutOfMemoryException as exc:
             raise DomainError("QUERY_BUDGET_EXCEEDED", "the query exceeded the memory budget") from exc
+        except duckdb.Error as exc:
+            raise DomainError("QUERY_REJECTED", "the statement could not be bound",
+                              {"duckdb": str(exc)[:300]}) from exc
         finally:
             timer.cancel()
+        # A cancel() that raced in just as execute() returned successfully (interrupt() arrived
+        # too late to stop it) still gets reported as cancelled, and consuming it here keeps a
+        # later timeout on this session from being mislabeled the same way.
+        if self._cancelled.is_set():
+            self._cancelled.clear()
+            raise DomainError("QUERY_CANCELLED", "the query was cancelled")
+        return result
