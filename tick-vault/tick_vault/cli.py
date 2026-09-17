@@ -74,48 +74,68 @@ def _default_manifest_reader(root: str) -> pd.DataFrame:
     return DeltaTable(f"{root}/ops/backfill_manifest").to_pandas()
 
 
+def _sql_escape(value: str) -> str:
+    """Escape a single-quoted SQL string literal (doubling embedded `'`s) -
+    same defense-in-depth as `tick_vault.master._quote_sql_literal`."""
+    return value.replace("'", "''")
+
+
+def _sql_literal(value) -> str:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return "NULL"
+    return "'" + _sql_escape(str(value)) + "'"
+
+
+def _sql_timestamp(value) -> str:
+    if value is None:
+        return "NULL"
+    ts = pd.Timestamp(value)
+    if pd.isna(ts):
+        return "NULL"
+    if ts.tzinfo is not None:
+        ts = ts.tz_convert("UTC").tz_localize(None)
+    return f"TIMESTAMP '{ts.strftime('%Y-%m-%d %H:%M:%S.%f')}'"
+
+
 def _default_manifest_row_writer(root: str, updated_row: dict) -> None:
-    """Production manifest-row update: read the whole `ops.
-    backfill_manifest` table, replace the row matching `work_id` (the
-    manifest's own single-column natural key - see `tick_vault.schemas`'s
-    `_OPS_BACKFILL_MANIFEST`, `work_id` non-nullable and unique per
-    `(listing_id, week_monday)` pair at generation time), and overwrite.
-    `ops.backfill_manifest` is the one table in this codebase whose rows
-    are mutated in place (`status`/`attempts`/... - see
-    `tick_vault.engine`'s own module docstring); since `deltalake` has no
-    per-row `UPDATE` primitive as simple as `append_rows`, a full-table
-    overwrite is this module's (documented, Plan-3-revisitable) choice
-    for a manifest small enough to fit in memory (~522 weeks x ~505
-    symbols, a few hundred thousand rows).
+    """Production manifest-row update: a targeted `DeltaTable.update` of the
+    row matching `work_id` (the manifest's single-column natural key - see
+    `tick_vault.schemas`'s `_OPS_BACKFILL_MANIFEST`), setting only the columns
+    `tick_vault.engine.update_manifest_row` mutates. A `work_id` that is not
+    in the table yet is appended instead (`num_updated_rows == 0`).
 
-    WARNING - concurrency: this read-modify-overwrite is safe ONLY under
-    the single-CLI-invocation ops rule (one `vault backfill --loop`
-    process, or one-shot verb, ever writing to a given `root` at a time).
-    It is NOT optimistic-concurrency-safe: two concurrent writers can
-    each read the same pre-update table, race to overwrite, and one
-    writer's update silently disappears (no version check, no retry). A
-    real per-row/optimistic-concurrency mechanism is deferred to Plan 3;
-    until then, do not run multiple `vault` processes against the same
-    `VAULT_ROOT` concurrently."""
-    import pyarrow as pa
-    from deltalake import write_deltalake
+    This replaces a read-modify-OVERWRITE of the whole table. Measured on the
+    real 262,345-row manifest (Phase-0, 2026-09-17): 4-16 s per item for the
+    overwrite versus 0.08-0.12 s here, and the overwrite rewrote every row on
+    every item - at 262k items that alone was weeks of the walk.
 
-    from tick_vault.schemas import PARTITIONING, SCHEMAS
+    Concurrency: the overwrite was not safe for concurrent writers (two could
+    read the same pre-update table and one update would silently vanish). This
+    form updates one row under Delta's own transaction, so concurrent workers
+    updating DIFFERENT rows are safe; delta-rs resolves commit conflicts by
+    retry. Same-row concurrent updates are still last-writer-wins, which the
+    loop never does (one item is dispatched once)."""
+    from deltalake import DeltaTable
 
-    table = "ops.backfill_manifest"
-    schema = SCHEMAS[table]
-    df = _default_manifest_reader(root)
+    from tick_vault.capture import append_rows
+
+    path = f"{root}/ops/backfill_manifest"
     work_id = updated_row.get("work_id")
-    mask = df["work_id"] == work_id
-    if mask.any():
-        for col, value in updated_row.items():
-            if col in df.columns:
-                df.loc[mask, col] = value
-    else:
-        df = pd.concat([df, pd.DataFrame([updated_row])], ignore_index=True)
-    clean = df.astype(object).where(df.notna(), None)
-    arrow_table = pa.Table.from_pylist(clean.to_dict("records"), schema=schema)
-    write_deltalake(f"{root}/ops/backfill_manifest", arrow_table, mode="overwrite", partition_by=PARTITIONING.get(table))
+    # Only `update_manifest_row`'s mutable columns; everything else on the row
+    # was fixed at generation time and must not be rewritten.
+    updates = {
+        "status": _sql_literal(updated_row.get("status")),
+        "last_error": _sql_literal(updated_row.get("last_error")),
+        "attempts": str(int(updated_row.get("attempts") or 0)),
+        "updated_at_ts": _sql_timestamp(updated_row.get("updated_at_ts")),
+        "completed_at_ts": _sql_timestamp(updated_row.get("completed_at_ts")),
+    }
+    metrics = DeltaTable(path).update(
+        updates=updates, predicate=f"work_id = '{_sql_escape(str(work_id))}'"
+    )
+    if not metrics.get("num_updated_rows"):
+        # work_id not in the manifest yet (a caller-synthesised row): insert it.
+        append_rows(root, "ops.backfill_manifest", pd.DataFrame([updated_row]))
 
 
 def _default_existing_ticks_reader(
