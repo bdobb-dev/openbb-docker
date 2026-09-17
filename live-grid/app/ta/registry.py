@@ -169,7 +169,13 @@ def catalog() -> list[dict]:
         out.append({
             "name": ind.name, "label": ind.label, "pane": ind.pane,
             "price_basis": ind.price_basis, "convention": ind.convention,
-            "params": [{"name": k, "default": v, "text": v is None or isinstance(v, str)}
+            # "float" travels alongside the value: the client re-renders an
+            # expression as text and must print a float default with its
+            # trailing `.0` (BBANDS(20, 2.0), studies addendum S2.4), but a
+            # JSON number loses the int/float distinction crossing into JS
+            # (2.0 and 2 both decode to `2`) -- so the registry says it here.
+            "params": [{"name": k, "default": v, "text": v is None or isinstance(v, str),
+                        "float": isinstance(v, float)}
                        for k, v in ind.params.items()],
             "guides": list(ind.guides),
             "band": any(o.endswith("_up") for o in outputs) and any(o.endswith("_lo") for o in outputs),

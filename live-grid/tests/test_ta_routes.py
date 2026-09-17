@@ -295,10 +295,11 @@ def test_ta_registry_entry_shape_for_bbands_and_avwap():
     bb = entries["bbands"]
     assert bb["pane"] == "price" and bb["band"] is True and bb["render"] == "line"
     assert [p["name"] for p in bb["params"]] == ["period", "k"]
-    assert bb["params"][1]["default"] == 2.0
+    assert bb["params"][0] == {"name": "period", "default": 20, "text": False, "float": False}
+    assert bb["params"][1] == {"name": "k", "default": 2.0, "text": False, "float": True}
     assert bb["eodhd"]["function"] == "bbands" and "adjusted" in bb["eodhd"]["note"]
     av = entries["avwap"]
-    assert av["params"][0] == {"name": "anchor", "default": None, "text": True}
+    assert av["params"][0] == {"name": "anchor", "default": None, "text": True, "float": False}
     assert av["eodhd"] is None
     assert entries["sar"]["render"] == "dots"
     assert entries["rsi"]["guides"] == [30, 70]
