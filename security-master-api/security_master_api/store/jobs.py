@@ -91,9 +91,18 @@ def by_fingerprint(settings: Settings, fingerprint: str) -> dict | None:
     return None
 
 
-def queued(settings: Settings) -> list[dict]:
+def in_state(settings: Settings, state: str) -> list[dict]:
+    """Every job whose latest event puts it in `state`, oldest first.
+
+    Ordered by creation, not by discovery: two workers scanning at once must agree on which
+    job is next, or they would pull in different orders and fight over the same claims.
+    """
     out = [job(settings, row["job_id"]) for row in _jobs_table(settings, "TRUE", [])]
-    return sorted((j for j in out if j["state"] == "queued"), key=lambda j: j["created_at"])
+    return sorted((j for j in out if j["state"] == state), key=lambda j: j["created_at"])
+
+
+def queued(settings: Settings) -> list[dict]:
+    return in_state(settings, "queued")
 
 
 def create_job(settings: Settings, kind: str, request: dict, fingerprint: str,
