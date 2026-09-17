@@ -9,6 +9,7 @@ from security_master_api.errors import DomainError
 from security_master_api.resolver.context import parse_context
 from security_master_api.resolver.odp import model, project, registry
 from security_master_api.store.seed import golden_fixtures, seed
+from security_master_api.store.tables import append
 
 # The golden fixtures name the resolver operation, not the ODP model that serves it:
 # `resolve` is what ReferenceResolve projects, and `lineage` has no ODP model at all.
@@ -99,8 +100,6 @@ def test_equity_search_matches_symbol_and_name(settings):
 
 
 def test_include_closed_drops_closed_sessions(settings):
-    # current_corrected, not known_at: under known_at a range whose every session is closed
-    # empties the projection, and an empty known_at result is NO_LOCAL_EVIDENCE by design.
     ctx = parse_context(None)
     params = {"calendar_id": "cal_tadawul", "start_date": "2027-03-01", "end_date": "2027-03-31"}
     closed = project(settings, ctx, "MarketCalendar", {**params, "include_closed": True}, "req")
@@ -132,3 +131,161 @@ def test_reference_security_binds_a_candidate_without_a_listing(settings):
     ctx = parse_context({"mode": "effective_on", "effective_at": "2026-06-30T00:00:00Z"})
     assert project(settings, ctx, "ReferenceSecurity", {"identifier": "000111AA1"},
                    "req")["results"] == []
+
+
+def test_receipt_names_the_identity_relations_it_read(settings):
+    # gold.odp_equity_info depends on listings, issuers and fundamental_facts; the identifier
+    # behind `symbol` is resolved out of a different set of relations, and the receipt is only
+    # honest about what the answer depended on if it names those too.
+    out = project(settings, parse_context(None), "EquityInfo", {"symbol": "EXMP"}, "req")
+    deps = {d["relation"] for d in out["receipt"]["dependencies"]}
+    assert {"silver.identifiers", "silver.securities", "silver.instruments"} <= deps
+    assert "silver.fundamental_facts" in deps
+
+
+def _dual_row(suffix: str) -> dict:
+    return {
+        "identifier_type": "ticker", "identifier": "DUAL",
+        "listing_id": f"lst_dual_{suffix}", "instrument_id": f"ins_dual_{suffix}",
+        "security_id": f"sec_dual_{suffix}", "issuer_id": f"iss_dual_{suffix}",
+        "effective_from": "2020-01-01T00:00:00Z", "effective_to": None,
+        "observed_at": "2020-01-01T00:00:00Z", "available_at": "2020-01-01T00:00:00Z",
+        "system_from": "2020-01-01T00:00:00Z", "system_to": None,
+        "capture_id": "cap_cusip_1", "assertion_id": f"as_id_dual_{suffix}",
+        "assertion_status": "current", "supersedes_assertion_id": None,
+    }
+
+
+def test_two_candidates_refuse_to_bind_one(settings):
+    # `resolve` tolerates two candidates under an effective_at, since the date might have told
+    # them apart and did not. A projection has to pick one listing to filter on, and picking
+    # the first would answer a question the caller never asked. EquityInfo is the model used
+    # here because it is the one that both resolves an identifier and serves effective_on.
+    append(settings, "silver.identifiers", [_dual_row("a"), _dual_row("b")])
+    ctx = parse_context({"mode": "effective_on", "effective_at": "2026-01-01T00:00:00Z"})
+    with pytest.raises(DomainError) as exc:
+        project(settings, ctx, "EquityInfo", {"symbol": "DUAL"}, "req")
+    assert exc.value.code == "IDENTITY_AMBIGUOUS"
+    assert len(exc.value.details["candidates"]) == 2
+
+
+def test_a_filter_that_empties_a_known_at_result_is_not_a_404(settings):
+    # Every Tadawul session in March 2027 is closed, so `include_closed` false empties the
+    # projection. The store knew the calendar perfectly well: the answer is an empty list.
+    ctx = parse_context({"mode": "known_at", "known_at": "2027-03-10T08:00:00Z"})
+    params = {"calendar_id": "cal_tadawul", "start_date": "2027-03-01", "end_date": "2027-03-31"}
+    assert project(settings, ctx, "MarketCalendar", params, "req")["results"] == []
+    assert project(settings, ctx, "MarketCalendar", {**params, "include_closed": True},
+                   "req")["results"]
+
+
+def test_an_identifier_the_store_never_held_stays_unresolved(settings):
+    # The known_at translation is for identifiers the store knows today but not at the cutoff.
+    # A ticker it has never held is a typo, and saying NO_LOCAL_EVIDENCE would blame the clock.
+    ctx = parse_context({"mode": "known_at", "known_at": "2026-09-15T00:00:00Z"})
+    with pytest.raises(DomainError) as exc:
+        project(settings, ctx, "EquityHistorical",
+                {"symbol": "ZZZZ", "start_date": "2026-09-14", "end_date": "2026-09-14"}, "req")
+    assert exc.value.code == "IDENTITY_UNRESOLVED"
+
+
+CAL = {"calendar_id": "cal_tadawul", "start_date": "2027-03-01", "end_date": "2027-03-31",
+       "include_closed": True}
+
+
+def test_as_of_becomes_an_effective_on_context(settings):
+    out = project(settings, parse_context(None), "MarketCalendar",
+                  {**CAL, "as_of": "2027-04-01"}, "req")
+    assert out["receipt"]["temporal_mode"] == "effective_on"
+    assert out["receipt"]["effective_at"] == "2027-04-01T00:00:00Z"
+
+
+def test_knowledge_at_becomes_a_known_at_context_dated_from_the_range(settings):
+    out = project(settings, parse_context(None), "MarketCalendar",
+                  {**CAL, "knowledge_at": "2027-03-09T18:44:59Z"}, "req")
+    assert out["receipt"]["temporal_mode"] == "known_at"
+    assert out["receipt"]["known_at"] == "2027-03-09T18:44:59Z"
+    assert out["receipt"]["effective_at"] == "2027-03-01T00:00:00Z"
+    # The cutoff is the point of the parameter: before it the Eid holiday is still estimated
+    # on 2027-03-10 and the correction to 2027-03-11 has not been published.
+    dates = {str(r["session_date"]) for r in out["results"]}
+    assert "2027-03-10" in dates and "2027-03-11" not in dates
+    ctx = parse_context({"mode": "known_at", "known_at": "2027-03-10T08:00:00Z"})
+    with pytest.raises(DomainError) as exc:
+        project(settings, ctx, "MarketCalendar", {**CAL, "knowledge_at": "2027-03-09T18:44:59Z"},
+                "req")
+    assert exc.value.code == "QUERY_REJECTED"
+
+
+def test_provider_must_be_the_local_security_master(settings):
+    ctx = parse_context(None)
+    assert project(settings, ctx, "MarketCalendar",
+                   {**CAL, "provider": "local_security_master"}, "req")["results"]
+    with pytest.raises(DomainError) as exc:
+        project(settings, ctx, "MarketCalendar", {**CAL, "provider": "yfinance"}, "req")
+    assert exc.value.code == "QUERY_REJECTED"
+
+
+def test_output_timezone_conversion_is_refused_not_ignored(settings):
+    with pytest.raises(DomainError) as exc:
+        project(settings, parse_context(None), "MarketCalendar",
+                {**CAL, "timezone": "Asia/Riyadh"}, "req")
+    assert exc.value.code == "QUERY_REJECTED" and "timezone" in exc.value.message
+
+
+def _session_row() -> dict:
+    return {
+        "calendar_id": "cal_tadawul", "session_date": "2027-03-15", "trade_date": "2027-03-16",
+        "market_open": "2027-03-15T07:00:00Z", "market_close": "2027-03-15T12:00:00Z",
+        "break_start": "2027-03-15T09:00:00Z", "break_end": "2027-03-15T10:00:00Z",
+        "rule_id": "rule_tadawul_1", "source_version": "test",
+        "effective_from": "2027-03-15T00:00:00Z", "effective_to": None,
+        "observed_at": "2027-01-01T00:00:00Z", "available_at": "2027-01-01T00:00:00Z",
+        "system_from": "2027-01-01T00:00:00Z", "system_to": None, "capture_id": None,
+        "assertion_id": "as_sess_cal_tadawul_2027-03-15", "assertion_status": "current",
+        "supersedes_assertion_id": None,
+    }
+
+
+def test_include_breaks_decides_whether_the_break_times_are_returned(settings):
+    append(settings, "silver.market_sessions", [_session_row()])
+    ctx = parse_context(None)
+    with_breaks = project(settings, ctx, "MarketCalendar", {**CAL, "include_breaks": True}, "req")
+    row = {str(r["session_date"]): r for r in with_breaks["results"]}["2027-03-15"]
+    assert row["break_start"] == "2027-03-15T09:00:00Z" and row["break_end"] is not None
+    without = project(settings, ctx, "MarketCalendar", CAL, "req")
+    bare = {str(r["session_date"]): r for r in without["results"]}["2027-03-15"]
+    assert bare["break_start"] is None and bare["break_end"] is None
+
+
+def test_session_label_trade_date_relabels_the_row(settings):
+    append(settings, "silver.market_sessions", [_session_row()])
+    ctx = parse_context(None)
+    labelled = project(settings, ctx, "MarketCalendar",
+                       {**CAL, "session_label": "trade_date"}, "req")
+    row = next(r for r in labelled["results"] if str(r["trade_date"]) == "2027-03-16")
+    assert str(row["session_date"]) == "2027-03-16"
+    default = project(settings, ctx, "MarketCalendar", CAL, "req")
+    plain = next(r for r in default["results"] if str(r["trade_date"]) == "2027-03-16")
+    assert str(plain["session_date"]) == "2027-03-15"
+
+
+def test_a_malformed_branch_column_is_a_promotion_failure_not_a_crash(settings):
+    append(settings, "silver.calendar_exceptions", [{
+        "calendar_id": "cal_tadawul", "session_date": "2027-03-18",
+        "assertion_domain": "market_session", "holiday_family": "eid_al_fitr",
+        "calendar_system": "lunisolar", "evidence_status": "estimated",
+        "authority_type": "calendar_package", "authority_name": None,
+        "authority_verified_at": None, "source_kind": "pandas_rule", "source_version": None,
+        "rule_id": None, "market_effect": "closed", "holiday_name": "Eid",
+        "special_open": None, "special_close": None, "market_open": None, "market_close": None,
+        "candidate_branches": "{not json", "selected_branch": None, "expiry_date": None,
+        "settlement_status": None, "effective_from": "2027-03-18T00:00:00Z",
+        "effective_to": None, "observed_at": "2027-01-01T00:00:00Z",
+        "available_at": "2027-01-01T00:00:00Z", "system_from": "2027-01-01T00:00:00Z",
+        "system_to": None, "capture_id": None, "assertion_id": "as_bad_branch",
+        "assertion_status": "current", "supersedes_assertion_id": None,
+    }])
+    with pytest.raises(DomainError) as exc:
+        project(settings, parse_context(None), "MarketCalendar", CAL, "req")
+    assert exc.value.code == "PROMOTION_VALIDATION_FAILED"
