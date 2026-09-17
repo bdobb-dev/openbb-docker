@@ -226,8 +226,18 @@ def catalog() -> list[dict]:
             # trailing `.0` (BBANDS(20, 2.0), studies addendum S2.4), but a
             # JSON number loses the int/float distinction crossing into JS
             # (2.0 and 2 both decode to `2`) -- so the registry says it here.
+            # "window" is the same story for `ind.windows` (v12.3.0): the
+            # client's parser has to normalise a `bd` unit onto every window
+            # parameter and refuse it on a non-window (resolve()'s stray/bare
+            # checks above), so it needs the same yes/no per parameter here
+            # rather than re-deriving it. "windows" alongside it names the
+            # set directly, since a client comparing parameter names against
+            # it is simpler than filtering the per-param flag -- both are
+            # sent so the client can use whichever is easier, not because the
+            # information differs.
+            "windows": list(ind.windows),
             "params": [{"name": k, "default": v, "text": v is None or isinstance(v, str),
-                        "float": isinstance(v, float)}
+                        "float": isinstance(v, float), "window": k in ind.windows}
                        for k, v in ind.params.items()],
             "guides": list(ind.guides),
             "band": any(o.endswith("_up") for o in outputs) and any(o.endswith("_lo") for o in outputs),

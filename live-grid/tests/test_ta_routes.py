@@ -295,15 +295,24 @@ def test_ta_registry_entry_shape_for_bbands_and_avwap():
     bb = entries["bbands"]
     assert bb["pane"] == "price" and bb["band"] is True and bb["render"] == "line"
     assert [p["name"] for p in bb["params"]] == ["period", "k"]
-    assert bb["params"][0] == {"name": "period", "default": 20, "text": False, "float": False}
-    assert bb["params"][1] == {"name": "k", "default": 2.0, "text": False, "float": True}
+    assert bb["windows"] == ["period"]
+    assert bb["params"][0] == {
+        "name": "period", "default": 20, "text": False, "float": False, "window": True}
+    # bbands' k is a standard-deviation multiple, not a bars lookback -- not a
+    # window, unlike stoch's k (registry.py Indicator.windows docstring).
+    assert bb["params"][1] == {
+        "name": "k", "default": 2.0, "text": False, "float": True, "window": False}
     assert bb["eodhd"]["function"] == "bbands" and "adjusted" in bb["eodhd"]["note"]
     av = entries["avwap"]
-    assert av["params"][0] == {"name": "anchor", "default": None, "text": True, "float": False}
+    assert av["params"][0] == {
+        "name": "anchor", "default": None, "text": True, "float": False, "window": False}
     assert av["eodhd"] is None
     assert entries["sar"]["render"] == "dots"
     assert entries["rsi"]["guides"] == [30, 70]
     assert entries["pivots_standard"]["sessioned"] is True and entries["sma"]["sessioned"] is False
+    macd = entries["macd"]
+    assert macd["windows"] == ["fast", "slow", "signal"]
+    assert [p["window"] for p in macd["params"] if p["name"] in macd["windows"]] == [True, True, True]
 
 
 # --- session=regular ---------------------------------------------------------
