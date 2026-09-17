@@ -23,9 +23,14 @@ V1 = "/security-master/v1"
 # as the real thing -- and a constant is reproducible.
 # `timestamp` is beyond the four the review named, but it is the Delta commit clock in
 # versions.json and breaks a re-run exactly the same way.
+# The acquisition fixtures add their own: a job and event id are uuids, `at`/`updated_at`/
+# `expires_at` are clock readings, and the token and its hash are minted per run.
 VOLATILE = {"execution_id": "qry_contract", "request_id": "req_contract",
             "created_at": "2026-09-17T00:00:00Z", "sql_fingerprint": "contract",
-            "timestamp": "2026-09-17T00:00:00Z"}
+            "timestamp": "2026-09-17T00:00:00Z", "job_id": "job_contract",
+            "event_id": "ev_contract", "at": "2026-09-17T00:00:00Z",
+            "updated_at": "2026-09-17T00:00:00Z", "expires_at": 0, "token": "token_contract",
+            "fingerprint": "fp_contract", "preflight_token_hash": "th_contract"}
 
 
 def scrub_cursor(token):
@@ -42,9 +47,13 @@ def scrub_cursor(token):
 
 
 def scrub(payload):
-    """Replace every volatile field, at any depth, with its fixed stand-in."""
+    """Replace every volatile field, at any depth, with its fixed stand-in.
+
+    A null is left alone: `bronze.source_captures.job_id` is null for a capture no job made,
+    and standing a job id in for it would record the opposite of what the row says.
+    """
     if isinstance(payload, dict):
-        return {k: VOLATILE[k] if k in VOLATILE else
+        return {k: VOLATILE[k] if k in VOLATILE and v is not None else
                 (scrub_cursor(v) if k == "next_cursor" else scrub(v))
                 for k, v in payload.items()}
     if isinstance(payload, list):

@@ -1,0 +1,37 @@
+{
+  "created_at": "2026-09-17T00:00:00Z",
+  "fingerprint": "fp_contract",
+  "job_id": "job_contract",
+  "kind": "price_daily",
+  "request": {
+    "dataset": "price_daily",
+    "end_date": "2026-09-16",
+    "identifiers": [
+      "AAPL"
+    ],
+    "policy": "missing_only",
+    "price_basis": "raw",
+    "start_date": "2026-09-01"
+  },
+  "stage_history": [
+    {
+      "at": "2026-09-17T00:00:00Z",
+      "detail": {
+        "kind": "price_daily"
+      },
+      "stage": "queued",
+      "worker_id": "api"
+    },
+    {
+      "at": "2026-09-17T00:00:00Z",
+      "detail": {
+        "requested_by": "api"
+      },
+      "stage": "cancel_pending",
+      "worker_id": "api"
+    }
+  ],
+  "state": "cancel_pending",
+  "summary": {},
+  "updated_at": "2026-09-17T00:00:00Z"
+}

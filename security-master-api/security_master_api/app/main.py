@@ -7,15 +7,17 @@ from __future__ import annotations
 import functools
 import hashlib
 import json
+import time
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 import security_master_api
+from security_master_api.acquire.preflight import preflight, verify_token
 from security_master_api.app.auth import BasicAuthMiddleware, credential_of
 from security_master_api.app.errors import install, request_id
 from security_master_api.config import Settings, settings_from_env
@@ -31,6 +33,14 @@ from security_master_api.resolver.odp import odp_version, project, registry
 from security_master_api.sql.executions import Executions, decode_cursor, encode_cursor, fingerprint
 from security_master_api.sql.preview import build_preview_sql
 from security_master_api.sql.session import open_session
+from security_master_api.store.jobs import (
+    TERMINAL,
+    append_event,
+    by_fingerprint,
+    create_job,
+    events,
+    job,
+)
 from security_master_api.store.receipts import new_receipt, record_receipt
 from security_master_api.store.seed import golden_fixtures
 from security_master_api.store.tables import history, latest_version, open_table
@@ -72,6 +82,17 @@ class ResolveBody(BaseModel):
     identifier_type: str | None = None
     include_historical: bool = True
     context: dict[str, Any] = Field(default_factory=dict)
+    lookup_policy: str | None = None
+
+
+class PreflightBody(BaseModel):
+    request: dict[str, Any]
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class CreateJobBody(BaseModel):
+    request: dict[str, Any]
+    token: str
 
 
 class LineageBody(BaseModel):
@@ -286,8 +307,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post(f"{V1}/resolve")
     def resolve_route(body: ResolveBody, request: Request) -> dict:
         ctx = parse_context(body.context)
-        out = run_resolve(settings, ctx, body.identifier, body.identifier_type,
-                          body.include_historical)
+        try:
+            out = run_resolve(settings, ctx, body.identifier, body.identifier_type,
+                              body.include_historical)
+        except DomainError as exc:
+            # A read-through lookup is never performed on the caller's behalf here: the answer
+            # is the BOUNDED request a person can approve, priced and signed, so that nothing
+            # reaches a provider because a typo happened to miss the store.
+            if (exc.code != "IDENTITY_UNRESOLVED" or body.lookup_policy != "review"
+                    or settings.acquisition_policy == "disabled"):
+                raise
+            raise DomainError(
+                "ACQUISITION_REVIEW_REQUIRED",
+                "no local match; a bounded lookup is available for review",
+                {"preflight": preflight(settings, ctx, {"dataset": "security_lookup",
+                                                        "identifiers": [],
+                                                        "query": body.identifier})}) from exc
         receipt = new_receipt(settings, "resolve", ctx, out.pop("manifest"), request_id(request))
         record_receipt(settings, receipt)
         return {**out, "receipt": receipt}
@@ -340,6 +375,65 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             out["row_diff"] = {"added": [{k: iso_utc(v) for k, v in row.items()}
                                          for row in rt[len(lt):][: settings.first_page]]}
         return out
+
+    @app.post(f"{V1}/acquisitions/preflight")
+    def acquisitions_preflight(body: PreflightBody) -> dict:
+        return preflight(settings, parse_context(body.context), body.request)
+
+    @app.post(f"{V1}/acquisitions", status_code=201)
+    def acquisitions_create(body: CreateJobBody, response: Response) -> dict:
+        if settings.acquisition_policy == "disabled":
+            raise DomainError("ACQUISITION_REVIEW_REQUIRED", "acquisition is disabled by policy",
+                              {"policy": "disabled"})
+        claims = verify_token(settings, body.token, body.request)
+        existing = by_fingerprint(settings, claims["fingerprint"])
+        if existing is not None:
+            # Not a new job and not an error: the same request arriving twice gets the job it
+            # already has, and 200 rather than 201 says nothing was created.
+            response.status_code = 200
+            return existing
+        token_hash = hashlib.sha256(body.token.encode()).hexdigest()[:16]
+        return create_job(settings, claims["dataset"], body.request, claims["fingerprint"],
+                          token_hash)
+
+    @app.get(f"{V1}/acquisitions/{{job_id}}")
+    def acquisitions_get(job_id: str) -> dict:
+        return job(settings, job_id)
+
+    @app.post(f"{V1}/acquisitions/{{job_id}}/cancel")
+    def acquisitions_cancel(job_id: str) -> dict:
+        current = job(settings, job_id)
+        if current["state"] in TERMINAL:
+            raise DomainError("QUERY_REJECTED", f"job is already {current['state']}",
+                              {"state": current["state"]})
+        # `cancel_pending`, never `cancelled`: the API cannot stop work already in flight. The
+        # worker sees this stage and decides what its own stage allows.
+        append_event(settings, job_id, "cancel_pending", {"requested_by": "api"})
+        return job(settings, job_id)
+
+    @app.get(f"{V1}/acquisitions/{{job_id}}/events")
+    def acquisitions_events(job_id: str, replay: str = "0") -> StreamingResponse:
+        # The path MUST end in /events: that suffix is what lets auth accept the credential
+        # from the query string, and an EventSource cannot send a header.
+        job(settings, job_id)
+        # `replay=1` starts from the first event, so a client that connects late still sees
+        # the whole history; without it the stream carries only what happens from now on.
+        # Either way a terminal stage ends the stream - there is nothing further to send.
+        start = 0 if replay == "1" else len(events(settings, job_id))
+
+        def stream():
+            seen = start
+            deadline = time.monotonic() + 300
+            while True:
+                evs = events(settings, job_id)
+                for event in evs[seen:]:
+                    yield f"event: {event['stage']}\ndata: {json.dumps(event)}\n\n"
+                seen = len(evs)
+                if (evs and evs[-1]["stage"] in TERMINAL) or time.monotonic() >= deadline:
+                    return
+                time.sleep(2)
+
+        return StreamingResponse(stream(), media_type="text/event-stream")
 
     @app.get(f"{V1}/exchanges")
     def exchanges() -> dict:
