@@ -4,15 +4,34 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "security-master-api"
-version = "0.1.0"
-description = "Security-master temporal calendar fixture contract"
+version = "0.2.0"
+description = "Security-master browser service: temporal catalog, guarded DuckDB SQL over Delta, receipts, acquisition jobs"
 requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn[standard]>=0.30,<1",
+  "deltalake>=1.0",
+  "duckdb>=1.1,<2",
+  "pyarrow>=16",
+  "pandas>=2.2",
+  "pandas_market_calendars>=5.0",
+  "requests>=2.32",
+  "openbb-deltalake",
+]
 
 [project.optional-dependencies]
 dev = [
   "pytest",
+  "httpx",
   "ruff==0.15.22",
 ]
+
+[tool.setuptools.packages.find]
+include = ["security_master_api*"]
+
+[tool.setuptools.package-data]
+security_master_api = ["fixtures/*.json", "odp_registry.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -20,3 +39,7 @@ pythonpath = ["."]
 
 [tool.ruff]
 target-version = "py312"
+line-length = 100
+
+[tool.uv.sources]
+openbb-deltalake = { path = "../openbb-deltalake", editable = true }
