@@ -17,7 +17,7 @@ from later chapters is.
 | v6.0.0 | Ep. 6 — The Analyst | OpenBB MCP server (tool-discovery mode), agent deploy configs |
 | v8.0.0 | Ep. 8 — All the News That Fits, We Print | rss-ticker news wire joins the stack |
 
-## What you get (this release: v8.0.0)
+## What you get (this release: v8.0.1)
 
 Five containers, one tailnet node, zero exposed ports:
 
