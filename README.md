@@ -28,7 +28,7 @@ verified as one body of work — the rows above describe what each release
 *adds*, not three separate states of the code, and the two later reference
 adapters are `--reference` options you select at runtime.
 
-## What you get (this release: v11.1.1)
+## What you get (this release: v12.4.0)
 
 Eight services across two tailnet nodes, zero exposed ports. The backbone,
 unchanged since Ep. 1:
