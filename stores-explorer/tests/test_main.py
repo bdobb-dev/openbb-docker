@@ -101,7 +101,9 @@ def test_widgets_json_declares_delta_explorer():
     assert "span" in w["description"]  # a symbol may span day tables; the widget says so
     for name in ("start", "end"):
         p = next(p for p in w["params"] if p["paramName"] == name)
-        assert p["type"] == "date" and p["show"] is False  # the strip renders them
+        # datetime + naive: bdobb sends the window as naive UTC to the second
+        # (its ResolveContext.naive), the only shape the store's grammar admits.
+        assert p["type"] == "datetime" and p["naive"] is True and p["show"] is False  # the strip renders them
 
 
 def test_delta_describe_passes_days_through():

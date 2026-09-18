@@ -30,17 +30,19 @@
       },
       {
         "paramName": "start",
-        "type": "date",
+        "type": "datetime",
         "label": "Start",
         "value": "",
-        "show": false
+        "show": false,
+        "naive": true
       },
       {
         "paramName": "end",
-        "type": "date",
+        "type": "datetime",
         "label": "End",
         "value": "",
-        "show": false
+        "show": false,
+        "naive": true
       },
       {
         "paramName": "as_of",
