@@ -75,6 +75,11 @@ class EODHDEquityQuoteFetcher(
         rows = []
         for it in data:
             ts = it.get("timestamp")
+            # EODHD change_p is in percentage points (0.3229 means 0.3229%).
+            # EquityQuoteData requires a fraction; its widget schema multiplies
+            # by 100 for display. Normalize once, at the provider boundary.
+            change_p = it.get("change_p")
+            change_percent = float(change_p) / 100 if change_p not in (None, "NA") else None
             rows.append(EODHDEquityQuoteData.model_validate({
                 "symbol": (it.get("code") or query.symbol).upper(),
                 "last_price": it.get("close"),
@@ -86,6 +91,6 @@ class EODHDEquityQuoteFetcher(
                 "volume": it.get("volume"),
                 "prev_close": it.get("previousClose"),
                 "change": it.get("change"),
-                "change_percent": it.get("change_p"),
+                "change_percent": change_percent,
             }))
         return rows
