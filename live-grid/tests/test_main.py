@@ -347,6 +347,15 @@ def test_the_library_offers_two_arts_charts_widgets():
     assert source["value"] == "eodhd"
     assert source["options"] == [{"label": "EODHD", "value": "eodhd"}]
 
+    # Studies are now client-side series, not a manifest parameter; the
+    # client keeps sending `indicators` in the query, but the card no longer
+    # declares it. `panels` (the pane layout) replaces it in the params list.
+    for widget in (local, eodhd):
+        names = [p["paramName"] for p in widget["params"]]
+        assert "indicators" not in names
+        panels = next(p for p in widget["params"] if p["paramName"] == "panels")
+        assert panels["value"] == "0,0,100,70,24,56;70,0,100,30,24,56"
+
     # Everything but the source is the same card.
     def rest(widget):
         return [p for p in widget["params"] if p["paramName"] != "source"]

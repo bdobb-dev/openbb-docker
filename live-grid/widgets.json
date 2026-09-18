@@ -532,11 +532,11 @@
     ]
    },
    {
-    "paramName": "indicators",
+    "paramName": "panels",
     "type": "text",
-    "value": "",
-    "label": "Indicators",
-    "description": "Comma separated, e.g. rsi:period=14,ichimoku,supertrend:period=10"
+    "value": "0,0,100,70,24,56;70,0,100,30,24,56",
+    "label": "Panels",
+    "description": "Panels as top,left,width,height (percent of the card body), x-axis and y-axis margins (px); one panel per ';' — the chart's Settings edits this."
    },
    {
     "paramName": "basis",
@@ -643,11 +643,11 @@
     ]
    },
    {
-    "paramName": "indicators",
+    "paramName": "panels",
     "type": "text",
-    "value": "",
-    "label": "Indicators",
-    "description": "Comma separated, e.g. rsi:period=14,ichimoku,supertrend:period=10"
+    "value": "0,0,100,70,24,56;70,0,100,30,24,56",
+    "label": "Panels",
+    "description": "Panels as top,left,width,height (percent of the card body), x-axis and y-axis margins (px); one panel per ';' — the chart's Settings edits this."
    },
    {
     "paramName": "source",
