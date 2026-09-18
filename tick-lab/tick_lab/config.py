@@ -5,6 +5,14 @@
 
 Keeping one convention on both sides means `minio.env` is the single source of
 truth: the laptop and the Platform container cannot drift apart.
+
+`openbb_deltalake.utils.s3_options_from_env` is the other half of that
+convention. This module does NOT import it on purpose -- openbb-deltalake
+depends on openbb-core, and tick-lab stays installable without it -- so the two
+are kept honest by a contract test instead:
+`openbb-deltalake/tests/test_s3_options_contract.py` asserts both build
+identical `storage_options` from the same environment. Change one, change the
+other.
 """
 
 from __future__ import annotations

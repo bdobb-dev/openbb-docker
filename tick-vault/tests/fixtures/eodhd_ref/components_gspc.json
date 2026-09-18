@@ -1,0 +1,29 @@
+{
+  "General": {
+    "Code": "GSPC",
+    "Name": "S&P 500"
+  },
+  "Components": {
+    "0": {
+      "Code": "AAPL",
+      "Name": "Apple Inc",
+      "Sector": "Technology"
+    }
+  },
+  "HistoricalTickerComponents": {
+    "h1": {
+      "Code": "AAPL",
+      "Name": "Apple Inc",
+      "StartDate": "2015-01-01",
+      "EndDate": null,
+      "Sector": "Technology"
+    },
+    "h2": {
+      "Code": "TWTR",
+      "Name": "Twitter Inc",
+      "StartDate": "2018-06-01",
+      "EndDate": "2022-10-27",
+      "Sector": "Communication Services"
+    }
+  }
+}

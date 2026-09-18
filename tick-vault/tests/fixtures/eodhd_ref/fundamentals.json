@@ -1,0 +1,13 @@
+{
+  "General": {
+    "Code": "AAPL",
+    "Type": "Common Stock",
+    "Name": "Apple Inc",
+    "CUSIP": "037833100",
+    "ISIN": "US0378331005",
+    "CIK": "0000320193"
+  },
+  "SharesStats": {
+    "SharesOutstanding": 15334082000
+  }
+}
