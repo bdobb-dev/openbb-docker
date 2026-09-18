@@ -69,7 +69,7 @@ services:
     build: .
     # 4.7.2 = the skill-built image (OpenBB 4.7.2, openbb-eodhd 9.5.0 with the
     # full FMP-parity fetcher set — 52 eodhd widgets).
-    image: openbb-local:4.7.2
+    image: openbb-local:12.4.0
     container_name: openbb-api
     restart: unless-stopped
     # Bridge migration (Layer 1): was `network_mode: service:tailscale`.
@@ -250,7 +250,7 @@ services:
     build: .
     # 4.7.2 = the skill-built image (OpenBB 4.7.2, openbb-eodhd 9.5.0), same
     # as openbb-api — the MCP tool set tracks the same provider registry.
-    image: openbb-local:4.7.2
+    image: openbb-local:12.4.0
     container_name: openbb-mcp
     restart: unless-stopped
     # Bridge migration (Layer 1): was
@@ -311,7 +311,7 @@ services:
   # publish it tailnet-only, never funneled.
   stores-mcp:
     build: .
-    image: openbb-local:11.0.0
+    image: openbb-local:12.4.0
     container_name: openbb-stores-mcp
     restart: unless-stopped
     # Bridge migration (Layer 1): was
@@ -357,7 +357,7 @@ services:
     build:
       context: .
       dockerfile: stores-explorer/Dockerfile
-    image: openbb-stores-explorer:11.6.0
+    image: openbb-stores-explorer:12.4.0
     container_name: openbb-stores-explorer
     restart: unless-stopped
     # Bridge migration (Layer 1): was
@@ -391,7 +391,7 @@ services:
   # SSH — no port, no header).
   key-maint:
     build: ./key-maint
-    image: openbb-key-maint:latest
+    image: openbb-key-maint:12.4.0
     container_name: openbb-key-maint
     restart: unless-stopped
     # Bridge migration (Layer 1): was
@@ -441,7 +441,7 @@ services:
     build:
       context: .
       dockerfile: live-grid/Dockerfile
-    image: openbb-live-grid:latest
+    image: openbb-live-grid:12.4.0
     container_name: openbb-live-grid
     restart: unless-stopped
     # Bridge migration (Layer 1): was
@@ -568,7 +568,7 @@ services:
   #   cp minio.env.example minio.env && chmod 600 minio.env
   minio:
     build: ./minio
-    image: openbb-minio:11.0.0
+    image: openbb-minio:12.4.0
     container_name: openbb-minio
     hostname: minio
     restart: unless-stopped
