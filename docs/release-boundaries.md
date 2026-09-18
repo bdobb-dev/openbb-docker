@@ -58,6 +58,12 @@ as ep 9 / ep 10 / ep 12 respectively.
   fundamentals read-through L2 rebuilt on delta-rs (design:
   `docs/superpowers/specs/2026-09-01-deltalake-store-design.md` on the
   ep-11 line). Cut after the store swap lands.
+- **v11.4.0 — branch `sip-backfill`**: the consolidated tick history
+  (`scripts/sip_backfill.py`, `sip-backfill/Dockerfile`,
+  `TickStore.replace_days`, zstd as the store's codec). Ep. 11 content: it
+  is the Delta store doing the job the episode promised — durable ticks,
+  versions, one vault any process can read. Running on the NAS since
+  2026-09-08; cut once the branch merges.
 
 ## Rules
 

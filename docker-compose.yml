@@ -216,6 +216,30 @@ services:
       - ./scripts/eod_dump.py:/opt/eod_dump.py:ro
       - ./kdb-license:/opt/kx-license:ro
 
+  # sip-backfill: walks the S&P 500's consolidated tick history (EODHD
+  # Tick Data API, T+1) into the Delta store, one week at a time, newest
+  # complete week first and then backwards; picks up each new week as it
+  # completes. One Delta table per symbol under ticks_sip/, partitioned by
+  # day. Progress lives in the bucket (ticks_sip/_progress/), so a restart
+  # resumes mid-week. Local-only image (sip-backfill/Dockerfile), shipped to
+  # the NAS by docker save | ssh load, like eod-dump. Runs on the NAS in
+  # production; here as the on-host alternative. See scripts/sip_backfill.py.
+  sip-backfill:
+    image: openbb-sip-backfill:11.5.2
+    container_name: openbb-sip-backfill
+    restart: unless-stopped
+    networks:
+      - openbb-internal
+    command: ["--loop"]
+    environment:
+      - SIP_WORKERS=6
+    env_file:
+      # DELTA_S3_* for the store, EODHD_API_KEY for the Tick Data API.
+      - path: ./eod.env
+        required: true
+      - path: ./credentials.env
+        required: true
+
   # OpenBB MCP server (Ep. 6): wraps the same Platform app as openbb-api,
   # in-process, and serves MCP over streamable-http for the AI analyst.
   # Bound to 127.0.0.1; Serve publishes it on :8443 — tailnet-only, NEVER
