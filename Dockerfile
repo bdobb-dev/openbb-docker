@@ -151,6 +151,16 @@ RUN pip install --no-cache-dir /tmp/openbb-kdb && rm -rf /tmp/openbb-kdb
 COPY openbb-deltalake /tmp/openbb-deltalake
 RUN pip install --no-cache-dir /tmp/openbb-deltalake && rm -rf /tmp/openbb-deltalake
 
+# Security-master reference router (Ep. 11 line): MarketCalendar, exchange
+# details and identity resolution, delegating to security-master-api. Its
+# entry point is named `reference`, which is what puts the three commands on
+# /api/v1/reference/... -- OpenBB mounts a core extension under its entry-point
+# name. It must land AFTER openbb-eodhd above: one command borrows that
+# extension's SDK client (lazily, so pip needs no ordering, but the image
+# does).
+COPY openbb-security-master /tmp/openbb-security-master
+RUN pip install --no-cache-dir /tmp/openbb-security-master && rm -rf /tmp/openbb-security-master
+
 # Official OpenBB MCP server (Ep. 6): wraps the Platform FastAPI app
 # in-process and serves MCP over streamable-http. PIP_CONSTRAINT still
 # applies, so it cannot drag shared libs anywhere the stack doesn't tolerate.
@@ -159,10 +169,19 @@ RUN python -c "import openbb_mcp_server; print('openbb-mcp-server import OK')"
 
 # Pre-compile the static package so the first run is instant, and verify the
 # platform registers at build time.
+#
+# The security-master check is a ROUTE check, not `hasattr(obb.reference, ...)`:
+# `App.reference` is OpenBB's own property (the static package's reference
+# dict), so the Python-side attribute is taken and a namespace named
+# `reference` is reachable over REST only. The route is what this image serves
+# and what the browser calls, so it is also the honest thing to assert.
 RUN python -c "import openbb; openbb.build(); from openbb import obb; \
 assert 'eodhd' in obb.coverage.providers, 'eodhd provider not registered'; \
 assert 'kdb' in obb.coverage.providers, 'kdb provider not registered'; \
 assert 'deltalake' in obb.coverage.providers, 'deltalake provider not registered'; \
+from openbb_core.api.router.commands import router as cmds; \
+assert any(r.path == '/reference/market_calendar' for r in cmds.routes), 'security-master router not registered'; \
+from openbb_core.api.rest_api import app as rest_app; assert '/api/v1/reference/market_calendar' in rest_app.openapi()['paths'], 'reference routes missing from the OpenAPI schema'; \
 print('OpenBB Platform OK:', len(obb.coverage.providers), 'providers (incl. eodhd, kdb, deltalake)')"
 
 # The FastAPI app factory `openbb-api --factory` serves (see api_app.py):

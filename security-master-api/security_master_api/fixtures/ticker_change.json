@@ -1,0 +1,247 @@
+{
+  "schema": "security-master.golden-fixture.v1",
+  "fixture_id": "ticker-change",
+  "scenario": "ticker_change",
+  "captures": [
+    {
+      "capture_id": "cap_meta_1",
+      "provider": "fixture",
+      "endpoint": "seed",
+      "request_fingerprint": "fx-ticker-1",
+      "captured_at": "2022-06-09T00:00:00Z",
+      "content_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "status": 200,
+      "payload": "{}",
+      "job_id": null
+    }
+  ],
+  "assertions": {
+    "silver.issuers": [
+      {
+        "issuer_id": "iss_meta",
+        "name": "Meta Platforms, Inc.",
+        "effective_from": "2012-05-18T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2022-06-09T00:00:00Z",
+        "available_at": "2022-06-09T00:00:00Z",
+        "system_from": "2022-06-09T00:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_meta_1",
+        "assertion_id": "as_iss_meta_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
+    ],
+    "silver.instruments": [
+      {
+        "instrument_id": "ins_000042",
+        "issuer_id": "iss_meta",
+        "name": "Meta Platforms Class A Common",
+        "instrument_type": "Common Stock",
+        "effective_from": "2012-05-18T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2022-06-09T00:00:00Z",
+        "available_at": "2022-06-09T00:00:00Z",
+        "system_from": "2022-06-09T00:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_meta_1",
+        "assertion_id": "as_ins_000042_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
+    ],
+    "silver.listings": [
+      {
+        "listing_id": "lst_000042",
+        "instrument_id": "ins_000042",
+        "issuer_id": "iss_meta",
+        "security_id": "sec_000042",
+        "exchange_id": "exch_xnas",
+        "mic": "XNAS",
+        "symbol": "FB",
+        "provider_symbol": "FB.US",
+        "currency": "USD",
+        "status": "active",
+        "name": "Facebook, Inc.",
+        "instrument_type": "Common Stock",
+        "effective_from": "2012-05-18T00:00:00Z",
+        "effective_to": "2022-06-09T00:00:00Z",
+        "observed_at": "2022-06-09T00:00:00Z",
+        "available_at": "2022-06-09T00:00:00Z",
+        "system_from": "2022-06-09T00:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_meta_1",
+        "assertion_id": "as_lst_000042_fb",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      },
+      {
+        "listing_id": "lst_000042",
+        "instrument_id": "ins_000042",
+        "issuer_id": "iss_meta",
+        "security_id": "sec_000042",
+        "exchange_id": "exch_xnas",
+        "mic": "XNAS",
+        "symbol": "META",
+        "provider_symbol": "META.US",
+        "currency": "USD",
+        "status": "active",
+        "name": "Meta Platforms, Inc.",
+        "instrument_type": "Common Stock",
+        "effective_from": "2022-06-09T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2022-06-09T00:00:00Z",
+        "available_at": "2022-06-09T00:00:00Z",
+        "system_from": "2022-06-09T00:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_meta_1",
+        "assertion_id": "as_lst_000042_meta",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
+    ],
+    "silver.identifiers": [
+      {
+        "identifier_type": "ticker",
+        "identifier": "FB",
+        "listing_id": "lst_000042",
+        "instrument_id": "ins_000042",
+        "security_id": "sec_000042",
+        "issuer_id": "iss_meta",
+        "effective_from": "2012-05-18T00:00:00Z",
+        "effective_to": "2022-06-09T00:00:00Z",
+        "observed_at": "2022-06-09T00:00:00Z",
+        "available_at": "2022-06-09T00:00:00Z",
+        "system_from": "2022-06-09T00:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_meta_1",
+        "assertion_id": "as_id_fb_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      },
+      {
+        "identifier_type": "ticker",
+        "identifier": "META",
+        "listing_id": "lst_000042",
+        "instrument_id": "ins_000042",
+        "security_id": "sec_000042",
+        "issuer_id": "iss_meta",
+        "effective_from": "2022-06-09T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2022-06-09T00:00:00Z",
+        "available_at": "2022-06-09T00:00:00Z",
+        "system_from": "2022-06-09T00:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_meta_1",
+        "assertion_id": "as_id_meta_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
+    ],
+    "silver.prices_normalized": [
+      {
+        "listing_id": "lst_000042",
+        "market_date": "2022-06-07",
+        "open": 189.15,
+        "high": 190.0,
+        "low": 183.5,
+        "close": 184.1,
+        "volume": 25100000,
+        "price_basis": "raw",
+        "effective_from": "2022-06-07T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2022-06-09T00:00:00Z",
+        "available_at": "2022-06-09T00:00:00Z",
+        "system_from": "2022-06-09T00:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_meta_1",
+        "assertion_id": "as_px_meta_20220607_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      },
+      {
+        "listing_id": "lst_000042",
+        "market_date": "2022-06-10",
+        "open": 180.25,
+        "high": 181.0,
+        "low": 174.9,
+        "close": 175.57,
+        "volume": 29400000,
+        "price_basis": "raw",
+        "effective_from": "2022-06-10T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2022-06-09T00:00:00Z",
+        "available_at": "2022-06-09T00:00:00Z",
+        "system_from": "2022-06-09T00:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_meta_1",
+        "assertion_id": "as_px_meta_20220610_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
+    ]
+  },
+  "expectations": [
+    {
+      "model": "resolve",
+      "params": {
+        "identifier": "FB"
+      },
+      "context": {
+        "mode": "effective_on",
+        "effective_at": "2022-06-07T00:00:00Z"
+      },
+      "expect": {
+        "listing_id": "lst_000042",
+        "instrument_id": "ins_000042",
+        "reason": "active",
+        "symbol": "FB"
+      }
+    },
+    {
+      "model": "resolve",
+      "params": {
+        "identifier": "META"
+      },
+      "context": {
+        "mode": "effective_on",
+        "effective_at": "2022-06-10T00:00:00Z"
+      },
+      "expect": {
+        "listing_id": "lst_000042",
+        "instrument_id": "ins_000042",
+        "reason": "active",
+        "symbol": "META"
+      }
+    },
+    {
+      "model": "resolve",
+      "params": {
+        "identifier": "FB"
+      },
+      "context": {
+        "mode": "current_corrected"
+      },
+      "expect": {
+        "listing_id": "lst_000042",
+        "instrument_id": "ins_000042",
+        "reason": "historical_alias",
+        "symbol": "META"
+      }
+    },
+    {
+      "model": "EquityHistorical",
+      "params": {
+        "symbol": "META",
+        "start_date": "2022-06-01",
+        "end_date": "2022-06-30"
+      },
+      "context": {
+        "mode": "current_corrected"
+      },
+      "expect": {
+        "row_count": 2
+      }
+    }
+  ]
+}

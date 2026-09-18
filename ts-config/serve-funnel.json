@@ -20,6 +20,9 @@
     },
     "5999": {
       "HTTPS": true
+    },
+    "6905": {
+      "HTTPS": true
     }
   },
   "Web": {
@@ -69,6 +72,13 @@
       "Handlers": {
         "/": {
           "Proxy": "http://kdb:5000"
+        }
+      }
+    },
+    "${TS_CERT_DOMAIN}:6905": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://security-master-api:6905"
         }
       }
     }
@@ -130,6 +140,22 @@
           "Handlers": {
             "/": {
               "Proxy": "http://stores-explorer:6904"
+            }
+          }
+        }
+      }
+    },
+    "svc:openbb-security-master": {
+      "TCP": {
+        "443": {
+          "HTTPS": true
+        }
+      },
+      "Web": {
+        "openbb-security-master.<your-tailnet>.ts.net:443": {
+          "Handlers": {
+            "/": {
+              "Proxy": "http://security-master-api:6905"
             }
           }
         }

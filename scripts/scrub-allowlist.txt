@@ -25,3 +25,18 @@ DELTA_S3_BUCKET=openbb
 DELTA_S3_SECURE=true
 # A Delta library name, not a secret:
 DELTA_LIBRARY=openbb
+# --- Ep. 11 line: security-master.env.example policy/budget defaults, none secrets ---
+# Placeholder text, not a real secret -- the operator must rotate it:
+SECURITY_MASTER_PREFLIGHT_SECRET=change-me
+# Policy enum values, not credentials:
+SECURITY_MASTER_SQL=enabled
+SECURITY_MASTER_ACQUISITION=review
+# Spec-default budgets, not credentials:
+SECURITY_MASTER_FIRST_PAGE=100
+SECURITY_MASTER_MAX_ROWS=10000
+SECURITY_MASTER_TIMEOUT_MS=15000
+SECURITY_MASTER_PER_PRINCIPAL_QUERIES=8
+SECURITY_MASTER_SCAN_SLOTS=4
+SECURITY_MASTER_MEMORY_LIMIT=1GB
+SECURITY_MASTER_THREADS=2
+SECURITY_MASTER_WORKER_POLL_S=2

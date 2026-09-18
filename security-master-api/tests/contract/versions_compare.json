@@ -1,0 +1,14 @@
+{
+  "left": 0,
+  "relation": "silver.issuers",
+  "right": 1,
+  "rows": {
+    "left": 0,
+    "right": 1
+  },
+  "schema": {
+    "added": [],
+    "changed": [],
+    "removed": []
+  }
+}

@@ -1,0 +1,554 @@
+{
+  "models": [
+    {
+      "backing_relation": "gold.odp_equity_info",
+      "consumers": [
+        "bdobb-v2 security master browser",
+        "obb.equity.profile"
+      ],
+      "fields": [
+        {
+          "name": "symbol",
+          "source": "gold.odp_equity_info.symbol",
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "source": "gold.odp_equity_info.name",
+          "type": "string"
+        },
+        {
+          "name": "shares_outstanding",
+          "source": "gold.odp_equity_info.shares_outstanding",
+          "type": "number"
+        },
+        {
+          "name": "period_end",
+          "source": "gold.odp_equity_info.period_end",
+          "type": "date"
+        },
+        {
+          "name": "filing_kind",
+          "source": "gold.odp_equity_info.filing_kind",
+          "type": "string"
+        },
+        {
+          "name": "currency",
+          "source": "gold.odp_equity_info.currency",
+          "type": "string"
+        },
+        {
+          "name": "mic",
+          "source": "gold.odp_equity_info.mic",
+          "type": "string"
+        }
+      ],
+      "kind": "standard",
+      "model_id": "EquityInfo",
+      "parameters": [
+        {
+          "description": "Ticker or historical alias",
+          "name": "symbol",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "primary_temporal_scenario": "shares_outstanding",
+      "resolve": "symbol",
+      "route": "/api/v1/equity/profile",
+      "sql": "SELECT symbol, name, shares_outstanding, period_end, filing_kind, currency, mic, listing_id, assertion_id, capture_id, shares_assertion_id, shares_capture_id FROM gold.odp_equity_info WHERE listing_id = $listing_id",
+      "temporal_capabilities": [
+        "current_corrected",
+        "effective_on",
+        "known_at"
+      ]
+    },
+    {
+      "backing_relation": "gold.security_master",
+      "consumers": [
+        "bdobb-v2 security master browser",
+        "obb.equity.search"
+      ],
+      "fields": [
+        {
+          "name": "symbol",
+          "source": "gold.security_master.symbol",
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "source": "gold.security_master.name",
+          "type": "string"
+        },
+        {
+          "name": "listing_id",
+          "source": "gold.security_master.listing_id",
+          "type": "string"
+        },
+        {
+          "name": "mic",
+          "source": "gold.security_master.mic",
+          "type": "string"
+        }
+      ],
+      "kind": "standard",
+      "model_id": "EquitySearch",
+      "parameters": [
+        {
+          "description": "Symbol or name fragment",
+          "name": "query",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "primary_temporal_scenario": "ticker_change",
+      "route": "/api/v1/equity/search",
+      "sql": "SELECT symbol, name, listing_id, mic, instrument_id, assertion_id, capture_id FROM gold.security_master WHERE upper(symbol) LIKE upper($query) || '%' OR upper(name) LIKE '%' || upper($query) || '%' ORDER BY symbol LIMIT 100",
+      "temporal_capabilities": [
+        "current_corrected",
+        "effective_on"
+      ]
+    },
+    {
+      "backing_relation": "gold.price_daily",
+      "consumers": [
+        "bdobb-v2 security master browser",
+        "obb.equity.price.historical"
+      ],
+      "fields": [
+        {
+          "name": "date",
+          "source": "gold.price_daily.market_date",
+          "type": "date"
+        },
+        {
+          "name": "open",
+          "source": "gold.price_daily.open",
+          "type": "number"
+        },
+        {
+          "name": "high",
+          "source": "gold.price_daily.high",
+          "type": "number"
+        },
+        {
+          "name": "low",
+          "source": "gold.price_daily.low",
+          "type": "number"
+        },
+        {
+          "name": "close",
+          "source": "gold.price_daily.close",
+          "type": "number"
+        },
+        {
+          "name": "volume",
+          "source": "gold.price_daily.volume",
+          "type": "number"
+        }
+      ],
+      "kind": "standard",
+      "model_id": "EquityHistorical",
+      "parameters": [
+        {
+          "name": "symbol",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "start_date",
+          "required": true,
+          "type": "date"
+        },
+        {
+          "name": "end_date",
+          "required": true,
+          "type": "date"
+        }
+      ],
+      "primary_temporal_scenario": "trade_correction",
+      "resolve": "symbol",
+      "route": "/api/v1/equity/price/historical",
+      "sql": "SELECT market_date AS date, open, high, low, close, volume, listing_id, assertion_id, capture_id, supersedes_assertion_id FROM gold.price_daily WHERE listing_id = $listing_id AND market_date BETWEEN $start_date AND $end_date ORDER BY market_date",
+      "temporal_capabilities": [
+        "current_corrected",
+        "known_at",
+        "delta_snapshot"
+      ]
+    },
+    {
+      "backing_relation": "gold.security_master",
+      "consumers": [
+        "bdobb-v2 security master browser"
+      ],
+      "fields": [
+        {
+          "name": "security_id",
+          "source": "gold.security_master.security_id",
+          "type": "string"
+        },
+        {
+          "name": "cusip",
+          "source": "gold.security_master.cusip",
+          "type": "string"
+        },
+        {
+          "name": "issuer_id",
+          "source": "gold.security_master.issuer_id",
+          "type": "string"
+        },
+        {
+          "name": "successor_security_id",
+          "source": "gold.security_master.successor_security_id",
+          "type": "string"
+        },
+        {
+          "name": "predecessor_security_id",
+          "source": "gold.security_master.predecessor_security_id",
+          "type": "string"
+        }
+      ],
+      "kind": "custom",
+      "model_id": "ReferenceSecurity",
+      "parameters": [
+        {
+          "description": "CUSIP, ISIN, FIGI, ticker or internal id",
+          "name": "identifier",
+          "required": true,
+          "type": "string"
+        }
+      ],
+      "primary_temporal_scenario": "cusip_change",
+      "resolve": "identifier",
+      "route": "/api/v1/reference/security",
+      "sql": "SELECT security_id, cusip, issuer_id, successor_security_id, predecessor_security_id, listing_id, symbol, assertion_id, capture_id FROM gold.security_master WHERE listing_id = $listing_id OR security_id = $security_id",
+      "temporal_capabilities": [
+        "current_corrected",
+        "effective_on",
+        "known_at"
+      ]
+    },
+    {
+      "backing_relation": "silver.identifiers",
+      "consumers": [
+        "bdobb-v2 security master browser",
+        "obb.reference.security_master_resolve"
+      ],
+      "fields": [
+        {
+          "name": "listing_id",
+          "source": "resolve.listing_id",
+          "type": "string"
+        },
+        {
+          "name": "instrument_id",
+          "source": "resolve.instrument_id",
+          "type": "string"
+        },
+        {
+          "name": "security_id",
+          "source": "resolve.security_id",
+          "type": "string"
+        },
+        {
+          "name": "symbol",
+          "source": "resolve.symbol",
+          "type": "string"
+        },
+        {
+          "name": "reason",
+          "source": "resolve.reason",
+          "type": "string"
+        }
+      ],
+      "kind": "custom",
+      "model_id": "ReferenceResolve",
+      "parameters": [
+        {
+          "name": "identifier",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "identifier_type",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "primary_temporal_scenario": "ticker_change",
+      "resolver": true,
+      "route": "/api/v1/reference/resolve",
+      "temporal_capabilities": [
+        "current_corrected",
+        "effective_on",
+        "known_at"
+      ]
+    },
+    {
+      "backing_relation": "gold.market_calendar",
+      "consumers": [
+        "bdobb-v2 security master browser",
+        "obb.reference.market_calendar",
+        "price download preflight"
+      ],
+      "fields": [
+        {
+          "name": "calendar_id",
+          "source": "gold.market_calendar.calendar_id",
+          "type": "string"
+        },
+        {
+          "name": "exchange_id",
+          "source": "gold.market_calendar.exchange_id",
+          "type": "string"
+        },
+        {
+          "name": "exchange_name",
+          "source": "gold.market_calendar.exchange_name",
+          "type": "string"
+        },
+        {
+          "name": "mic",
+          "source": "gold.market_calendar.mic",
+          "type": "string"
+        },
+        {
+          "name": "calendar_alias",
+          "source": "gold.market_calendar.calendar_alias",
+          "type": "string"
+        },
+        {
+          "name": "session_date",
+          "source": "gold.market_calendar.session_date",
+          "type": "date"
+        },
+        {
+          "name": "trade_date",
+          "source": "gold.market_calendar.trade_date",
+          "type": "date"
+        },
+        {
+          "name": "timezone",
+          "source": "gold.market_calendar.timezone",
+          "type": "string"
+        },
+        {
+          "name": "session_status",
+          "source": "gold.market_calendar.session_status",
+          "type": "string"
+        },
+        {
+          "name": "calendar_system",
+          "source": "gold.market_calendar.calendar_system",
+          "type": "string"
+        },
+        {
+          "name": "holiday_family",
+          "source": "gold.market_calendar.holiday_family",
+          "type": "string"
+        },
+        {
+          "name": "assertion_domain",
+          "source": "gold.market_calendar.assertion_domain",
+          "type": "string"
+        },
+        {
+          "name": "evidence_status",
+          "source": "gold.market_calendar.evidence_status",
+          "type": "string"
+        },
+        {
+          "name": "market_open",
+          "source": "gold.market_calendar.market_open",
+          "type": "datetime"
+        },
+        {
+          "name": "market_close",
+          "source": "gold.market_calendar.market_close",
+          "type": "datetime"
+        },
+        {
+          "name": "break_start",
+          "source": "gold.market_calendar.break_start",
+          "type": "datetime"
+        },
+        {
+          "name": "break_end",
+          "source": "gold.market_calendar.break_end",
+          "type": "datetime"
+        },
+        {
+          "name": "interruptions",
+          "source": "silver.session_interruptions",
+          "type": "array"
+        },
+        {
+          "name": "holiday_name",
+          "source": "gold.market_calendar.holiday_name",
+          "type": "string"
+        },
+        {
+          "name": "special_open",
+          "source": "gold.market_calendar.special_open",
+          "type": "boolean"
+        },
+        {
+          "name": "special_close",
+          "source": "gold.market_calendar.special_close",
+          "type": "boolean"
+        },
+        {
+          "name": "market_effect",
+          "source": "gold.market_calendar.market_effect",
+          "type": "string"
+        },
+        {
+          "name": "authority_type",
+          "source": "gold.market_calendar.authority_type",
+          "type": "string"
+        },
+        {
+          "name": "authority_name",
+          "source": "gold.market_calendar.authority_name",
+          "type": "string"
+        },
+        {
+          "name": "authority_verified_at",
+          "source": "gold.market_calendar.authority_verified_at",
+          "type": "datetime"
+        },
+        {
+          "name": "source_kind",
+          "source": "gold.market_calendar.source_kind",
+          "type": "string"
+        },
+        {
+          "name": "source_version",
+          "source": "gold.market_calendar.source_version",
+          "type": "string"
+        },
+        {
+          "name": "rule_id",
+          "source": "gold.market_calendar.rule_id",
+          "type": "string"
+        },
+        {
+          "name": "supersedes_assertion_id",
+          "source": "gold.market_calendar.supersedes_assertion_id",
+          "type": "string"
+        },
+        {
+          "name": "effective_from",
+          "source": "gold.market_calendar.effective_from",
+          "type": "datetime"
+        },
+        {
+          "name": "effective_to",
+          "source": "gold.market_calendar.effective_to",
+          "type": "datetime"
+        },
+        {
+          "name": "known_from",
+          "source": "gold.market_calendar.known_from",
+          "type": "datetime"
+        },
+        {
+          "name": "known_to",
+          "source": "gold.market_calendar.known_to",
+          "type": "datetime"
+        },
+        {
+          "name": "capture_id",
+          "source": "gold.market_calendar.capture_id",
+          "type": "string"
+        }
+      ],
+      "kind": "custom",
+      "model_id": "MarketCalendar",
+      "parameters": [
+        {
+          "description": "Stable internal calendar identifier",
+          "name": "calendar_id",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "description": "Exchange name or pandas alias",
+          "name": "exchange",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "mic",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "start_date",
+          "required": true,
+          "type": "date"
+        },
+        {
+          "name": "end_date",
+          "required": true,
+          "type": "date"
+        },
+        {
+          "name": "include_closed",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "include_breaks",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "name": "include_interruptions",
+          "required": false,
+          "type": "boolean"
+        },
+        {
+          "default": "session_date",
+          "name": "session_label",
+          "required": false,
+          "type": "string",
+          "values": [
+            "session_date",
+            "trade_date"
+          ]
+        },
+        {
+          "name": "timezone",
+          "required": false,
+          "type": "string"
+        },
+        {
+          "name": "as_of",
+          "required": false,
+          "type": "date"
+        },
+        {
+          "name": "knowledge_at",
+          "required": false,
+          "type": "datetime"
+        },
+        {
+          "name": "provider",
+          "required": false,
+          "type": "string"
+        }
+      ],
+      "primary_temporal_scenario": "lunar_holiday_correction",
+      "route": "/api/v1/reference/market-calendar",
+      "sql": "SELECT * FROM gold.market_calendar WHERE calendar_id = $calendar_id AND session_date BETWEEN $start_date AND $end_date AND ($include_closed OR market_effect <> 'closed') ORDER BY session_date",
+      "temporal_capabilities": [
+        "current_corrected",
+        "effective_on",
+        "known_at",
+        "delta_snapshot"
+      ]
+    }
+  ],
+  "odp_version": "openbb==4.7.2"
+}
