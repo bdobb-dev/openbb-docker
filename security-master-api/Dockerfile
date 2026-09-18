@@ -1,4 +1,4 @@
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 # security-master-api: the Security Master Browser's service (API) and its
 # acquisition worker, one image. Built with the REPO ROOT as build context

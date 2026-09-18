@@ -1,10 +1,14 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Chart routes on live-grid, including the tick/history join."""
 
-from datetime import datetime
+from datetime import date, datetime
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app import studies
 from app.main import create_app
 
 D = lambda s: datetime.fromisoformat(s)  # noqa: E731
@@ -97,6 +101,47 @@ def test_series_works_with_no_recorder(monkeypatch):
     no_recorder_client = TestClient(create_app(api_key="test-key"))
     body = no_recorder_client.get("/series", params={"symbol": "AAPL"}).json()
     assert body["cache"]["rows_from_ticks"] == 0
+
+
+def test_live_grid_studies_requests_a_short_lookback_not_a_year(monkeypatch):
+    """Pins the window and the anchor /live_grid_studies asks for.
+
+    A year of bars per symbol, fired at once for a fifty-symbol watchlist,
+    is what made this route expensive. But "short" is not the requirement
+    either, and a five-day window was measurably too short: `1m` is a
+    request, not a guarantee -- where kdb holds no recorded ticks the series
+    falls back to vendor DAILY history, so five days delivered four bars and
+    RSI(14) reported a confident 78.5 off them, because Wilder is an EWM with
+    no min_periods.
+
+    So the span is pinned at both ends of that trade-off: wide enough that
+    daily bars clear RSI(14)'s warmup (~40 calendar days is ~28 trading
+    days), narrow enough to stay a fraction of a year. The anchor is pinned
+    too -- an anchored VWAP without an anchor is a cumulative mean from
+    wherever the window starts.
+    """
+    captured = {}
+
+    async def fake_history(symbol, interval, start, end, provider="kdb"):
+        captured["interval"] = interval
+        captured["start"] = start
+        captured["end"] = end
+        return ([bar("2025-06-10T13:58:00"), bar("2025-06-10T13:59:00")],
+                {"cache": "hit", "rows_from_cache": 2, "rows_from_upstream": 0,
+                 "gaps_fetched": 0, "upstream_ms": 0.0, "kdb_ms": 1.0})
+
+    monkeypatch.setattr("app.main.fetch_series", fake_history)
+    monkeypatch.setenv("LIVE_GRID_CHART", "false")
+    no_recorder_client = TestClient(create_app(api_key="test-key"))
+    no_recorder_client.get("/live_grid_studies", params={"symbol": "AAPL"})
+
+    assert captured["interval"] == "1m"
+    span = (date.fromisoformat(captured["end"]) - date.fromisoformat(captured["start"])).days
+    assert span == 40
+    # Enough trading days for RSI(14) even when the bars come back daily,
+    # and still a fraction of the 365-day default this replaced.
+    assert span * 5 / 7 > studies.RSI_PERIOD + 1
+    assert span < 90
 
 
 def _extract_braced_block(text, marker):

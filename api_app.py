@@ -1,3 +1,6 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """FastAPI app factory for `openbb-api` — the Platform REST app with
 Private Network Access CORS enabled.
 
@@ -97,6 +100,35 @@ async def _require_basic_auth(request, call_next):
     return await call_next(request)
 
 
+def read_workspace_apps(path: str | None = None) -> list:
+    """The apps this deployment publishes, read from disk.
+
+    Module level so it can be unit-tested without an OpenBB install: this file
+    has no top-level imports (see the factory), so importing it is cheap. The
+    first cut inlined this in the route and referenced `os` -- which is not in
+    scope here, because nothing is -- and every request 500'd.
+
+    A missing file is an empty catalogue, not an error: the mount may not be
+    in place yet, and an app list is not worth failing a request over.
+    """
+    # pylint: disable=import-outside-toplevel
+    import json
+    import os
+    from pathlib import Path
+
+    resolved = Path(
+        path
+        or os.environ.get("WORKSPACE_APPS_PATH", "/root/OpenBBUserData/workspace_apps.json")
+    )
+    if not resolved.exists():
+        return []
+    try:
+        apps = json.loads(resolved.read_text(encoding="utf-8"))
+    except ValueError:
+        return []
+    return apps if isinstance(apps, list) else [apps]
+
+
 def main():
     """Build the OpenBB Platform REST app with private-network CORS and auth."""
     # pylint: disable=import-outside-toplevel
@@ -150,6 +182,24 @@ def main():
     # openbb-platform-api adds its own CORS layer after this factory returns.
     # Innermost still covers every path: middleware wraps the whole app, not a
     # router.
+    # /apps.json, ours -- registered here so openbb-platform-api's
+    # `has_root_apps` check finds it and does NOT install its own.
+    #
+    # Two reasons to take it over. Its version EXTENDS the file with OpenBB's
+    # bundled default apps (IMF Explorer, FOMC Documents, ...), which is not
+    # what this deployment publishes; and it drops any app unless some tab has
+    # EVERY widget in this server's own widgets.json, which silently discards
+    # apps built on other backends' widgets or on bdobb's built-ins. bdobb
+    # resolves a card by widget id across every configured backend, so that
+    # filter throws away apps that would have worked.
+    @app.get("/apps.json")
+    async def workspace_apps():  # pylint: disable=unused-variable
+        """The apps this deployment publishes, verbatim."""
+        # pylint: disable=import-outside-toplevel
+        from fastapi.responses import JSONResponse as _JSONResponse
+
+        return _JSONResponse(content=read_workspace_apps())
+
     app.user_middleware.append(
         Middleware(BaseHTTPMiddleware, dispatch=_require_basic_auth)
     )

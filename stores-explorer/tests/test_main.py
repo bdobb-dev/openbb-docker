@@ -1,3 +1,6 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Server-layer tests for the Delta half. Every backend call is injected
 -- no real Delta store or kdb+ is ever touched.
 
@@ -34,6 +37,7 @@ DEFAULT_DESCRIBE = {
     "row_count": 42,
     "date_range": ["2026-01-01", "2026-08-07"],
     "columns": [{"name": "close", "dtype": "float64"}],
+    "days": 1,
 }
 
 
@@ -61,8 +65,8 @@ def make_client(libraries=("openbb",), symbols_by_library=None, series_response=
 
     def delta_history_fn(library, symbol):
         _check(library, symbol)
-        return [{"version": 1, "timestamp": "2026-09-02T10:00:00"},
-                {"version": 0, "timestamp": "2026-09-01T10:00:00"}]
+        return [{"version": 1, "timestamp": "2026-09-02T10:00:00.000Z"},
+                {"version": 0, "timestamp": "2026-09-01T10:00:00.000Z"}]
 
     def delta_read_fn(library, symbol, start=None, end=None, tail_rows=1000, as_of=None):
         _check(library, symbol)
@@ -94,17 +98,32 @@ def test_widgets_json_declares_delta_explorer():
     assert symbol_param["optionsEndpoint"] == "delta/symbols"
     assert symbol_param["optionsParams"] == {"library": "$library"}
     assert "arctic_explorer" not in body
+    assert "span" in w["description"]  # a symbol may span day tables; the widget says so
+    for name in ("start", "end"):
+        p = next(p for p in w["params"] if p["paramName"] == name)
+        assert p["type"] == "date" and p["show"] is False  # the strip renders them
+
+
+def test_delta_describe_passes_days_through():
+    r = make_client().get("/delta/describe", params={"library": "openbb", "symbol": "AAPL"})
+    assert r.json()["days"] == 1
 
 
 def test_delta_libraries_lists_libraries():
     r = make_client(libraries=("openbb", "ticks"))
-    assert r.get("/delta/libraries").json() == ["openbb", "ticks"]
+    assert r.get("/delta/libraries").json() == [
+        {"label": "openbb", "value": "openbb"},
+        {"label": "ticks", "value": "ticks"},
+    ]
 
 
 def test_delta_symbols_lists_symbols_for_library():
     client = make_client(symbols_by_library={"openbb": ["AAPL", "MSFT"]})
     r = client.get("/delta/symbols", params={"library": "openbb"})
-    assert r.json() == ["AAPL", "MSFT"]
+    assert r.json() == [
+        {"label": "AAPL", "value": "AAPL"},
+        {"label": "MSFT", "value": "MSFT"},
+    ]
 
 
 def test_delta_symbols_unknown_library_is_404():
@@ -223,7 +242,10 @@ def test_widgets_json_declares_kdb_explorer():
 
 def test_kdb_tables_lists_tables():
     r = make_kdb_client(tables=("trades", "quotes"))
-    assert r.get("/kdb/tables").json() == ["trades", "quotes"]
+    assert r.get("/kdb/tables").json() == [
+        {"label": "trades", "value": "trades"},
+        {"label": "quotes", "value": "quotes"},
+    ]
 
 
 def test_kdb_schema_returns_columns():
@@ -266,6 +288,122 @@ def test_kdb_schema_error_does_not_leak_credentials():
     assert "topsecret123" not in body
     assert "s3://minio.example.ts.net" not in body
     assert "<redacted>" in body
+
+
+# ---------- apps.json: the Ep. 11 example dashboard ----------
+
+def test_apps_json_publishes_the_example_dashboard():
+    body = make_client().get("/apps.json").json()
+    assert isinstance(body, list) and len(body) == 1
+    app_ = body[0]
+    # bdobb's parseAppsJson guarantees only `name` and `tabs`; both must exist.
+    assert app_["name"] == "Example - Version 11.0.0"
+    assert app_["tabs"]
+
+    layout = list(app_["tabs"].values())[0]["layout"]
+    widget_ids = [item["i"] for item in layout]
+    assert widget_ids.count("delta_explorer") == 2   # the ticks, and the cache itself
+    assert "kdb_explorer" in widget_ids
+
+    libraries = {item["state"]["params"].get("library") for item in layout}
+    assert libraries >= {"ticks", "ticks_live"}
+
+
+def test_apps_json_only_names_widgets_this_service_publishes():
+    """The assertion that matters over time: rename a widget in widgets.json
+    without following it here and this fails, rather than shipping a dashboard
+    of cards that silently never resolve."""
+    client = make_client()
+    published = set(client.get("/widgets.json").json())
+    layout = list(client.get("/apps.json").json()[0]["tabs"].values())[0]["layout"]
+    assert {item["i"] for item in layout} <= published
+
+
+def test_apps_json_pins_only_values_that_do_not_age():
+    """A pinned symbol is right only while it stays right.
+
+    `ticks` holds a fixed historical sample, so its symbol is pinned. The
+    `ticks_live` symbols are date-stamped (AAPL_2026_09_03), so pinning one
+    would be stale within a day -- that card names the library and lets the
+    cascading picker fill the symbol from what the store actually holds.
+    """
+    layout = list(make_client().get("/apps.json").json()[0]["tabs"].values())[0]["layout"]
+    by_lib = {i["state"]["params"].get("library"): i["state"]["params"] for i in layout}
+
+    assert by_lib["ticks"]["symbol"] == "msft_trade_2023_05_12"
+    assert by_lib["ticks_live"]["symbol"] == "", "date-stamped symbols must not be pinned"
+
+
+# ---------- the image must carry what the routes read ----------
+
+def test_dockerfile_copies_every_file_the_routes_read():
+    """A route that reads a file from disk is a 500 if the image lacks it.
+
+    widgets.json was copied and apps.json was not, so /apps.json answered 500
+    in the built image while every test here passed against the source tree.
+    This asserts the two never drift again.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    dockerfile = (root / "Dockerfile").read_text()
+    main = (root / "app" / "main.py").read_text()
+
+    for name in ("widgets.json", "apps.json"):
+        assert f'/ "{name}"' in main, f"{name} is no longer read by main.py; update this test"
+        assert f"stores-explorer/{name}" in dockerfile, f"Dockerfile does not COPY {name}"
+
+
+def test_dockerfile_installs_unpublished_siblings_before_mcp_stores():
+    """mcp_stores depends on openbb-deltalake, which is not on PyPI.
+
+    pip cannot resolve it from the index, so it must already be installed when
+    `pip install /srv/mcp_stores` runs. Ordering, not presence, is the bug:
+    the build failed with "No matching distribution found for openbb-deltalake".
+    """
+    from pathlib import Path
+
+    dockerfile = (Path(__file__).resolve().parent.parent / "Dockerfile").read_text()
+    assert dockerfile.index("pip install /srv/openbb-deltalake") < dockerfile.index(
+        "pip install /srv/mcp_stores"
+    )
+
+
+def test_every_options_endpoint_returns_the_shape_bdobb_can_read():
+    """A picker fed bare strings is EMPTY, and nothing reports an error.
+
+    bdobb normalises fetched option lists through toOptions, which skips any
+    entry that is not an object with a string `label`. Returning list[str]
+    from an optionsEndpoint therefore produced a symbol picker with nothing
+    in it and no failure anywhere to explain why. This walks every
+    optionsEndpoint widgets.json actually declares.
+    """
+    # Every backend call injected: this walks the picker endpoints for BOTH
+    # widgets, and make_client alone would leave kdb_tables pointing at a real
+    # q connection.
+    client = TestClient(create_app(
+        delta_libraries_fn=lambda: ["ticks"],
+        delta_symbols_fn=lambda library: ["AAPL"],
+        kdb_tables_fn=lambda: ["trades"],
+    ))
+    widgets = client.get("/widgets.json").json()
+
+    endpoints = {
+        p["optionsEndpoint"]
+        for w in widgets.values()
+        for p in w.get("params", [])
+        if p.get("optionsEndpoint")
+    }
+    assert endpoints, "widgets.json declares no optionsEndpoint; this test is stale"
+
+    for ep in sorted(endpoints):
+        params = {"library": "openbb"} if "symbol" in ep else {}
+        body = client.get("/" + ep.lstrip("/"), params=params).json()
+        assert isinstance(body, list) and body, f"{ep} returned no list"
+        for entry in body:
+            assert isinstance(entry, dict), f"{ep} returned a bare {type(entry).__name__}"
+            assert isinstance(entry.get("label"), str), f"{ep} entry has no string label"
+            assert entry.get("value") is not None, f"{ep} entry has no value"
 
 
 def test_dockerfile_installs_unpublished_siblings_before_mcp_stores():

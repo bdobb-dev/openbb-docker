@@ -1,3 +1,6 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 # live-grid: OpenBB Workspace live_grid backend streaming EODHD websocket
 # prices, plus tick recording and a unified chart over kdb+ (Ep. 10).
 # Loopback-only; Tailscale Serve publishes it (see repo compose).
@@ -26,6 +29,9 @@ COPY live-grid/app/ app/
 # sibling kdb-ws/ is reachable -- same reasoning as the kdb-store COPY)
 COPY kdb-ws/live-chart.html app/static/live-chart.html
 COPY live-grid/widgets.json ./
+# apps.json is served by GET /apps.json; the route reads it from disk, so
+# leaving it out of the image is a 500, not a missing feature.
+COPY live-grid/apps.json ./
 COPY live-grid/macros/ macros/
 RUN pip install . && chmod 644 app/static/plotly.min.js
 CMD ["uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "6903"]

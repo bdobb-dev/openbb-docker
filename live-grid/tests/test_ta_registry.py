@@ -1,10 +1,15 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Registry shape, convention pinning, and the first five indicators."""
 
 import polars as pl
 import pytest
 
 from app.ta.compute import compute
-from app.ta.registry import REGISTRY, get, resolve
+from app.ta.iterative import ITERATIVE
+from app.ta.payload import _NUMERIC
+from app.ta.registry import REGISTRY, catalog, get, resolve
 from tests.ta_helpers import col, fixture_frame
 
 
@@ -14,6 +19,23 @@ def test_every_registered_indicator_states_its_conventions():
         assert ind.convention.strip(), f"{name} has no pinned convention"
         assert ind.pane in ("price", "own"), name
         assert isinstance(ind.repaints, bool), name
+        # `sessioned` runs `build` against a once-per-session frame that only
+        # `session_agg` knows how to produce; without it the misconfiguration
+        # fails at call time with a bare "'NoneType' object is not callable".
+        if ind.sessioned:
+            assert ind.session_agg is not None, f"{name} is sessioned but has no session_agg"
+        # `iterative` routes compute() through app.ta.iterative.ITERATIVE by
+        # name; an indicator that claims iterative=True but isn't a key there
+        # would fail the same bare way at call time.
+        if ind.iterative:
+            assert name in ITERATIVE, f"{name} is iterative but missing from ITERATIVE"
+        # parse_indicators._coerce only casts a param to a number when its
+        # name is listed in _NUMERIC -- everything else stays a raw string.
+        # A numeric default not listed here is the exact bug Fix 1 patched:
+        # every numeric param this indicator declares must be in that list.
+        for key, value in ind.params.items():
+            if key != "style" and isinstance(value, (int, float)):
+                assert key in _NUMERIC, f"{name}'s {key!r} default is numeric but missing from _NUMERIC"
 
 
 def test_resolve_applies_defaults_then_overrides():
@@ -34,8 +56,9 @@ def test_resolve_accepts_a_style_override_but_still_rejects_unknown_keys():
 
 
 def test_get_rejects_an_unknown_indicator():
-    with pytest.raises(KeyError, match="ichimoku"):
-        get("ichimoku")
+    # NOT "ichimoku": that has been a registered indicator since v12.0.0.
+    with pytest.raises(KeyError, match="renko"):
+        get("renko")
 
 
 def test_rsi_reads_adjusted_close_and_ignores_raw_close():
@@ -84,10 +107,83 @@ def test_rsi_carries_thirty_seventy_guides():
     assert get("rsi").guides == [30.0, 70.0]
 
 
-def test_tier_one_is_twenty_three_indicators_with_twelve_eodhd_maps():
-    assert len(REGISTRY) == 23, sorted(REGISTRY)  # 22 tier-1 + avwap
+def test_registry_is_thirty_four_indicators_with_twelve_eodhd_maps():
+    assert len(REGISTRY) == 34, sorted(REGISTRY)  # 33 + pivots_standard
     mapped = [n for n, i in REGISTRY.items() if i.eodhd is not None]
     assert len(mapped) == 12, sorted(mapped)  # cci is local-only (see registry)
+
+
+# Studies picker (v12.3.1, addendum 2): the nine groups of the layout pack,
+# verbatim and in this order.
+GROUPS = ["Moving averages", "Bands & channels", "Trend", "Anchored & volume",
+          "Session levels", "Momentum", "Trend strength", "Volume", "Volatility"]
+
+
+def test_catalog_projects_group_title_description_wiki():
+    entries = {e["name"]: e for e in catalog()}
+    assert entries["sma"]["group"] == "Moving averages"
+    assert entries["sma"]["full"] == "Simple moving average"
+    assert entries["bbands"]["group"] == "Bands & channels"
+    assert entries["rsi"]["group"] == "Momentum"
+    assert entries["obv"]["group"] == "Volume"
+    assert entries["atr"]["group"] == "Volatility"
+    assert entries["sar"]["group"] == "Trend"
+    assert entries["vwap"]["group"] == "Anchored & volume"
+    assert entries["pivots_standard"]["group"] == "Session levels"
+    assert entries["adx"]["group"] == "Trend strength"
+    for e in entries.values():
+        assert e["group"] in GROUPS, e["name"]
+        assert e["full"].strip() and e["full"] != e["name"], e["name"]
+        # `title` is `full` under B1's key, kept for one release.
+        assert e["title"] == e["full"], e["name"]
+        assert e["desc"].strip(), e["name"]
+        assert len(e["description"].split()) >= 8, e["name"]
+        assert e["wiki"] is None or e["wiki"].startswith("https://en.wikipedia.org/wiki/"), e["name"]
+
+
+def test_every_group_is_used():
+    assert {e["group"] for e in catalog()} == set(GROUPS)
+
+
+def test_every_param_carries_a_label_and_every_float_a_step():
+    """The picker's editor prints these; nothing about a parameter's
+    presentation is hardcoded client-side. An int steps by 1, so only a
+    float needs the registry to say what its spinner does."""
+    for e in catalog():
+        for p in e["params"]:
+            assert p["label"].strip() and p["label"] != p["name"], (e["name"], p["name"])
+            if p["float"]:
+                assert p["step"] > 0, (e["name"], p["name"])
+            else:
+                assert "step" not in p, (e["name"], p["name"])
+
+
+def test_the_packs_metadata_reaches_the_catalog_verbatim():
+    entries = {e["name"]: e for e in catalog()}
+
+    def params(name):
+        return {p["name"]: p for p in entries[name]["params"]}
+
+    assert entries["sma"]["desc"] == "Arithmetic mean of adjusted close over N bars."
+    assert params("sma")["period"]["label"] == "Length"
+
+    assert entries["bbands"]["full"] == "Bollinger Bands"
+    assert entries["bbands"]["desc"] == "Mid = SMA(N); bands = mid ± k · population σ."
+    assert params("bbands")["period"]["label"] == "Length"
+    assert params("bbands")["k"]["label"] == "StdDev multiplier"
+    assert params("bbands")["k"]["step"] == 0.5
+
+    assert entries["macd"]["full"] == "MACD"
+    assert entries["macd"]["desc"] == "EMA(fast) − EMA(slow); signal is its EMA."
+    assert [(p["name"], p["label"]) for p in entries["macd"]["params"]] == [
+        ("fast", "Fast EMA"), ("slow", "Slow EMA"), ("signal", "Signal")]
+
+    assert entries["sar"]["full"] == "Parabolic SAR"
+    assert entries["sar"]["desc"] == "Wilder stop-and-reverse dots. Path-dependent."
+    assert params("sar")["acceleration"]["label"] == "Accel. step"
+    assert params("sar")["acceleration"]["step"] == 0.01
+    assert params("sar")["maximum"]["label"] == "Accel. max"
+    assert params("sar")["maximum"]["step"] == 0.01
 
 
 def test_resolve_rejects_a_style_that_is_not_a_mapping():
@@ -142,3 +238,10 @@ def test_avwap_is_null_on_bars_without_trade_data():
 def test_avwap_rejects_a_malformed_anchor():
     with pytest.raises(ValueError):
         compute(fixture_frame(), [resolve("avwap", anchor="not-a-time")])
+
+
+def test_resolve_rejects_a_source_that_is_neither_local_nor_eodhd():
+    """A macro YAML `source:` key reaches resolve() without passing
+    parse_indicators, so the check has to live here too."""
+    with pytest.raises(ValueError, match="local.*eodhd"):
+        resolve("sma", source="vendor")

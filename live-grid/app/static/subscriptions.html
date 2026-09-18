@@ -1,11 +1,39 @@
+<!-- Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 <!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <title>Subscriptions</title>
 <style>
-  :root { color-scheme: light dark; --line: #8883; --dim: #8888; --bad: #c33; }
-  body { font: 13px/1.5 system-ui, sans-serif; margin: 0; padding: 12px; }
+  /*
+   * Both colours are set EXPLICITLY, and that is the point.
+   *
+   * This page is framed by the desktop client, and a frame whose body sets no
+   * background shows the embedder's -- which is white -- while `color-scheme`
+   * still hands the UA's dark-mode default text colour. White on white: the
+   * page rendered perfectly and read as blank, with only the borders visible.
+   * Relying on the UA for one of the pair and not the other is what broke it.
+   */
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --line: #8883;
+    --dim: #8888;
+    --bad: #c33;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0d1117; --fg: #e6edf3; --bad: #ef5350; }
+  }
+  body {
+    font: 13px/1.5 system-ui, sans-serif;
+    margin: 0;
+    padding: 12px;
+    background: var(--bg);
+    color: var(--fg);
+  }
   header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
   h1 { font-size: 14px; margin: 0; font-weight: 600; }
   .bar { flex: 1; height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
@@ -91,12 +119,44 @@ function render(d) {
   }
 }
 
+/*
+ * Credentials handed over by the host that framed this page.
+ *
+ * This page is public (it is the one path the auth middleware exempts) but
+ * everything it calls is not, because /api/subscriptions mutates durable
+ * state. A browser tab needs none of this -- it authenticated to load the
+ * page and the browser repeats those credentials on every same-origin
+ * request. An IFRAME cannot: it navigates itself, carries no header, and has
+ * no credentials to repeat. So the host sends them over postMessage.
+ */
+let authHeaders = {};
+
+window.addEventListener("message", (e) => {
+  // The host replies to our own parent only; anything else is another page
+  // talking past us.
+  if (e.source !== window.parent) return;
+  const d = e.data;
+  if (!d || d.type !== "openbb-auth" || typeof d.headers !== "object" || d.headers === null) return;
+  authHeaders = d.headers;
+  start();
+});
+
+// Announce ourselves. The host answers with openbb-auth when it has a
+// credential to send, and with the card's parameters either way. Harmless
+// when there is no host: a top-level page's parent is itself.
+if (window.parent !== window) {
+  window.parent.postMessage({ type: "openbb-connect" }, "*");
+}
+
 async function call(method, url, body) {
   $("err").textContent = "";
   try {
     const r = await fetch(url, {
       method,
-      headers: body ? { "content-type": "application/json" } : undefined,
+      headers: {
+        ...authHeaders,
+        ...(body ? { "content-type": "application/json" } : {}),
+      },
       body: body ? JSON.stringify(body) : undefined,
     });
     const d = await r.json();
@@ -115,8 +175,29 @@ $("add").onsubmit = (e) => {
   call("POST", "/api/subscriptions", { symbol: v });
 };
 
-call("GET", "/api/subscriptions");
-setInterval(() => call("GET", "/api/subscriptions"), 15000);
+/*
+ * Load once, then poll -- but not before the credentials arrive.
+ *
+ * Firing immediately cost a guaranteed 401 on every single load: the first
+ * GET went out before the host could answer openbb-connect. `started` makes
+ * whichever comes first win, so the handshake is a fast path rather than a
+ * precondition.
+ *
+ * The timer is the fallback for a host that never answers -- one with no
+ * credential to send, or a plain browser tab, where the browser supplies its
+ * own Basic auth and none of this is needed.
+ */
+let started = false;
+
+function start() {
+  if (started) return;
+  started = true;
+  call("GET", "/api/subscriptions");
+  setInterval(() => call("GET", "/api/subscriptions"), 15000);
+}
+
+if (window.parent === window) start();
+else setTimeout(start, 1000);
 </script>
 </body>
 </html>

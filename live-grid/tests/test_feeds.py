@@ -1,3 +1,6 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Tests for app.feeds.FeedManager (SDK client mocked via factory)."""
 
 import asyncio
@@ -365,3 +368,42 @@ class TestLiveness:
         t["now"] += feeds_mod.STALE_AFTER + 1
         asyncio.run(m._check_liveness(when=self.MARKET_SATURDAY))
         assert not m._rebuild_pending
+
+
+# ---------- forex sessions: a dead forex feed must be catchable ----------
+
+def test_forex_ticks_are_expected_through_the_week():
+    """Previously always False, so a five-day forex outage went unflagged."""
+    from datetime import datetime, timezone
+    from app.feeds import _expect_ticks
+
+    at = lambda d, h: datetime(2026, 9, d, h, 0, tzinfo=timezone.utc)
+    # 2026-09-07 is a Monday.
+    for day in (7, 8, 9, 10):               # Mon-Thu, continuous
+        assert _expect_ticks("forex", at(day, 3)) is True
+        assert _expect_ticks("forex", at(day, 18)) is True
+
+
+def test_forex_is_not_expected_when_the_market_may_be_shut():
+    """Narrower than the true session on purpose: a window that claims open
+    while the market is shut cries wolf every STALE_AFTER."""
+    from datetime import datetime, timezone
+    from app.feeds import _expect_ticks
+
+    at = lambda d, h: datetime(2026, 9, d, h, 0, tzinfo=timezone.utc)
+    assert _expect_ticks("forex", at(11, 20)) is True    # Fri before either close
+    assert _expect_ticks("forex", at(11, 21)) is False   # Fri, earliest close
+    assert _expect_ticks("forex", at(12, 12)) is False   # Sat, shut
+    assert _expect_ticks("forex", at(13, 21)) is False   # Sun, before latest open
+    assert _expect_ticks("forex", at(13, 22)) is True    # Sun, open either way
+
+
+def test_other_feeds_are_unchanged():
+    from datetime import datetime, timezone
+    from app.feeds import _expect_ticks
+
+    assert _expect_ticks("crypto") is True
+    weekday_open = datetime(2026, 9, 9, 15, 0, tzinfo=timezone.utc)
+    assert _expect_ticks("us", weekday_open) is True
+    assert _expect_ticks("us", datetime(2026, 9, 12, 15, 0, tzinfo=timezone.utc)) is False
+    assert _expect_ticks("nonesuch", weekday_open) is False

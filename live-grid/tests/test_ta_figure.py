@@ -1,12 +1,16 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Multi-pane figure assembly and tail deltas."""
 
+from datetime import date
 from itertools import pairwise
 
 import polars as pl
 
 from app.ta.compute import compute
 from app.ta.figure import build_ta_figure, delta, trace_index
-from app.ta.panes import assign
+from app.ta.panes import Pane, Series, assign
 from app.ta.registry import resolve
 from app.ta.sources import Annotation
 from tests.ta_helpers import col, cols, fixture_frame
@@ -120,6 +124,26 @@ def test_a_delta_includes_the_candlestick_ohlc():
     assert set(d["traces"]["0"]) == {"open", "high", "low", "close"}
 
 
+def test_a_delta_carries_its_own_x_for_a_displaced_series():
+    """A render['time_offset'] series must not fall back to the shared "x" --
+    that array is the tail's own dates, which is only right at offset 0
+    (Fix 2). Reproduces the finding's repro: a 4-bar frame, time_offset=2."""
+    from app.ta.panes import shift_times
+
+    frame = pl.DataFrame({
+        "date": [date(2026, 1, 1), date(2026, 1, 2),
+                 date(2026, 1, 3), date(2026, 1, 4)],
+        "open": [1.0] * 4, "high": [1.0] * 4, "low": [1.0] * 4, "close": [1.0] * 4,
+        "span": [10.0, 11.0, 12.0, 13.0],
+    })
+    panes = [Pane("price", 1.0, True,
+                  [Series("span", "Span", {"time_offset": 2})])]
+    d = delta(frame, panes, start_row=2)
+    expected_x = shift_times(frame["date"].to_list(), 2)[2:]
+    assert d["traces"]["1"]["x"] == [str(v) for v in expected_x]
+    assert d["traces"]["1"]["x"] != d["x"], "must not reuse the shared x"
+
+
 def test_a_nan_in_a_series_serialises_as_null_rather_than_raising():
     """Starlette renders with allow_nan=False: a surviving NaN RAISES.
 
@@ -177,3 +201,19 @@ def test_an_inf_in_a_series_serialises_as_null_rather_than_raising():
     fig = build_ta_figure("AAPL", poisoned, panes)
     body = JSONResponse(fig).body.decode()  # raises if any inf survived
     assert json.loads(body)["data"][1]["y"][5] is None
+
+
+def test_a_series_with_a_time_offset_gets_its_own_x():
+    frame = pl.DataFrame({
+        "date": [date(2026, 1, 1), date(2026, 1, 2), date(2026, 1, 3)],
+        "open": [1.0, 2.0, 3.0], "high": [1.0, 2.0, 3.0],
+        "low": [1.0, 2.0, 3.0], "close": [1.0, 2.0, 3.0],
+        "lead": [4.0, 5.0, 6.0],
+    })
+    pane = Pane("price", 3.0, True,
+                [Series("lead", "Lead", {"type": "line", "time_offset": 1})])
+    figure = build_ta_figure("AAPL", frame, [pane])
+    candles, lead = figure["data"][0], figure["data"][1]
+    assert candles["x"][-1] == "2026-01-03"
+    assert lead["x"][-1] == "2026-01-04"
+    assert "time_offset" not in lead.get("line", {})

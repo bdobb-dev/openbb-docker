@@ -1,3 +1,6 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Tests for app.symbol_meta."""
 
 from unittest.mock import MagicMock
@@ -51,7 +54,21 @@ class TestGetMeta:
         client.get_fundamentals_data.side_effect = RuntimeError("boom")
         rows = get_meta(["FAIL"], client)
         assert rows[0] == {"symbol": "FAIL", "name": None, "logo_url": None,
-                           "week52_high": None, "week52_low": None}
+                           "week52_high": None, "week52_low": None,
+                           "asset": "us"}
+
+    def test_asset_class_rides_with_the_row(self):
+        # The client reads the session filter off this field: `us` has a
+        # regular session, crypto and forex trade round the clock.
+        rows = get_meta(["AAPL", "BTC-USD", "EURUSD"], _client())
+        assert [r["asset"] for r in rows] == ["us", "crypto", "forex"]
+
+    def test_a_blank_row_carries_the_asset_class_too(self):
+        # A failed lookup still has to say which session the symbol keeps --
+        # the toggle must not disappear just because the logo did.
+        client = MagicMock()
+        client.get_fundamentals_data.side_effect = RuntimeError("boom")
+        assert get_meta(["BTC-USD"], client)[0]["asset"] == "crypto"
 
     def test_na_values_coerce_to_none(self):
         rows = get_meta(["X"], _client({

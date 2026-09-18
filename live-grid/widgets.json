@@ -32,16 +32,19 @@
       "renderFn": [
        "logo"
       ],
-      "width": 40,
-      "enableCellChangeWs": false
+      "width": 32,
+      "enableCellChangeWs": false,
+      "pinned": "left"
      },
      {
       "field": "symbol",
+      "width": 72,
       "headerName": "Symbol",
       "pinned": "left"
      },
      {
       "field": "price",
+      "width": 88,
       "headerName": "Last",
       "renderFn": [
        "showCellChange"
@@ -49,18 +52,22 @@
       "renderFnParams": {
        "colorValueKey": "change"
       },
-      "align": "right"
+      "align": "right",
+      "abbreviate": false
      },
      {
       "field": "change",
+      "width": 84,
       "headerName": "Chg",
       "renderFn": [
        "greenRed"
       ],
-      "align": "right"
+      "align": "right",
+      "abbreviate": false
      },
      {
       "field": "change_percent",
+      "width": 84,
       "headerName": "% Chg",
       "renderFn": [
        "greenRed"
@@ -69,13 +76,48 @@
       "align": "right"
      },
      {
-      "field": "day_low",
-      "headerName": "Day Low",
+      "field": "rsi",
+      "width": 116,
+      "headerName": "RSI",
+      "renderFn": ["rangeBar"],
+      "renderFnParams": { "min": 0, "max": 100, "guides": [30, 50, 70], "bands": [30, 70] }
+     },
+     {
+      "field": "avwap",
+      "width": 88,
+      "headerName": "VWAP",
+      "headerTooltip": "The anchored VWAP itself, in price. Trade-true: the size-weighted mean of actual trades since VWAP Start, never a (H+L+C)/3 approximation. Blank when the symbol has no trade data in the window.",
       "enableCellChangeWs": false,
-      "align": "right"
+      "align": "right",
+      "abbreviate": false
+     },
+     {
+      "field": "avwap_dev",
+      "width": 84,
+      "headerName": "vs VWAP",
+      "renderFn": ["rangeBar"],
+      "renderFnParams": { "signed": true }
+     },
+     {
+      "field": "vwap_start",
+      "width": 80,
+      "headerName": "Anchor",
+      "headerTooltip": "Where the anchored VWAP starts. Type 10:00 for 10am your time every day, or a full date and time to pin it to one moment. Blank anchors at the UTC day start.",
+      "editable": true,
+      "enableCellChangeWs": false,
+      "align": "center"
+     },
+     {
+      "field": "day_low",
+      "width": 84,
+      "headerName": "Low",
+      "enableCellChangeWs": false,
+      "align": "right",
+      "abbreviate": false
      },
      {
       "field": "day_range",
+      "width": 64,
       "headerName": "Day",
       "renderFn": [
        "rangeBar"
@@ -83,68 +125,83 @@
       "renderFnParams": {
        "lowKey": "day_low",
        "highKey": "day_high",
-       "palette": "day"
+       "palette": "day",
+       "valueKey": "price"
       },
       "enableCellChangeWs": false
      },
      {
       "field": "day_high",
-      "headerName": "Day High",
+      "width": 84,
+      "headerName": "High",
       "enableCellChangeWs": false,
-      "align": "left"
+      "align": "left",
+      "abbreviate": false
      },
      {
       "field": "week52_low",
-      "headerName": "52w Low",
+      "width": 84,
+      "headerName": "Low",
       "enableCellChangeWs": false,
-      "align": "right"
+      "align": "right",
+      "abbreviate": false
      },
      {
       "field": "week52_range",
-      "headerName": "52 Week",
+      "width": 64,
+      "headerName": "52 week",
       "renderFn": [
        "rangeBar"
       ],
       "renderFnParams": {
        "lowKey": "week52_low",
        "highKey": "week52_high",
-       "palette": "week52"
+       "palette": "week52",
+       "valueKey": "price"
       },
       "enableCellChangeWs": false
      },
      {
       "field": "week52_high",
-      "headerName": "52w High",
+      "width": 84,
+      "headerName": "High",
       "enableCellChangeWs": false,
-      "align": "left"
+      "align": "left",
+      "abbreviate": false
      },
      {
       "field": "volume",
+      "width": 88,
       "headerName": "Volume",
       "enableCellChangeWs": false
      },
      {
       "field": "bid",
+      "width": 84,
       "headerName": "Bid",
       "hide": true
      },
      {
       "field": "ask",
+      "width": 84,
       "headerName": "Ask",
       "hide": true
      },
      {
       "field": "last_size",
+      "width": 80,
       "headerName": "Last Size",
       "hide": true
      },
      {
       "field": "updated_at",
+      "width": 132,
       "headerName": "Updated",
       "hide": true
      },
      {
       "field": "day_open",
+      "width": 88,
       "headerName": "Open",
       "hide": true
      }
@@ -196,7 +253,8 @@
     "columnsDefs": [
      {
       "field": "time",
-      "headerName": "Time"
+      "headerName": "Time",
+      "cellDataType": "text"
      },
      {
       "field": "price",
@@ -399,6 +457,241 @@
       "value": "eodhd"
      }
     ]
+   }
+  ],
+  "source": [
+   "EODHD",
+   "kdb+"
+  ]
+ },
+ "arts_charts": {
+  "name": "Art's Charts — Live grid",
+  "description": "Live grid: candles from the kdb+ tick cache with server-computed studies, drawing tools and anchored VWAP. Requires the stack on the same machine as the app.",
+  "category": "Live",
+  "type": "arts_charts",
+  "endpoint": "series",
+  "wsEndpoint": "ta_series_ws",
+  "gridData": {
+   "w": 40,
+   "h": 24
+  },
+  "params": [
+   {
+    "paramName": "symbol",
+    "type": "text",
+    "value": "AAPL",
+    "label": "Symbol"
+   },
+   {
+    "paramName": "interval",
+    "type": "text",
+    "value": "1m",
+    "label": "Interval",
+    "options": [
+     {
+      "label": "1 second",
+      "value": "1s"
+     },
+     {
+      "label": "1 minute",
+      "value": "1m"
+     },
+     {
+      "label": "5 min",
+      "value": "5m"
+     },
+     {
+      "label": "15 min",
+      "value": "15m"
+     },
+     {
+      "label": "30 min",
+      "value": "30m"
+     },
+     {
+      "label": "1 hour",
+      "value": "1h"
+     },
+     {
+      "label": "1 day",
+      "value": "1d"
+     }
+    ]
+   },
+   {
+    "paramName": "macro",
+    "type": "text",
+    "value": "none",
+    "label": "Macro",
+    "description": "A saved pane layout. Options are filled in from the macro directory.",
+    "options": [
+     {
+      "label": "None",
+      "value": "none"
+     }
+    ]
+   },
+   {
+    "paramName": "panels",
+    "type": "text",
+    "value": "0,0,100,70,24,56;70,0,100,30,24,56",
+    "label": "Panels",
+    "description": "Panels as top,left,width,height (percent of the card body), x-axis and y-axis margins (px); one panel per ';' — the chart's Settings edits this."
+   },
+   {
+    "paramName": "basis",
+    "type": "text",
+    "value": "adjusted",
+    "label": "Price basis",
+    "description": "Adjusted or raw close for the indicators. Tick-derived candles carry no adjustment data and are unadjusted either way.",
+    "options": [
+     {
+      "label": "Adjusted",
+      "value": "adjusted"
+     },
+     {
+      "label": "Raw",
+      "value": "raw"
+     }
+    ]
+   },
+   {
+    "paramName": "start",
+    "type": "date",
+    "label": "Start",
+    "value": "",
+    "description": "First day the Custom range button zooms to, and the first day the studies are computed from. Blank: everything loaded, and a year of studies."
+   },
+   {
+    "paramName": "end",
+    "type": "date",
+    "label": "End",
+    "value": "",
+    "description": "Last day the Custom range button zooms to, inclusive. Blank: the live edge."
+   }
+  ],
+  "source": [
+   "EODHD",
+   "kdb+"
+  ]
+ },
+ "arts_charts_eodhd": {
+  "name": "Art's Charts — EODHD",
+  "description": "EODHD: candles and studies both served by EODHD, with drawing tools. Requires the stack on the same machine as the app.",
+  "category": "Live",
+  "type": "arts_charts",
+  "endpoint": "series",
+  "wsEndpoint": "ta_series_ws",
+  "gridData": {
+   "w": 40,
+   "h": 24
+  },
+  "params": [
+   {
+    "paramName": "symbol",
+    "type": "text",
+    "value": "AAPL",
+    "label": "Symbol"
+   },
+   {
+    "paramName": "interval",
+    "type": "text",
+    "value": "1m",
+    "label": "Interval",
+    "options": [
+     {
+      "label": "1 second",
+      "value": "1s"
+     },
+     {
+      "label": "1 minute",
+      "value": "1m"
+     },
+     {
+      "label": "5 min",
+      "value": "5m"
+     },
+     {
+      "label": "15 min",
+      "value": "15m"
+     },
+     {
+      "label": "30 min",
+      "value": "30m"
+     },
+     {
+      "label": "1 hour",
+      "value": "1h"
+     },
+     {
+      "label": "1 day",
+      "value": "1d"
+     }
+    ]
+   },
+   {
+    "paramName": "macro",
+    "type": "text",
+    "value": "none",
+    "label": "Macro",
+    "description": "A saved pane layout. Options are filled in from the macro directory.",
+    "options": [
+     {
+      "label": "None",
+      "value": "none"
+     }
+    ]
+   },
+   {
+    "paramName": "panels",
+    "type": "text",
+    "value": "0,0,100,70,24,56;70,0,100,30,24,56",
+    "label": "Panels",
+    "description": "Panels as top,left,width,height (percent of the card body), x-axis and y-axis margins (px); one panel per ';' — the chart's Settings edits this."
+   },
+   {
+    "paramName": "source",
+    "type": "text",
+    "value": "eodhd",
+    "label": "Source",
+    "description": "This widget's bars and studies both come from EODHD.",
+    "options": [
+     {
+      "label": "EODHD",
+      "value": "eodhd"
+     }
+    ]
+   },
+   {
+    "paramName": "basis",
+    "type": "text",
+    "value": "adjusted",
+    "label": "Price basis",
+    "description": "Adjusted or raw close for the indicators. Tick-derived candles carry no adjustment data and are unadjusted either way.",
+    "options": [
+     {
+      "label": "Adjusted",
+      "value": "adjusted"
+     },
+     {
+      "label": "Raw",
+      "value": "raw"
+     }
+    ]
+   },
+   {
+    "paramName": "start",
+    "type": "date",
+    "label": "Start",
+    "value": "",
+    "description": "First day the Custom range button zooms to, and the first day the studies are computed from. Blank: everything loaded, and a year of studies."
+   },
+   {
+    "paramName": "end",
+    "type": "date",
+    "label": "End",
+    "value": "",
+    "description": "Last day the Custom range button zooms to, inclusive. Blank: the live edge."
    }
   ],
   "source": [

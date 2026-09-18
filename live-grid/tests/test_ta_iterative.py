@@ -1,3 +1,6 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Path-dependent indicators: SAR cannot be a vectorised expression."""
 
 from itertools import pairwise
@@ -55,3 +58,38 @@ def test_sar_combines_with_vectorised_indicators_in_one_call():
 def test_an_empty_frame_yields_no_values():
     empty = fixture_frame().head(0)
     assert parabolic_sar(empty, {"acceleration": 0.02, "maximum": 0.2}) == {"sar": []}
+
+
+def test_supertrend_direction_is_only_ever_plus_or_minus_one():
+    df = fixture_frame()
+    out = compute(df, [resolve("supertrend", period=10, multiplier=3.0)])
+    name = col("supertrend", "st_direction", period=10, multiplier=3.0)
+    values = [v for v in out[name].to_list() if v is not None]
+    assert values and set(values) <= {1.0, -1.0}
+
+
+def test_supertrend_line_sits_below_price_while_rising_and_above_while_falling():
+    df = fixture_frame()
+    out = compute(df, [resolve("supertrend", period=10, multiplier=3.0)])
+    line = out[col("supertrend", "supertrend", period=10, multiplier=3.0)].to_list()
+    direction = out[col("supertrend", "st_direction", period=10, multiplier=3.0)].to_list()
+    close = df["close"].to_list()
+    checked = 0
+    for value, way, price in zip(line, direction, close):
+        if value is None or way is None:
+            continue
+        checked += 1
+        assert value <= price if way == 1.0 else value >= price
+    assert checked > 50, "the fixture produced too few bars to be a real check"
+
+
+def test_supertrend_first_bar_has_no_prior_state():
+    df = fixture_frame()
+    out = compute(df, [resolve("supertrend")])
+    assert out[col("supertrend", "supertrend")][0] is None
+
+
+def test_supertrend_reads_the_true_range_base_the_vectorised_pass_built():
+    """It is registered with a tr dependency, so the base must exist by the
+    time the iterative pass runs -- not be recomputed inside the loop."""
+    assert any(base.kind == "tr" for base in get("supertrend").deps({}))

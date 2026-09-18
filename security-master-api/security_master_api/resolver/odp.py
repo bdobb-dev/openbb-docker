@@ -1,4 +1,4 @@
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """The ODP model registry and its projections. One resolver behind the browser and obb.*."""
 

@@ -1,3 +1,6 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 # OpenBB Platform API + MCP server, containerized. Companion image for the
 # Adventures in OpenBB series (v9.0.0).
 #
@@ -187,6 +190,12 @@ print('OpenBB Platform OK:', len(obb.coverage.providers), 'providers (incl. eodh
 # rest_api.py -- same effect, but through the documented `--app/--factory`
 # entrypoint instead of a text substitution against upstream source.
 COPY api_app.py /opt/api_app.py
+# The example dashboards built on this API's widgets (the Ep. 9 calendars),
+# served at /apps.json. Authored in bdobb-v2 (docs/examples/) and written
+# here by its `pnpm apps:sync`, which routes every example to the backend
+# that owns its widgets (live-grid/apps.json holds the v10 and v12 ones);
+# baked in so each episode's image carries its own set.
+COPY workspace_apps.json /root/OpenBBUserData/workspace_apps.json
 RUN python -c "\
 from openbb_platform_api.utils.api import import_app; \
 from starlette.middleware.cors import CORSMiddleware; \
@@ -203,8 +212,9 @@ WORKDIR /workspace
 # Runs `python /opt/mcp_stores/server.py` (see docker-compose.yml's
 # stores-mcp service) directly against this image -- nothing extra to
 # install: fastmcp came in with openbb-mcp-server above, deltalake/pyarrow/
-# pandas with openbb-deltalake, pykx with openbb-kdb. Just the two files.
-COPY mcp_stores/server.py mcp_stores/test_server.py /opt/mcp_stores/
+# pandas with openbb-deltalake, pykx with openbb-kdb. Just the four files:
+# server.py imports daykeys.py beside it.
+COPY mcp_stores/server.py mcp_stores/daykeys.py mcp_stores/test_server.py mcp_stores/test_daykeys.py /opt/mcp_stores/
 
 # Self-provision persistent mount points so the image is drop-in on any host
 # (NAS container managers, plain Docker) with bind mounts to not-yet-created

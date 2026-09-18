@@ -1,3 +1,6 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """FastAPI app for stores-explorer: read-only browsing of the shared
 Delta Lake and kdb+ stores, for a bdobb widget (the widget's door -- stores-mcp
 is the analyst's). Loopback-only; Tailscale Serve is the ingress (see the
@@ -35,6 +38,7 @@ from server import (
 )
 
 WIDGETS_PATH = Path(__file__).resolve().parent.parent / "widgets.json"
+APPS_PATH = Path(__file__).resolve().parent.parent / "apps.json"
 
 
 def create_app(
@@ -72,13 +76,35 @@ def create_app(
     def widgets() -> JSONResponse:
         return JSONResponse(json.loads(WIDGETS_PATH.read_text()))
 
+    @app.get("/apps.json")
+    def apps() -> JSONResponse:
+        """The Ep. 11 example dashboard.
+
+        bdobb fetches this per backend during discovery and resolves each card
+        by WIDGET id, not by the backend's per-install UUID -- which is what
+        lets a shipped dashboard land on whichever backend serves these
+        widgets, with no import step and no bdobb-side code.
+        """
+        return JSONResponse(json.loads(APPS_PATH.read_text()))
+
+    def _options(names) -> list[dict]:
+        """The shape a widgets.json optionsEndpoint must return.
+
+        bdobb normalises fetched option lists through toOptions, which SKIPS
+        any entry that is not an object with a string `label` -- so a bare
+        list of strings yields an empty picker with no error anywhere. The
+        MCP tools keep returning plain lists; that is the analyst's contract,
+        and only these two routes feed a picker.
+        """
+        return [{"label": str(n), "value": str(n)} for n in names]
+
     @app.get("/delta/libraries")
-    def delta_libraries() -> list[str]:
-        return delta_libraries_fn()
+    def delta_libraries() -> list[dict]:
+        return _options(delta_libraries_fn())
 
     @app.get("/delta/symbols")
-    def delta_symbols(library: str) -> list[str]:
-        return _404_on_value_error(delta_symbols_fn, library)
+    def delta_symbols(library: str) -> list[dict]:
+        return _options(_404_on_value_error(delta_symbols_fn, library))
 
     @app.get("/delta/describe")
     def delta_describe_route(library: str, symbol: str) -> dict:
@@ -100,8 +126,8 @@ def create_app(
         )
 
     @app.get("/kdb/tables")
-    def kdb_tables_route() -> list[str]:
-        return kdb_tables_fn()
+    def kdb_tables_route() -> list[dict]:
+        return _options(kdb_tables_fn())
 
     @app.get("/kdb/schema")
     def kdb_schema(table: str) -> list[dict]:

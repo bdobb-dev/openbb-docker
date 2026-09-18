@@ -1,3 +1,6 @@
+<!-- Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # stores-explorer
 
 Read-only widget backend for browsing the shared Delta Lake and kdb+ store —
@@ -17,6 +20,11 @@ answered from the transaction log, no row data read),
 `GET /delta/history?library=&symbol=` (versions, newest first),
 `GET /delta/series?library=&symbol=&start=&end=&tail_rows=&as_of=`
 (`as_of` is an int Delta version or an ISO timestamp).
+
+Start and End on the explorer card accept an absolute time or `T-5h` style
+offsets; bdobb resolves those before the request, so the routes only ever see
+ISO text. A day-keyed symbol (`ticks_live`) reads across the days a window
+covers — see `mcp_stores/README.md`.
 
 **kdb+:** `GET /kdb/tables`, `GET /kdb/schema?table=`,
 `GET /kdb/select?table=&symbol=&start_time=&end_time=&limit=`.

@@ -1,3 +1,6 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """FastAPI app tying the pieces together: widgets.json, REST seeding, the
 websocket stream, and health. One service, loopback-only; Tailscale Serve is
 the ingress (see the repo compose file)."""
@@ -26,6 +29,7 @@ from app.figure import build_figure
 from app.leases import DEFAULT_TTL, LeaseRegistry
 from app.openbb_client import fetch_series
 from app.quotes import QuoteTable
+from app.studies import parse_anchors, studies_for, window_start
 from app.symbol_meta import get_meta
 from app.ta.figure import delta as ta_delta
 from app.ta.macros import load_all as load_macros_all
@@ -34,14 +38,19 @@ from app.ta.payload import (
     any_repaints,
     bars_to_frame,
     build_payload,
-    revised_from,
+    chart_subtitle,
+    delta_start,
     with_anchor,
 )
+from app.ta.registry import catalog
+from app.ta.session import regular_only
+from app.ta.series_payload import build_series_payload, series_delta
 from app.ta.sources import EodhdSource
 
 log = logging.getLogger("live-grid")
 
 WIDGETS_PATH = Path(__file__).resolve().parent.parent / "widgets.json"
+APPS_PATH = Path(__file__).resolve().parent.parent / "apps.json"
 FLUSH_INTERVAL = 0.25  # seconds between coalesced row flushes per connection
 
 
@@ -238,6 +247,18 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
     def _tick_window() -> timedelta:
         return recorder.window if recorder is not None else timedelta(0)
 
+    @app.get("/apps.json")
+    def apps() -> JSONResponse:
+        """The apps built on THIS backend's widgets.
+
+        Served verbatim. bdobb discovers apps.json per backend and resolves
+        each card by widget id, so an app lives with the backend that owns its
+        widgets rather than in one central list.
+        """
+        if not APPS_PATH.exists():
+            return JSONResponse([])
+        return JSONResponse(json.loads(APPS_PATH.read_text()))
+
     @app.get("/widgets.json")
     def widgets() -> JSONResponse:
         spec = json.loads(WIDGETS_PATH.read_text())
@@ -246,17 +267,40 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
         except Exception as exc:  # noqa: BLE001 - a bad macro must not blank the grid
             log.warning("macro discovery failed: %s", exc)
             macros = {}
-        for param in spec.get("ta_chart", {}).get("params", []):
-            if param.get("paramName") == "macro":
-                param["options"] = [{"label": "None", "value": "none"}] + [
-                    {"label": m.label, "value": name} for name, m in sorted(macros.items())
-                ]
+        # Every widget with a `macro` param gets the same fill, not just the
+        # two known today -- the param's presence, not a hardcoded widget
+        # name, is the actual invariant a future chart widget needs.
+        for widget in spec.values():
+            if not isinstance(widget, dict):
+                continue
+            for param in widget.get("params", []):
+                if param.get("paramName") == "macro":
+                    param["options"] = [{"label": "None", "value": "none"}] + [
+                        {"label": m.label, "value": name} for name, m in sorted(macros.items())
+                    ]
         if public_url is not None:
             if "subscriptions" in spec:
                 spec["subscriptions"]["endpoint"] = f"{public_url}/subscriptions"
         else:
             spec.pop("subscriptions", None)
         return JSONResponse(spec)
+
+    # Built once: register() runs at import and nothing mutates REGISTRY
+    # afterwards, so the projection cannot change while the process lives --
+    # the same reason /widgets.json reads its file per request but this does
+    # not (the registry is code, not a file an operator edits).
+    _catalog = catalog()
+
+    @app.get("/ta_registry")
+    async def ta_registry() -> JSONResponse:
+        """The indicator catalog for the advanced chart's studies picker.
+
+        The registry is the single source of truth for what a study is: its
+        params and their defaults, which pane it belongs in, its guides, its
+        render hints and whether EODHD can serve it. A client that hardcoded
+        any of that would drift the first time an indicator changed here.
+        """
+        return JSONResponse(_catalog)
 
     @app.get("/live_grid")
     def live_grid(symbol: str = Query(default="")):
@@ -274,6 +318,56 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
         if not symbols:
             return []
         return get_meta(symbols, _seed_client())
+
+    @app.get("/live_grid_studies")
+    async def live_grid_studies(symbol: str = Query(default=""),
+                                anchor: str = Query(default="")):
+        """RSI(14) and anchored VWAP for the live grid -- the favicon
+        pattern: consumers fetch once on mount, best-effort. `/live_grid`
+        stays synchronous (quotes.seed); this is the async sibling that
+        reaches build_series for the two values that change on bar close,
+        not per tick. One symbol's fetch failing yields a null row rather
+        than failing the request, and symbols are fetched concurrently so a
+        fifty-row watchlist waits on the slowest single lookup, not their
+        sum -- build_series is an HTTP round trip plus up to two blocking
+        kdb calls, not a free in-process read.
+
+        `anchor` is the Anchor column: `SYM=ISO,SYM=ISO`, plus an
+        optional unkeyed ISO setting the grid-wide anchor. Absolute UTC
+        timestamps only -- the client resolves "10:00" against its own clock
+        before sending, because this process runs in a container on UTC and
+        has no idea what the user's local time is. See `parse_anchors`.
+        """
+        symbols = _parse_symbols(symbol)
+        if not symbols:
+            return []
+        today = date.today()
+        end = str(today)
+        # An anchored VWAP needs an anchor. Without one the value is a
+        # cumulative mean from whatever bar the window starts at, so it moves
+        # as the window rolls and is not comparable between two symbols or
+        # two days. A watchlist mixes US equities, crypto and forex, which
+        # share no session open -- the current UTC day's start is the one
+        # boundary all three do share, and the same boundary kdb's own /day
+        # endpoint slices on. It is only the default: any row whose VWAP
+        # Start cell is filled in overrides it.
+        fallback, overrides = parse_anchors(anchor, f"{today}T00:00:00")
+
+        async def _one(sym: str) -> dict:
+            # Per symbol, because the window has to reach back past that
+            # symbol's own anchor -- one row anchored to an old gap must not
+            # widen the fetch for the other forty-nine.
+            at = overrides.get(sym, fallback)
+            try:
+                bars, _ = await build_series(
+                    sym, "1m", window_start(at, today), end, recorder, _tick_window()
+                )
+            except Exception as exc:  # noqa: BLE001 - one bad symbol must not blank its neighbours
+                log.warning("live_grid_studies failed for %s: %s", sym, exc)
+                bars = []
+            return studies_for(sym, bars, at)
+
+        return list(await asyncio.gather(*[_one(sym) for sym in symbols]))
 
     @app.get("/series")
     async def series(symbol: str = "AAPL", interval: str = "1d",
@@ -322,10 +416,11 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                        source: str = "local", macro: str = "none",
                        indicators: str = "", anchor: str | None = None,
                        start: str | None = None,
-                       end: str | None = None, provider: str = "kdb"):
+                       end: str | None = None, provider: str = "kdb",
+                       basis: str = "adjusted"):
         s, e = _window(start, end)
         indicators = with_anchor(indicators, anchor)
-        params = ChartParams(symbol, interval, source, macro, indicators, s, e, provider)
+        params = ChartParams(symbol, interval, source, macro, indicators, s, e, provider, basis)
         bars_error = None
         try:
             bars, _ = await build_series(
@@ -336,7 +431,7 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             bars, bars_error = [], exc
         try:
             figure, _, _, _ = await build_payload(
-                params, bars_to_frame(bars), eodhd_source=_eodhd
+                params, bars_to_frame(bars, basis=basis), eodhd_source=_eodhd
             )
         except Exception as exc:  # noqa: BLE001
             log.warning("ta_chart failed for %s: %s", symbol, exc)
@@ -364,6 +459,8 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             macro=query.get("macro", "none"),
             indicators=with_anchor(query.get("indicators", ""), query.get("anchor")),
             start=s, end=e, provider=query.get("provider", "kdb"),
+            basis=query.get("basis", "adjusted"),
+            session=query.get("session", "extended"),
         )
         interval_s = float(os.getenv("TA_PUSH_INTERVAL_MS", "1000")) / 1000.0
         previous: list[str] = []
@@ -392,9 +489,15 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                 except Exception as exc:  # noqa: BLE001
                     log.warning("ta_chart_ws bars unavailable for %s: %s", params.symbol, exc)
                     bars, bars_error = [], exc
+                # Before the frame, so every indicator -- AVWAP's cumulative
+                # sums included -- sees only the session's bars. Filtering the
+                # OUTPUT instead would leave each study carrying the extended
+                # hours it was told to exclude.
+                if params.session == "regular":
+                    bars = regular_only(bars, params.symbol, params.interval)
                 try:
                     figure, panes, frame, annotations = await build_payload(
-                        params, bars_to_frame(bars), eodhd_source=_eodhd
+                        params, bars_to_frame(bars, basis=params.basis), eodhd_source=_eodhd
                     )
                 # Mirrors /ta_chart's 502: not a missing-bars degradation, this
                 # is unrecoverable (bad macro, bad indicator params), so end
@@ -421,7 +524,8 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
                         or marks != previous_marks):
                     await ws.send_json({"type": "figure", "rev": rev, "figure": figure})
                 else:
-                    payload = ta_delta(frame, panes, revised_from(previous, dates))
+                    payload = ta_delta(frame, panes, delta_start(
+                        panes, previous, dates, frame, params.symbol))
                     await ws.send_json({"type": "delta", "rev": rev, **payload})
                 previous, previous_marks, rev = dates, marks, rev + 1
                 # Drop rather than queue: a recompute that overran its slot must
@@ -432,6 +536,98 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
             return
         except Exception as exc:  # noqa: BLE001
             log.warning("ta_chart_ws ended for %s: %s", params.symbol, exc)
+            return
+
+    @app.websocket("/ta_series_ws")
+    async def ta_series_ws(ws: WebSocket) -> None:
+        """The lightweight-charts client's study feed.
+
+        Everything about the loop matches ta_chart_ws deliberately: the same
+        build_payload, the same bars-unavailable degradation, the same
+        permanent-failure close, the same drop-rather-than-queue sleep. Only
+        the presenter differs.
+        """
+        await ws.accept()
+        query = ws.query_params
+        s, e = _window(query.get("start"), query.get("end"))
+        params = ChartParams(
+            symbol=query.get("symbol", "AAPL"),
+            interval=query.get("interval", "1d"),
+            source=query.get("source", "local"),
+            macro=query.get("macro", "none"),
+            indicators=with_anchor(query.get("indicators", ""), query.get("anchor")),
+            start=s, end=e, provider=query.get("provider", "kdb"),
+            basis=query.get("basis", "adjusted"),
+            session=query.get("session", "extended"),
+        )
+        interval_s = float(os.getenv("TA_PUSH_INTERVAL_MS", "1000")) / 1000.0
+        previous: list[str] = []
+        previous_marks: tuple[str, ...] = ()
+        rev = 0
+        try:
+            while True:
+                started = asyncio.get_running_loop().time()
+                bars_error = None
+                try:
+                    bars, _ = await build_series(
+                        params.symbol, params.interval, s, e, recorder,
+                        _tick_window(), params.provider
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("ta_series_ws bars unavailable for %s: %s",
+                                params.symbol, exc)
+                    bars, bars_error = [], exc
+                # Same as ta_chart_ws: the cut happens before the frame, so
+                # every study recomputes on the session's bars rather than
+                # having the extended hours trimmed off its output.
+                if params.session == "regular":
+                    bars = regular_only(bars, params.symbol, params.interval)
+                try:
+                    _, panes, frame, annotations = await build_payload(
+                        params, bars_to_frame(bars, basis=params.basis), eodhd_source=_eodhd
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("ta_series_ws failed for %s: %s", params.symbol, exc)
+                    await ws.close(code=1011, reason=str(exc)[:120])
+                    return
+                subtitle = chart_subtitle(params)
+                if bars_error is not None:
+                    subtitle += f"  ·  bars unavailable: {bars_error}"
+                dates = [str(d) for d in frame["date"].to_list()] if frame.height else []
+                # `marks` lives only on a `series` push -- `series_delta` carries
+                # no marks key -- so a change in the annotation set (e.g. an
+                # EODHD fetch starting to fail mid-stream) must force a full
+                # push too, the same way it does in ta_chart_ws's title.
+                marks = tuple(sorted({a.column for a in annotations}))
+                # A full push whenever a delta could not carry the truth: the
+                # first frame, a repainting indicator, any error state, and a
+                # changed mark set -- the subtitle and marks only travel on a
+                # full push.
+                if (rev == 0 or any_repaints(panes) or bars_error is not None
+                        or marks != previous_marks):
+                    payload = build_series_payload(
+                        frame, panes, params.symbol, subtitle, annotations,
+                        params.source,
+                    )
+                    await ws.send_json({"type": "series", "rev": rev, **payload})
+                else:
+                    # A delta's series carry `render.source` too, so the
+                    # annotations and the chart-wide default travel with it --
+                    # otherwise a fallback column would report the vendor on
+                    # every push but the full ones.
+                    payload = series_delta(
+                        frame, panes,
+                        delta_start(panes, previous, dates, frame, params.symbol),
+                        annotations, params.source,
+                    )
+                    await ws.send_json({"type": "delta", "rev": rev, **payload})
+                previous, previous_marks, rev = dates, marks, rev + 1
+                elapsed = asyncio.get_running_loop().time() - started
+                await asyncio.sleep(max(0.0, interval_s - elapsed))
+        except WebSocketDisconnect:
+            return
+        except Exception as exc:  # noqa: BLE001
+            log.warning("ta_series_ws ended for %s: %s", params.symbol, exc)
             return
 
     @app.get("/demo", response_class=HTMLResponse)
@@ -501,6 +697,12 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
 
     _GROUP_NAMES = {"us": "Equity", "crypto": "Crypto", "forex": "Forex"}
 
+    #: Added to the payload ONLY when it has members. The page renders the
+    #: three feed sections unconditionally, so a permanently empty fourth
+    #: would be noise -- but a watchlist symbol no feed carries must not sit
+    #: in Equity looking merely quiet, either.
+    _UNROUTABLE_GROUP = "Unroutable"
+
     def _apply_watchlist() -> None:
         """Register every pinned symbol with the feed manager, up to the cap.
 
@@ -555,7 +757,11 @@ def create_app(*, api_key: str | None = None, seed_client=None, client_factory=N
         leased = leases.symbols()
         groups: dict[str, list[str]] = {name: [] for name in _GROUP_NAMES.values()}
         for sym in pinned:
-            groups[_GROUP_NAMES[classify(sym)]].append(sym)
+            name = _GROUP_NAMES.get(classify(sym))
+            if name is None:
+                groups.setdefault(_UNROUTABLE_GROUP, []).append(sym)
+            else:
+                groups[name].append(sym)
         return {
             "service": "EODHD",
             "cap": max_symbols,

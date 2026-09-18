@@ -1,3 +1,6 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Unit tests for mcp_stores/server.py: a real tmp-path Delta store, pykx MOCKED.
 
 Runs on the Mac with no kdb installed:
@@ -77,6 +80,26 @@ def delta_store(monkeypatch, tmp_path):
         pd.DataFrame({"date": idx, "bid": [1.0] * 5}),
         mode="overwrite",
     )
+
+    # A day-keyed library, the EOD dump's shape: one table per (symbol, day),
+    # five one-minute rows from midnight UTC of each day. 09-03 is missing on
+    # purpose -- a window may span a day the dump never wrote.
+    for day in ("2026_09_01", "2026_09_02", "2026_09_04"):
+        d0 = pd.Timestamp(day.replace("_", "-"))
+        write_deltalake(
+            f"{tmp_path}/ticks_live/AAPL_{day}",
+            pd.DataFrame({
+                "date": pd.date_range(d0, periods=5, freq="1min"),
+                "price": [float(day[-2:])] * 5,
+            }),
+            mode="overwrite",
+        )
+    write_deltalake(
+        f"{tmp_path}/ticks_live/MSFT_2026_09_01",
+        pd.DataFrame({"date": pd.date_range("2026-09-01", periods=5, freq="1min"),
+                      "price": [1.0] * 5}),
+        mode="overwrite",
+    )
     return tmp_path
 
 
@@ -96,12 +119,30 @@ def kdb_conn(monkeypatch):
 # ---------- delta ----------
 
 def test_delta_list_libraries_sorted(delta_store):
-    assert server.delta_list_libraries() == ["hrp_prices", "ticks"]
+    assert server.delta_list_libraries() == ["hrp_prices", "ticks", "ticks_live"]
 
 
 def test_delta_list_symbols_unknown_library_raises(delta_store):
     with pytest.raises(ValueError, match="unknown library"):
         server.delta_list_symbols("nope")
+
+
+def test_delta_list_symbols_collapses_day_tables_to_bases(delta_store):
+    assert server.delta_list_symbols("ticks_live") == ["AAPL", "MSFT"]
+    # A library without day suffixes is unchanged.
+    assert server.delta_list_symbols("ticks") == ["AAPL"]
+
+
+def test_delta_read_accepts_a_base_symbol(delta_store):
+    out = server.delta_read("ticks_live", "AAPL")
+    assert out["symbol"] == "AAPL"
+
+
+def test_delta_read_still_accepts_a_raw_day_key(delta_store):
+    # An older client, or Rita quoting a key it was shown, names one day.
+    out = server.delta_read("ticks_live", "AAPL_2026_09_02")
+    assert out["returned_rows"] == 5
+    assert out["rows"][0]["price"] == 2.0
 
 
 def test_delta_read_rejects_unknown_library(delta_store):
@@ -159,6 +200,111 @@ def test_delta_read_passes_date_range(delta_store):
     assert out["total_rows_in_range"] == 3
 
 
+def test_delta_read_of_a_base_with_no_bounds_reads_the_newest_day_only(delta_store, monkeypatch):
+    from openbb_deltalake.store import DeltaStore
+
+    def explode(self, *a, **k):
+        raise AssertionError("an unfiltered read must not open more than the newest day")
+
+    monkeypatch.setattr(DeltaStore, "read", explode)
+    out = server.delta_read("ticks_live", "AAPL")
+    assert out["total_rows_in_range"] == 5
+    assert {r["price"] for r in out["rows"]} == {4.0}
+
+
+def test_delta_read_of_a_base_concatenates_the_days_in_the_window_in_order(delta_store):
+    out = server.delta_read(
+        "ticks_live", "AAPL", start="2026-09-01 00:03", end="2026-09-04 00:01"
+    )
+    # 09-01: minutes 3,4 (2 rows); 09-02: all 5; 09-03: no table; 09-04: minutes 0,1 (2)
+    assert out["total_rows_in_range"] == 9
+    assert out["returned_rows"] == 9
+    assert [r["price"] for r in out["rows"]] == [1.0, 1.0, 2.0, 2.0, 2.0, 2.0, 2.0, 4.0, 4.0]
+    assert out["rows"][0]["date"].startswith("2026-09-01T00:03")
+
+
+def test_delta_read_of_a_base_tails_after_concatenating(delta_store):
+    out = server.delta_read(
+        "ticks_live", "AAPL", start="2026-09-01", end="2026-09-04", tail_rows=3
+    )
+    assert out["total_rows_in_range"] == 15
+    assert out["returned_rows"] == 3
+    assert [r["price"] for r in out["rows"]] == [4.0, 4.0, 4.0]
+
+
+def test_delta_read_of_a_window_with_no_day_tables_is_empty_not_404(delta_store):
+    out = server.delta_read("ticks_live", "AAPL", start="2026-10-01", end="2026-10-31")
+    assert out == {
+        "library": "ticks_live", "symbol": "AAPL",
+        "total_rows_in_range": 0, "returned_rows": 0, "rows": [],
+    }
+
+
+def test_delta_read_timestamp_as_of_skips_a_day_table_committed_later(delta_store):
+    # deltalake 1.6.3 does NOT raise on an as_of earlier than a table's first
+    # commit -- it quietly loads version 0. A day table written after the
+    # chosen instant did not exist then, so it must contribute nothing.
+    from deltalake import DeltaTable
+
+    first = DeltaTable(f"{delta_store}/ticks_live/AAPL_2026_09_04").history()[-1]["timestamp"]
+    before = pd.Timestamp(first - 1, unit="ms", tz="UTC").isoformat()
+    at = pd.Timestamp(first, unit="ms", tz="UTC").isoformat()
+
+    out = server.delta_read(
+        "ticks_live", "AAPL", start="2026-09-04", end="2026-09-04", as_of=before
+    )
+    assert out["returned_rows"] == 0
+    out = server.delta_read("ticks_live", "AAPL", start="2026-09-04", end="2026-09-04", as_of=at)
+    assert out["returned_rows"] == 5
+
+
+def test_delta_read_rejects_an_int_as_of_across_days(delta_store):
+    with pytest.raises(ValueError, match="must be a timestamp"):
+        server.delta_read("ticks_live", "AAPL", start="2026-09-01", end="2026-09-02", as_of=0)
+    # One day in the window: the version applies to that one table, as before.
+    assert server.delta_read(
+        "ticks_live", "AAPL", start="2026-09-02", end="2026-09-02", as_of=0
+    )["returned_rows"] == 5
+
+
+def test_delta_read_no_window_with_an_older_as_of_reads_the_newest_day_that_existed_then(
+    delta_store,
+):
+    from deltalake import DeltaTable
+
+    first_of_04 = DeltaTable(f"{delta_store}/ticks_live/AAPL_2026_09_04").history()[-1]["timestamp"]
+    before_04 = pd.Timestamp(first_of_04 - 1, unit="ms", tz="UTC").isoformat()
+    out = server.delta_read("ticks_live", "AAPL", as_of=before_04)
+    assert out["returned_rows"] == 5
+    assert {r["price"] for r in out["rows"]} == {2.0}
+
+
+def test_delta_read_rejects_a_malformed_bound_before_touching_the_store(delta_store):
+    with pytest.raises(ValueError, match="invalid start"):
+        server.delta_read("ticks", "AAPL", start="garbage")
+    # NOTE: the review's example end value, "2026-09-01T00:00:00-05:00", is
+    # NOT actually rejected by _TIME_RE -- the offset's own hyphen and colons
+    # are within [0-9T:. \-], same as kdb_select's existing check. A "Z"
+    # suffix is the character that regex has never accepted; see final report.
+    with pytest.raises(ValueError, match="invalid end"):
+        server.delta_read("ticks", "AAPL", end="2026-09-01T00:00:00Z")
+
+
+def test_delta_read_string_as_of_older_than_a_single_table_is_empty(delta_store):
+    # A plain table too: an instant before its first commit reads as nothing,
+    # not as version 0 (deltalake 1.6.3 would otherwise load version 0).
+    from deltalake import DeltaTable
+
+    first = DeltaTable(f"{delta_store}/ticks/AAPL").history()[-1]["timestamp"]
+    before = pd.Timestamp(first - 1, unit="ms", tz="UTC").isoformat()
+    assert server.delta_read("ticks", "AAPL", as_of=before)["returned_rows"] == 0
+
+
+def test_iso_ms_leaves_non_digit_text_alone():
+    assert server._iso_ms("2026-09-02T10:00:00") == "2026-09-02T10:00:00"
+    assert server._iso_ms("1789471562256") == "2026-09-15T11:26:02.256Z"
+
+
 def test_delta_describe_reports_metadata_without_reading_rows(delta_store, monkeypatch):
     from openbb_deltalake.store import DeltaStore
 
@@ -171,6 +317,28 @@ def test_delta_describe_reports_metadata_without_reading_rows(delta_store, monke
     out = server.delta_describe("ticks", "AAPL")
     assert out["row_count"] == 5
     assert {c["name"] for c in out["columns"]} == {"date", "bid"}
+
+
+def test_delta_describe_of_a_single_table_reports_one_day(delta_store):
+    assert server.delta_describe("ticks", "AAPL")["days"] == 1
+
+
+def test_delta_describe_of_a_base_sums_the_days_without_reading_rows(delta_store, monkeypatch):
+    from openbb_deltalake.store import DeltaStore
+
+    def explode(self, *a, **k):
+        raise AssertionError("describe must not read rows")
+
+    monkeypatch.setattr(DeltaStore, "read", explode)
+    monkeypatch.setattr(DeltaStore, "read_trailing", explode)
+
+    out = server.delta_describe("ticks_live", "AAPL")
+    assert out["symbol"] == "AAPL"
+    assert out["days"] == 3
+    assert out["row_count"] == 15
+    assert out["date_range"][0].startswith("2026-09-01 00:00")
+    assert out["date_range"][1].startswith("2026-09-04 00:04")
+    assert {c["name"] for c in out["columns"]} == {"date", "price"}
 
 
 def test_delta_history_and_as_of_return_superseded_data(delta_store):
@@ -191,6 +359,22 @@ def test_delta_history_and_as_of_return_superseded_data(delta_store):
     # as_of accepts the int version and its string form (an MCP arg is text)
     assert server.delta_read("ticks", "AAPL", as_of=0)["rows"][-1]["bid"] == 5.0
     assert server.delta_read("ticks", "AAPL", as_of="0")["rows"][-1]["bid"] == 5.0
+
+
+def test_delta_history_formats_timestamps_as_iso_utc_milliseconds(delta_store):
+    entries = server.delta_history("ticks", "AAPL")
+    ts = entries[0]["timestamp"]
+    assert ts.endswith("Z") and "T" in ts and len(ts) == len("2026-09-14T12:38:15.256Z")
+    # The formatted instant travels back to exactly its own commit.
+    assert server.delta_read("ticks", "AAPL", as_of=ts)["rows"][-1]["bid"] == 5.0
+
+
+def test_delta_history_of_a_base_unions_the_days_newest_first(delta_store):
+    entries = server.delta_history("ticks_live", "AAPL")
+    assert len(entries) == 3
+    stamps = [e["timestamp"] for e in entries]
+    assert stamps == sorted(stamps, reverse=True)
+    assert {e["version"] for e in entries} == {0}
 
 
 # ---------- finding 1: credential scrubbing ----------

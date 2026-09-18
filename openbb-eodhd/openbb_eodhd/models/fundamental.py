@@ -1,3 +1,6 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """EODHD Fundamental (financial statement) models.
 
 Maps EODHD's `/api/fundamentals` payload onto OpenBB's three standard statement
@@ -7,6 +10,7 @@ field is passed through snake_cased (the standard models allow extra fields).
 """
 
 import re
+from datetime import date
 from typing import Any, Literal
 
 from openbb_core.provider.abstract.fetcher import Fetcher
@@ -102,7 +106,39 @@ def _num(value: Any) -> Any:
         return value  # non-numeric passthrough (kept as-is)
 
 
-def _transform(section_data: dict, period: str, limit: int | None, field_map: dict) -> list[dict]:
+_MONTHS = {
+    name: number
+    for number, name in enumerate(
+        ("january", "february", "march", "april", "may", "june",
+         "july", "august", "september", "october", "november", "december"),
+        start=1,
+    )
+}
+
+
+def _fy_end_month(fiscal_year_end: Any) -> int | None:
+    """EODHD's ``General.FiscalYearEnd`` ("September") -> 9; None when absent or unrecognised."""
+    if not isinstance(fiscal_year_end, str):
+        return None
+    return _MONTHS.get(fiscal_year_end.strip().lower())
+
+
+def _fiscal(end: date, period: str, fy_end_month: int | None) -> tuple[int, str]:
+    """(fiscal_year, fiscal_period) for a period-ending date.
+
+    The fiscal year is named for the calendar year it ends in; quarters count
+    from the month after the year-end month. An unknown year-end (None) is the
+    calendar year -- exactly what every row said before 9.6.2.
+    """
+    m = fy_end_month or 12
+    year = end.year + (1 if end.month > m else 0)
+    quarter = ((end.month - m - 1) % 12) // 3 + 1
+    return year, "FY" if period == "annual" else f"Q{quarter}"
+
+
+def _transform(
+    section_data: dict, period: str, limit: int | None, field_map: dict, fiscal_year_end: int | None = None
+) -> list[dict]:
     """Turn one EODHD statement section into standard-model row dicts."""
     # pylint: disable=import-outside-toplevel
     from pandas import isna, to_datetime
@@ -120,11 +156,11 @@ def _transform(section_data: dict, period: str, limit: int | None, field_map: di
         if isna(end_ts):
             continue
         end = end_ts.date()
-        quarter = (end.month - 1) // 3 + 1
+        fiscal_year, fiscal_period = _fiscal(end, period, fiscal_year_end)
         row: dict[str, Any] = {
             "period_ending": end,
-            "fiscal_year": end.year,
-            "fiscal_period": "FY" if period == "annual" else f"Q{quarter}",
+            "fiscal_year": fiscal_year,
+            "fiscal_period": fiscal_period,
         }
         for key, value in entry.items():
             if key in _META_KEYS:
@@ -139,12 +175,14 @@ def _transform(section_data: dict, period: str, limit: int | None, field_map: di
 async def _extract(section: str, field_map: dict, query, credentials) -> list[dict]:
     """Shared extract: read the section from the shared /fundamentals bundle, then map to standard rows."""
     # pylint: disable=import-outside-toplevel
-    from openbb_eodhd.models._fundamentals import get_bundle
+    from openbb_eodhd.models._fundamentals import general, get_bundle
 
     bundle = await get_bundle(query.symbol, query.exchange, credentials)
     financials = bundle.get("Financials") or {}
     data = financials.get(section) or {}
-    return _transform(data, query.period, query.limit, field_map)
+    # EODHD's statement entries carry only a period-ending date; the issuer's
+    # fiscal calendar is in the same bundle's General section.
+    return _transform(data, query.period, query.limit, field_map, _fy_end_month(general(bundle).get("FiscalYearEnd")))
 
 
 # --- Query params: add period + exchange to each standard statement query ------

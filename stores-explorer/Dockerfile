@@ -1,3 +1,6 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 # stores-explorer: read-only widget backend browsing the shared Delta Lake/kdb+
 # store (Ep. 11) -- the widget's door into the vault, pairing with
 # stores-mcp (the analyst's door). Loopback-only; Tailscale Serve publishes
@@ -30,6 +33,10 @@ RUN pip install /srv/mcp_stores
 COPY stores-explorer/pyproject.toml ./
 COPY stores-explorer/app/ app/
 COPY stores-explorer/widgets.json ./
+# apps.json is served by GET /apps.json (the Ep. 11 example dashboard); the
+# route reads it from disk, so leaving it out of the image is a 500, not a
+# missing feature.
+COPY stores-explorer/apps.json ./
 RUN pip install .
 
 # Same reusable entrypoint openbb-local (stores-mcp's own image) already

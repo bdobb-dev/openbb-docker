@@ -1,3 +1,6 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Two interchangeable engines behind one shape.
 
 Both emit the same column names, so panes and figure never learn which ran.
@@ -17,8 +20,15 @@ from dataclasses import dataclass, field
 
 import polars as pl
 
+from app.classify import classify
 from app.ta.compute import compute
 from app.ta.registry import Req, col_suffix, get
+from app.ta.session import (
+    SESSION_DATE,
+    is_intraday,
+    session_closes,
+    session_date,
+)
 
 log = logging.getLogger("live-grid.ta")
 
@@ -42,7 +52,7 @@ class Result:
     calls: int = 0
 
 
-def _columns(req: Req) -> list[str]:
+def columns_of(req: Req) -> list[str]:
     """The frame columns this request produces, suffixed per its parameters."""
     suffix = col_suffix(req)
     return [c + suffix for c in get(req.name).render]
@@ -59,13 +69,53 @@ def eodhd_query(req: Req) -> dict:
     return query
 
 
+def _is_bd(req: Req) -> bool:
+    """True when any of this request's windows counts business days."""
+    return "bd" in req.units.values()
+
+
 class LocalSource:
     """Polars compute over the bars already in hand."""
 
     name = "local"
 
-    def series(self, df: pl.DataFrame, reqs: list[Req]) -> Result:
-        return Result(compute(df, reqs))
+    def series(self, df: pl.DataFrame, reqs: list[Req],
+               interval: str = "1d", symbol: str = "") -> Result:
+        """`interval` and `symbol` are read only by `bd` windows.
+
+        A `bd` window counts sessions: it is computed on one row per session
+        (`session_closes`) and then broadcast back onto every bar of its
+        session, so `SMA(50bd)` on a 1m chart is fifty DAYS of closes rather
+        than fifty minutes. The join is by session date and not by time, or
+        every bar before the session's last would read yesterday's value.
+
+        On a daily-or-coarser frame a bar IS a session, so `50bd` is 50 bars
+        and the ordinary path is already the right answer -- the defaults say
+        so, which keeps every existing caller (and the parity tests) intact.
+
+        ponytail: that is only literally true on `1d`. `is_intraday` treats
+        `1wk`/`1mo` as "not intraday" too, so `50bd` there silently falls
+        through to the ordinary path and means 50 bars -- 50 weeks or months,
+        not 50 sessions. Upgrade path: reject a `bd` unit when the interval is
+        coarser than `1d`, once a caller actually asks for one.
+        """
+        bd = [r for r in reqs if _is_bd(r)]
+        if not bd or df.height == 0 or not is_intraday(interval):
+            return Result(compute(df, reqs))
+        feed = classify(symbol)
+        wanted = [c for r in bd for c in columns_of(r)]
+        # Two frames, one per clock: the bar frame for ordinary requests, the
+        # session frame for the bd ones. Their Base columns never meet, which
+        # is what keeps `period=50` and `period=50bd` honest.
+        sessions = compute(session_closes(df, feed), bd)
+        frame = compute(df, [r for r in reqs if not _is_bd(r)])
+        joined = (
+            frame.with_columns(session_date(feed))
+            .join_asof(sessions.select([SESSION_DATE, *wanted]),
+                       on=SESSION_DATE, strategy="backward")
+            .drop(SESSION_DATE)
+        )
+        return Result(joined)
 
 
 class EodhdSource:
@@ -103,9 +153,9 @@ class EodhdSource:
         # across every bar of the day and passed off as intraday. Compute
         # locally and say so, rather than draw a plausible lie.
         if interval != "1d":
-            return Result(compute(df, reqs), [
+            return Result(LocalSource().series(df, reqs, interval, symbol).frame, [
                 Annotation(col, "local", "EODHD has no intraday data")
-                for r in reqs for col in _columns(r)
+                for r in reqs for col in columns_of(r)
             ])
 
         mapped = [r for r in reqs if get(r.name).eodhd is not None]
@@ -113,7 +163,7 @@ class EodhdSource:
 
         annotations = [
             Annotation(col, "local", f"{r.name} has no EODHD equivalent")
-            for r in unmapped for col in _columns(r)
+            for r in unmapped for col in columns_of(r)
         ]
         frame = compute(df, unmapped) if unmapped else df
         calls = 0
@@ -131,7 +181,7 @@ class EodhdSource:
                 # A recent ATTEMPT failed and the floor has not elapsed.
                 annotations.extend(
                     Annotation(col, "local", "EODHD refetch throttled")
-                    for col in _columns(req)
+                    for col in columns_of(req)
                 )
                 fetched.append((req, None))
                 continue
@@ -152,7 +202,7 @@ class EodhdSource:
                 log.warning("eodhd %s failed for %s: %s", req.name, symbol, exc)
                 annotations.extend(
                     Annotation(col, "local", f"EODHD fetch failed: {exc}")
-                    for col in _columns(req)
+                    for col in columns_of(req)
                 )
                 fetched.append((req, None))
 
@@ -170,7 +220,7 @@ class EodhdSource:
                 frame = compute(frame, [req])
                 annotations.extend(
                     Annotation(col, "local", f"EODHD response unusable: {exc}")
-                    for col in _columns(req)
+                    for col in columns_of(req)
                 )
                 continue
             annotations.extend(

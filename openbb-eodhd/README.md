@@ -1,3 +1,6 @@
+<!-- Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # openbb-eodhd
 
 An [EODHD](https://eodhd.com) (EOD Historical Data) provider extension for the
@@ -33,6 +36,20 @@ predates the SDK's typed errors, request timeouts, and the fundamentals
 - Crypto uses EODHD's `BASE-QUOTE.CC` symbols (bare `BTCUSD`/`BTC/USD` are
   normalized to `BTC-USD.CC`); forex uses `EURUSD.FOREX` (`EUR/USD` normalized).
 
+### Quote percentage units
+
+- `obb.equity.price.quote(..., provider="eodhd")` returns `change_percent`
+  as a normalized fraction, following OpenBB's `EquityQuoteData` contract.
+  EODHD's `change_p=0.3229` becomes `change_percent=0.003229`, which a
+  `normalizedPercent` widget displays as `0.32 %` at two decimal places.
+- This corrects the previous percentage-point passthrough that made widgets
+  display changes 100 times too large. API consumers that compensated by
+  dividing this field by 100 should remove that workaround.
+- Missing, null, or `"NA"` changes remain null rather than becoming zero.
+  Other quote fields and other providers are unchanged. Rebuild and redeploy
+  the backend image containing this extension to activate the fix; a frontend
+  rebuild or formatter override is not required.
+
 ### Fundamentals
 - Three statements: income, balance sheet, cash flow. `period` selects EODHD's
   `yearly` vs `quarterly`; `limit` caps the number of most-recent periods.
@@ -41,6 +58,15 @@ predates the SDK's typed errors, request timeouts, and the fundamentals
   passed through snake_cased, so nothing is dropped.
 - Fundamentals require a paid EODHD plan for most tickers (the `demo` token
   covers `AAPL.US`).
+
+### Economic calendar
+- `obb.economy.calendar(..., provider="eodhd")` rows carry `source` (publisher,
+  e.g. "BLS") and `category` (release, e.g. "Producer Prices"), resolved from
+  a static three-level taxonomy of EODHD's event names; unrecognized names
+  resolve to `None`.
+- EODHD's `/economic-events` caps every request at 1,000 rows; a range with
+  more events than that is fetched in successive date windows and merged, so
+  a busy three-month window returns every row instead of being cut off.
 
 ## Symbols
 
@@ -74,4 +100,4 @@ python -c "import openbb; openbb.build()"   # regenerate the static package
 
 ## License
 
-AGPL-3.0-only.
+Apache-2.0 — see `LICENSE`.

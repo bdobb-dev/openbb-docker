@@ -1,4 +1,4 @@
-<!-- Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0. -->
+<!-- Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
 # Security Master Browser Implementation Plan
@@ -16,7 +16,7 @@
 ## Global Constraints
 
 - Two working trees. **Part A** (Tasks 1–14) runs in the openbb-docker worktree on branch `claude/security-master-api` (cut from `release/v11.2.x`, PR #52 cherry-picked); commands run from `security-master-api/` unless a task says otherwise. **Part B** (Tasks 15–23) runs in the bdobb-v2 worktree on branch `claude/security-master-browser-v11` (cut from `release/v11`).
-- Every new file opens with the Apache-2.0 header in that file's comment syntax: `# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.` then `# SPDX-License-Identifier: Apache-2.0` (`//` in TypeScript, `<!-- -->` in Markdown, `#` in YAML/Dockerfile/shell; JSON files carry none).
+- Every new file opens with the Apache-2.0 header in that file's comment syntax: `# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.` then `# SPDX-License-Identifier: Apache-2.0` (`//` in TypeScript, `<!-- -->` in Markdown, `#` in YAML/Dockerfile/shell; JSON files carry none).
 - Python: `requires-python = ">=3.12"`, ruff `target-version = "py312"`, `line-length = 100`, `ruff==0.15.22` in the `dev` extra. Run tests with `uv run --extra dev pytest -q` and lint with `uv run --extra dev ruff check .`.
 - The renderer never receives MinIO, EODHD or physical paths. The worker never receives an EODHD key.
 - Browsing, preview, SQL, lineage, compare and versions never call openbb-api or EODHD.
@@ -107,7 +107,7 @@ scripts/browser-fixtures.mjs, e2e/security-master.spec.ts
 Prepend to each `.py` file (before the module docstring):
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 ```
 
@@ -170,7 +170,7 @@ Then run `uv lock` from `security-master-api/` and confirm `uv.lock` now lists `
 `tests/test_errors.py`:
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 from security_master_api.errors import CODES, DomainError
 
@@ -211,7 +211,7 @@ def test_unknown_code_is_refused():
 `tests/test_config.py`:
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
@@ -266,7 +266,7 @@ Expected: FAIL with `ModuleNotFoundError: security_master_api.errors`.
 - [ ] **Step 5: Write `errors.py`**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """Domain errors and the standard error envelope."""
 
@@ -317,7 +317,7 @@ class DomainError(Exception):
 - [ ] **Step 6: Write `config.py`**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """Service settings from the environment. Nothing here reads a file."""
 
@@ -426,7 +426,7 @@ git commit -m "feat(security-master): settings, domain errors and the service py
 - [ ] **Step 1: Write the failing test**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
@@ -505,7 +505,7 @@ Expected: FAIL with `ModuleNotFoundError`.
 - [ ] **Step 3: Write `store/schemas.py`**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """One pyarrow schema per logical relation. The keys are the API's relation names."""
 
@@ -659,7 +659,7 @@ RELATIONS: dict[str, pa.Schema] = {
 `store/paths.py`:
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """Where a logical relation lives. Physical paths never leave this module's callers."""
 
@@ -685,7 +685,7 @@ def relation_path(settings: Settings, relation: str) -> str:
 `store/tables.py`:
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """Append-only Delta tables, one per relation, opened at exact versions."""
 
@@ -870,7 +870,7 @@ The India and Dubai files keep their existing `security-master.temporal-fixture.
 - [ ] **Step 2: Write the failing seed test**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 import json
 import subprocess
@@ -944,7 +944,7 @@ Expected: FAIL with `ModuleNotFoundError: security_master_api.store.seed`.
 - [ ] **Step 4: Write `store/seed.py` and `store/__main__.py`**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """Seed the golden and historical fixtures into Delta. Idempotent by assertion_id."""
 
@@ -1025,7 +1025,7 @@ def _iso(value: str) -> str:
 `store/__main__.py`:
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """`python -m security_master_api.store [--root PATH]` seeds the fixtures and prints versions."""
 
@@ -1079,7 +1079,7 @@ git commit -m "feat(security-master): the seven golden fixtures and the seed com
 `tests/test_context.py`:
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 from datetime import UTC, datetime
 
@@ -1134,7 +1134,7 @@ def test_delta_snapshot_carries_versions():
 `tests/test_catalog.py`:
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
@@ -1217,7 +1217,7 @@ Expected: FAIL with `ModuleNotFoundError`.
 - [ ] **Step 3: Write `resolver/context.py`**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """The immutable temporal context every request is bound to."""
 
@@ -1301,7 +1301,7 @@ def parse_context(raw: dict | None) -> Context:
 - [ ] **Step 4: Write `resolver/catalog.py`**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """The logical catalog: declared relations, their capabilities, and external Delta libraries."""
 
@@ -1453,7 +1453,7 @@ def check_modes(settings: Settings, ctx: Context, relations: Iterable[str]) -> N
 - [ ] **Step 5: Write `resolver/manifest.py`**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """Pin every physical table a request opens. The manifest is what the receipt records."""
 
@@ -1517,7 +1517,7 @@ git commit -m "feat(security-master): temporal context, catalog and dependency m
 - [ ] **Step 1: Write the failing policy test**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 import duckdb
 import pytest
@@ -1595,7 +1595,7 @@ Expected: FAIL with `ModuleNotFoundError`.
 - [ ] **Step 3: Write `sql/policy.py`**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """Read-only SQL policy, enforced on DuckDB's own AST rather than on the text."""
 
@@ -1726,7 +1726,7 @@ Expected: PASS.
 - [ ] **Step 5: Write the failing session test**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 import threading
 import time
@@ -1831,7 +1831,7 @@ and in `store/tables.py` change `_open` to `path = physical_path(settings, relat
 `sql/session.py`:
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """One isolated DuckDB connection per request, holding only the manifest's relations."""
 
@@ -1951,7 +1951,7 @@ git commit -m "feat(security-master): isolated DuckDB sessions and the AST-level
 `tests/test_views.py`:
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
@@ -2043,7 +2043,7 @@ def test_gold_sql_names_only_declared_dependencies():
 `tests/test_golden_calendar.py`:
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
@@ -2152,7 +2152,7 @@ Expected: FAIL with `ModuleNotFoundError: security_master_api.resolver.views`.
 - [ ] **Step 3: Write `resolver/views.py`**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """Context-bound SQL: which assertion rows count, and the Gold views built from them."""
 
@@ -2363,7 +2363,7 @@ git commit -m "feat(security-master): context-bound Gold views proven on the sev
 `tests/test_identity.py`:
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
@@ -2424,7 +2424,7 @@ Ambiguity is exercised by seeding two current `ticker` rows for `"DUAL"` on diff
 `tests/test_lineage_compare.py`:
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
@@ -2484,7 +2484,7 @@ Expected: FAIL with `ModuleNotFoundError`.
 - [ ] **Step 3: Write `resolver/identity.py`**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """Resolve an external identifier to stable ids under a context. Never guesses."""
 
@@ -2577,7 +2577,7 @@ For the CUSIP fixture the `gold.security_master` row for `sec_100` is closed und
 - [ ] **Step 4: Write `resolver/lineage.py`**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """From an assertion to its capture, request and run: the provenance chain."""
 
@@ -2632,7 +2632,7 @@ def lineage(settings: Settings, ctx: Context, relation: str, assertion_id: str) 
 - [ ] **Step 5: Write `resolver/compare.py`**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """The same selection under two contexts, diffed field by field and classified."""
 
@@ -2888,7 +2888,7 @@ git commit -m "feat(security-master): identity resolution, lineage chains and te
 `tests/test_receipts.py`:
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
@@ -2931,7 +2931,7 @@ def test_record_appends_one_row(settings):
 `tests/test_calendar_adapter.py`:
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 from datetime import date
 
@@ -2958,7 +2958,7 @@ def test_adapter_version_names_the_package():
 `tests/test_odp.py`:
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 import json
 
@@ -3064,7 +3064,7 @@ Expected: FAIL with `ModuleNotFoundError`.
 - [ ] **Step 4: Write `store/receipts.py`**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """Immutable receipts: what a result depended on. Written before the response returns."""
 
@@ -3105,7 +3105,7 @@ def record_receipt(settings: Settings, receipt: dict) -> None:
 - [ ] **Step 5: Write `resolver/calendar.py`**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """The pinned pandas_market_calendars adapter: deterministic baseline sessions with provenance."""
 
@@ -3162,7 +3162,7 @@ def _opt(value):
 - [ ] **Step 6: Write `resolver/odp.py`**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """The ODP model registry and its projections. One resolver behind the browser and obb.*."""
 
@@ -3356,7 +3356,7 @@ git commit -m "feat(security-master): ODP registry and projections, calendar ada
 `tests/test_preview.py`:
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
@@ -3404,7 +3404,7 @@ def test_in_and_between_and_null():
 `tests/test_executions.py`:
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
@@ -3483,7 +3483,7 @@ Expected: FAIL with `ModuleNotFoundError`.
 - [ ] **Step 3: Write `sql/preview.py`**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """Structured, allowlisted filters and sorts become bound SQL. No user text reaches the SQL."""
 
@@ -3566,7 +3566,7 @@ def build_preview_sql(relation: str, columns: list[str] | None, filters: list[di
 - [ ] **Step 4: Write `sql/executions.py`**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """Executions: run under a budget, hold the result, page it by opaque cursor, cancel it."""
 
@@ -3768,7 +3768,7 @@ Copy `live-grid/app/auth.py` verbatim (header, docstring, `auth_enabled`, `crede
 - [ ] **Step 2: Write `app/errors.py`**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """One envelope for every failure. FastAPI's own validation errors are re-wrapped."""
 
@@ -3814,7 +3814,7 @@ def install(app: FastAPI) -> None:
 - [ ] **Step 3: Write the failing auth test**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 import base64
 
@@ -3867,7 +3867,7 @@ def test_unconfigured_credentials_fail_closed(tmp_path, monkeypatch):
 - [ ] **Step 4: Write the failing routes test**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 import json
 from pathlib import Path
@@ -4072,7 +4072,7 @@ Expected: FAIL with `ModuleNotFoundError: security_master_api.app.main`.
 - [ ] **Step 7: Write `app/main.py`**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """security-master-api: the browser's service. Every read path is provider-silent."""
 
@@ -4411,7 +4411,7 @@ git commit -m "feat(security-master): the FastAPI service with auth, error envel
 `tests/test_jobs.py`:
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
@@ -4466,7 +4466,7 @@ def test_terminal_then_new_job_for_same_fingerprint(settings):
 `tests/test_preflight.py`:
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 import time
 
@@ -4531,7 +4531,7 @@ def test_calendar_warning_when_session_evidence_is_not_final(settings):
 `tests/test_app_acquisitions.py`:
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 from fastapi.testclient import TestClient
@@ -4616,7 +4616,7 @@ Expected: FAIL with `ModuleNotFoundError`.
 - [ ] **Step 3: Write `store/jobs.py`**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """Durable job state as two append-only Delta tables. State is the latest event's stage."""
 
@@ -4746,7 +4746,7 @@ def claim(settings: Settings, job_id: str, worker_id: str) -> bool:
 - [ ] **Step 4: Write `acquire/preflight.py`**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """Preflight: what an acquisition would touch, signed so the job cannot drift from it."""
 
@@ -4979,7 +4979,7 @@ git commit -m "feat(security-master): durable Delta-backed jobs, signed prefligh
 - [ ] **Step 1: Write `tests/stub_openbb.py`**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """A scriptable stand-in for openbb-api: status, body and delay per path."""
 
@@ -5028,7 +5028,7 @@ class StubOpenbb:
 - [ ] **Step 2: Write the failing normalizer test**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 from datetime import UTC, datetime
 
@@ -5083,7 +5083,7 @@ def test_malformed_payload_is_a_problem_not_a_crash():
 - [ ] **Step 3: Write the failing worker test**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
@@ -5200,7 +5200,7 @@ Expected: FAIL with `ModuleNotFoundError`.
 - [ ] **Step 5: Write `acquire/client.py`**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """The worker's only network client: this stack's openbb-api, with Basic auth. No provider key."""
 
@@ -5256,7 +5256,7 @@ class OpenbbClient:
 - [ ] **Step 6: Write `acquire/normalize.py`**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """OpenBB responses become Silver assertion rows. Nothing here claims more than the source did."""
 
@@ -5379,7 +5379,7 @@ def validate(relation: str, rows: list[dict]) -> list[str]:
 - [ ] **Step 7: Write `acquire/worker.py` and `acquire/__main__.py`**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """The acquisition worker: claim a job, retain Bronze, normalize, validate, promote. Restart-safe."""
 
@@ -5608,7 +5608,7 @@ git commit -m "feat(security-master): the acquisition worker over openbb-api wit
 - [ ] **Step 1: Write the failing compose contract test (repo root `tests/test_compose_contract.py`)**
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 import json
 from pathlib import Path
@@ -5665,7 +5665,7 @@ Expected: FAIL with `KeyError: 'security-master-api'`.
 - [ ] **Step 3: Write the Dockerfile**
 
 ```dockerfile
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 # security-master-api: the Security Master Browser's service (API) and its
 # acquisition worker, one image. Built with the REPO ROOT as build context
@@ -5754,7 +5754,7 @@ After `stores-explorer` in `docker-compose.yml`:
 `security-master.env.example`:
 
 ```sh
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 # Signs preflight tokens; any long random string. Rotate to invalidate outstanding preflights.
 SECURITY_MASTER_PREFLIGHT_SECRET=change-me
@@ -5843,7 +5843,7 @@ git commit -m "feat(security-master): image, compose services, Serve routes, CI 
 `tests/test_registry_parity.py`:
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 import json
 from pathlib import Path
@@ -5860,7 +5860,7 @@ def test_registry_copy_matches_the_service():
 `tests/test_router.py`:
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 import json
 import threading
@@ -6004,7 +6004,7 @@ line-length = 100
 `client.py`:
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """HTTP client for security-master-api. The extension never opens Delta or MinIO itself."""
 
@@ -6068,7 +6068,7 @@ class SecurityMasterClient:
 `router.py`:
 
 ```python
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 """The /reference router: three commands, all delegating to security-master-api or openbb-eodhd."""
 
@@ -6247,7 +6247,7 @@ describe("service transport", () => {
 `src/lib/securityMaster.test.ts`:
 
 ```ts
-// Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+// Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
@@ -6430,7 +6430,7 @@ export async function deleteEndpoint(backend: BackendConfig, endpoint: string, s
 - [ ] **Step 6: Write `src/lib/securityMaster.ts`**
 
 ```ts
-// Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+// Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 // SPDX-License-Identifier: Apache-2.0
 
 import { deleteEndpoint, fetchServiceJson, postEndpointJson, ServiceHttpError } from "./dataClient";
@@ -6905,7 +6905,7 @@ export const DEFAULT_SESSION: SmSession;
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-// Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+// Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 // SPDX-License-Identifier: Apache-2.0
 
 import { act, renderHook, waitFor } from "@testing-library/react";
@@ -6985,7 +6985,7 @@ Expected: FAIL (module not found).
 - [ ] **Step 3: Write the hook**
 
 ```ts
-// Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+// Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 // SPDX-License-Identifier: Apache-2.0
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -7141,7 +7141,7 @@ export function SecurityMasterBrowserRenderer(props: SecurityMasterBrowserProps)
 - [ ] **Step 1: Write the failing renderer test**
 
 ```tsx
-// Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+// Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 // SPDX-License-Identifier: Apache-2.0
 
 import { render, screen, waitFor, within } from "@testing-library/react";
@@ -7246,7 +7246,7 @@ Expected: FAIL (module not found).
 - [ ] **Step 3: Write `securityMaster/format.ts`**
 
 ```ts
-// Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+// Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 // SPDX-License-Identifier: Apache-2.0
 
 import type { QueryContext, TemporalMode } from "../../../lib/securityMaster";
@@ -7301,7 +7301,7 @@ export function titleCase(id: string): string {
 - [ ] **Step 4: Write `CatalogPane.tsx`**
 
 ```tsx
-// Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+// Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState } from "react";
@@ -7405,7 +7405,7 @@ export function CatalogPane({ mode, onMode, models, catalog, selection, onSelect
 - [ ] **Step 5: Write `ContextBar.tsx`**
 
 ```tsx
-// Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+// Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 // SPDX-License-Identifier: Apache-2.0
 
 import { TEMPORAL_MODES, type Policy, type QueryContext, type TemporalMode } from "../../../lib/securityMaster";
@@ -7468,7 +7468,7 @@ export function ContextBar({ context, onContext, allowedModes, lookupPolicy, onL
 - [ ] **Step 6: Write `ModelWorkbench.tsx`**
 
 ```tsx
-// Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+// Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 // SPDX-License-Identifier: Apache-2.0
 
 import type { OdpModelDetail, QueryContext } from "../../../lib/securityMaster";
@@ -7628,7 +7628,7 @@ The fixtures import from `src/test/fixtures/securityMasterTemporal.ts` is delibe
 - [ ] **Step 7: Write `Inspector.tsx`**
 
 ```tsx
-// Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+// Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 // SPDX-License-Identifier: Apache-2.0
 
 type Props = {
@@ -7668,7 +7668,7 @@ export function Inspector({ label, title, subtitle, sections, actions = [], onCl
 - [ ] **Step 8: Write the renderer shell**
 
 ```tsx
-// Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+// Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useMemo, useState } from "react";
@@ -7845,7 +7845,7 @@ export const RELATION_TABS: Array<[string, string]> = [["data","Data"],["schema"
 - [ ] **Step 1: Write the failing test**
 
 ```tsx
-// Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+// Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 // SPDX-License-Identifier: Apache-2.0
 
 import { render, screen, waitFor, within } from "@testing-library/react";
@@ -7977,7 +7977,7 @@ Expected: FAIL (the stub renders nothing).
 - [ ] **Step 3: Write `RelationWorkbench.tsx`**
 
 ```tsx
-// Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+// Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useState } from "react";
@@ -8252,7 +8252,7 @@ git commit -m "feat(security-master): relation workbench with paged data, guarde
 - [ ] **Step 1: Write the failing test**
 
 ```tsx
-// Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+// Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 // SPDX-License-Identifier: Apache-2.0
 
 import { render, screen, waitFor } from "@testing-library/react";
@@ -8322,7 +8322,7 @@ Expected: FAIL (module not found).
 - [ ] **Step 3: Write `AcquisitionDialogs.tsx`**
 
 ```tsx
-// Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+// Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useState } from "react";
@@ -8469,7 +8469,7 @@ git commit -m "feat(security-master): acquisition review and download activity d
 - [ ] **Step 1: Write the failing card-level test**
 
 ```tsx
-// Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+// Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 // SPDX-License-Identifier: Apache-2.0
 
 import { render, screen, waitFor } from "@testing-library/react";
@@ -8735,7 +8735,7 @@ with helpers `const contract = (n) => JSON.parse(readFileSync(new URL(`../src/te
 - [ ] **Step 2: Write the spec**
 
 ```ts
-// Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
+// Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, test, type Page } from "@playwright/test";

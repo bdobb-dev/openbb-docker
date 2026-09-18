@@ -1,3 +1,6 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """One official-SDK websocket client per EODHD feed, driven by grid subscriptions."""
 
 import asyncio
@@ -23,17 +26,36 @@ def _expect_ticks(feed: str, when: datetime | None = None) -> bool:
 
     crypto trades around the clock. For us, weekdays 14:30-20:00 UTC is
     inside NYSE regular hours whether the US is on EST or EDT, so silence
-    there is never the market's fault.
+    there is never the market's fault. forex runs continuously from the
+    Sunday open to the Friday close; both edges move an hour with US DST, so
+    the window below is the one that holds either way.
+
+    Each rule is deliberately NARROWER than the real session: a feed that is
+    down during a window we skip is caught at the next window, but a window
+    that claims the market is open when it is closed cries wolf every
+    STALE_AFTER.
     """
     # ponytail: ignores US market holidays (worst case: one spurious rebuild
-    # per STALE_AFTER on a holiday) and never expects forex ticks (feed is
-    # unused on this deployment). Add a holiday calendar / forex sessions if
-    # either ever matters.
+    # per STALE_AFTER on a holiday). Add a holiday calendar if it matters.
     if feed == "crypto":
         return True
+    now = when if when is not None else datetime.now(timezone.utc)
+    if feed == "forex":
+        # Close is 21:00 UTC on EDT / 22:00 on EST, open the same hours on
+        # Sunday. Expect ticks only where both conventions agree the market
+        # is open. Previously this returned False always, on a comment
+        # claiming the feed was unused here -- it is not, and a five-day
+        # forex outage went unflagged because nothing ever expected a tick.
+        day, hour = now.weekday(), now.hour
+        if day <= 3:                      # Mon-Thu: continuous
+            return True
+        if day == 4:                      # Fri: until the earliest close
+            return hour < 21
+        if day == 6:                      # Sun: after the latest open
+            return hour >= 22
+        return False                      # Sat: shut
     if feed != "us":
         return False
-    now = when if when is not None else datetime.now(timezone.utc)
     return now.weekday() < 5 and (14, 30) <= (now.hour, now.minute) < (20, 0)
 
 

@@ -1,7 +1,27 @@
+/ Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+/ SPDX-License-Identifier: Apache-2.0
+
 / startup.q -- tick cache with websocket pub/sub.
 / Minimal standalone take on jonathonmcmurray's ws.q .wsu namespace
 / (https://github.com/jonathonmcmurray/ws.q, MIT) -- the library itself
 / drags in the qutil package system, so the ~30 lines are inlined here.
+/ The MIT licence asks that its notice travel with the code, so here it is:
+/   MIT License. Copyright (c) 2018 Jonathon McMurray.
+/   Permission is hereby granted, free of charge, to any person obtaining a
+/   copy of this software and associated documentation files (the
+/   "Software"), to deal in the Software without restriction, including
+/   without limitation the rights to use, copy, modify, merge, publish,
+/   distribute, sublicense, and/or sell copies of the Software, and to permit
+/   persons to whom the Software is furnished to do so, subject to the
+/   following conditions: The above copyright notice and this permission
+/   notice shall be included in all copies or substantial portions of the
+/   Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+/   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+/   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+/   NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+/   DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+/   OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+/   USE OR OTHER DEALINGS IN THE SOFTWARE.
 / NB: never leave a lone "/" on its own line in this file -- q reads it as
 / the start of a block comment and silently swallows everything after it.
 / Protocol (JSON over websocket, same port q already listens on):
@@ -60,7 +80,20 @@ if[not `trades in key `.; trades:([] time:`timestamp$(); sym:`symbol$(); price:`
 / anchored VWAP: the cumulative vwap series for one sym from an anchor
 / time forward, straight off the tick cache; pv/vol let a client extend
 / the series live without re-requesting
+/ The anchor as the client sends it. bdobb writes anchors with
+/ Date.toISOString(), which ends in "Z" -- and "P"$ on that form is NULL.
+/ Strip it. .j.k hands the value over as a char list (10h); a symbol is the
+/ other shape a caller might pass. Never `string` a char list: that splits
+/ it into one-char strings and the cast type-errors.
+.wsu.anchor:{[a] a:$[10h=type a; a; string a]; "P"$$["Z"=last a; -1_a; a]};
+
 .wsu.avwap:{[s;t0;iv]
+  / A null anchor compares >= to EVERY timestamp, so without this guard an
+  / unparseable anchor silently answered with the whole tick table --
+  / cumulative from the first tick ever recorded, anchored at nothing.
+  / Measured: 2.3M points, 158MB, for one mistyped anchor. Empty is the
+  / honest reply: the client draws no line rather than a wrong one.
+  if[null t0; :`data`pv`vol!(([] time:`timestamp$(); avwap:`float$()); 0f; 0f)];
   t:`time xasc select from trades where sym=s, time>=t0;
   d:0!select time, avwap:(sums price*size)%sums size from t;
   / thin to one point per bucket (client sends its bar interval; default
@@ -76,7 +109,7 @@ if[not `trades in key `.; trades:([] time:`timestamp$(); sym:`symbol$(); price:`
     (neg .z.w) .j.j `table`sym`data!(`bars;msg`sym;.wsu.bars[`$msg`sym;`long$1e9*msg`interval])];
   if["avwap"~msg`type;
     iv:`long$1e9*$[`interval in key msg; msg`interval; 1];
-    (neg .z.w) .j.j (`table`sym`anchor!(`avwap;msg`sym;msg`anchor)),.wsu.avwap[`$msg`sym;"P"$msg`anchor;iv]];
+    (neg .z.w) .j.j (`table`sym`anchor!(`avwap;msg`sym;msg`anchor)),.wsu.avwap[`$msg`sym;.wsu.anchor msg`anchor;iv]];
   if["stats"~msg`type;
     / .Q.w[] is q's own memory ledger (the numbers the -w limit judges);
     / the by-clause returns kdb's signature shape, a keyed table

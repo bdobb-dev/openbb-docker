@@ -1,3 +1,6 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """One builder, two routes.
 
 `/ta_chart` and `/ta_chart_ws` both come through here. That is the reason the
@@ -11,14 +14,18 @@ from dataclasses import dataclass
 
 import polars as pl
 
+from app.ta.exprs import price_col
 from app.ta.figure import build_ta_figure
 from app.ta.macros import load_all
 from app.ta.panes import Pane, all_reqs, assign
 from app.ta.registry import Req, resolve
-from app.ta.sources import LocalSource
+from app.ta.session import running_session_start
+from app.ta.sources import Annotation, LocalSource, columns_of
 
 _NUMERIC = ("period", "k", "d", "fast", "slow", "signal", "smooth_k",
-            "stoch_period", "atr_period", "mult", "acceleration", "maximum")
+            "stoch_period", "atr_period", "mult", "acceleration", "maximum",
+            "conversion", "base", "span_b", "displacement", "mid",
+            "multiplier", "session_shift")
 
 
 @dataclass(frozen=True)
@@ -31,13 +38,40 @@ class ChartParams:
     start: str | None = None
     end: str | None = None
     provider: str = "kdb"
+    basis: str = "adjusted"
+    # "extended" (every bar) or "regular" (the feed's regular session only).
+    # Only the literal "regular" filters; anything else is extended, with no
+    # error -- the socket URL is built by a client that may be newer or older
+    # than this server, and closing the stream on an unrecognised toggle is
+    # worse than showing the whole tape. See app.ta.session.
+    session: str = "extended"
 
 
-def _coerce(key: str, raw: str):
+#: Units a numeric parameter may wear on the wire. `bd` = business days: the
+#: window counts SESSIONS rather than bars and is computed on the session
+#: closes (app.ta.session.session_closes). A bare number is bars, as always.
+_UNITS = ("bd",)
+
+
+def _coerce(key: str, raw: str) -> tuple:
+    """The parameter's value, and the unit it wore -- `("50bd")` -> `(50, "bd")`.
+
+    Stripped here rather than inside resolve() because a unit is grammar, not
+    a parameter: any numeric parameter may wear one, and none of them may
+    reach an indicator's build() as a string. An unrecognised suffix is left
+    on and float() raises, which is what should happen -- `period=50bx` is a
+    typo, and silently reading it as 50 bars draws the wrong line with no
+    error anywhere.
+    """
     if key not in _NUMERIC:
-        return raw
-    value = float(raw)
-    return int(value) if value.is_integer() and key != "k" else value
+        return raw, None
+    text = raw.strip()
+    unit = next((u for u in _UNITS
+                 if text.lower().endswith(u) and text[:-len(u)].strip()), None)
+    if unit is not None:
+        text = text[:-len(unit)].strip()
+    value = float(text)
+    return (int(value) if value.is_integer() and key != "k" else value), unit
 
 
 def with_anchor(indicators: str, anchor: str | None) -> str:
@@ -75,22 +109,48 @@ def parse_indicators(raw: str) -> list[Req]:
             else:
                 pairs[-1] += ":" + part
         params = {}
+        units: dict[str, str] = {}
         for pair in pairs:
             if "=" not in pair:
                 continue
             key, value = pair.split("=", 1)
-            params[key.strip()] = _coerce(key.strip(), value.strip())
-        reqs.append(resolve(name.strip(), **params))
+            key = key.strip()
+            params[key], unit = _coerce(key, value.strip())
+            if unit is not None:
+                units[key] = unit
+        # `source` rides in the same colon grammar but is NOT an indicator
+        # parameter -- it is the request's own Local/EODHD routing choice. It
+        # has to come out before resolve(), which raises on any key the
+        # registry does not declare, and it is validated here rather than
+        # defaulted: silently reading a typo as "local" would draw a line the
+        # payload then labels as the vendor's.
+        source = params.pop("source", None)
+        if source is not None and source not in ("local", "eodhd"):
+            raise ValueError(
+                f"source must be 'local' or 'eodhd', got {source!r}")
+        # `units` collides with resolve()'s own named argument the same way
+        # `source` would -- reject it here instead of letting resolve() raise
+        # a "multiple values for argument" TypeError that means nothing to
+        # whoever reads the log.
+        if "units" in params:
+            raise ValueError("'units' is a reserved key, not an indicator parameter")
+        reqs.append(resolve(name.strip(), source, units, **params))
     return reqs
 
 
-def bars_to_frame(bars: list[dict]) -> pl.DataFrame:
+def bars_to_frame(bars: list[dict], basis: str = "adjusted") -> pl.DataFrame:
     """Bars from build_series into the frame the engine expects.
 
     Tick-derived bars have no adjusted close, so raw close stands in. That is
     correct rather than a fudge: intraday ticks are already unadjusted, and the
     alternative is a null column that silently voids every adjusted indicator.
     """
+    # `basis` is a param like any other, and every other one in this engine
+    # raises on an unknown value (resolve, price_col) rather than silently
+    # falling back -- ?basis=raw is the only value besides "adjusted" that
+    # means anything here, so reuse price_col's own check instead of letting
+    # a typo (?basis=Raw) mean "adjusted" with no error anywhere.
+    price_col(basis)
     schema = {"date": pl.Datetime, "open": pl.Float64, "high": pl.Float64,
               "low": pl.Float64, "close": pl.Float64, "adj_close": pl.Float64,
               "volume": pl.Float64, "vwap": pl.Float64}
@@ -113,7 +173,10 @@ def bars_to_frame(bars: list[dict]) -> pl.DataFrame:
             "date": str(bar.get("date")),
             "open": bar.get("open"), "high": bar.get("high"),
             "low": bar.get("low"), "close": close,
-            "adj_close": close if adjusted is None else adjusted,
+            # basis="raw" makes every price_basis="adjusted" indicator read
+            # raw close, without touching a single indicator: they all read
+            # the adj_close COLUMN, and this is where that column is decided.
+            "adj_close": close if basis == "raw" or adjusted is None else adjusted,
             "volume": bar.get("volume") or 0.0,
             # Only tick-derived bars carry a true trade-weighted vwap; vendor
             # history has no per-trade data, so the column is null there.
@@ -126,6 +189,16 @@ def bars_to_frame(bars: list[dict]) -> pl.DataFrame:
         pl.col(["open", "high", "low", "close", "adj_close", "volume", "vwap"])
           .cast(pl.Float64, strict=False),
     ])
+
+
+def chart_subtitle(params: ChartParams) -> str:
+    """The line shared by the figure title and the series payload.
+
+    One spelling: `/ta_chart`'s figure and `/ta_series_ws`'s series payload
+    used to copy this string independently, and `basis` was added on this
+    branch to neither copy.
+    """
+    return f"{params.interval} · {params.source} · {params.basis}"
 
 
 async def build_payload(
@@ -147,18 +220,38 @@ async def build_payload(
     panes = assign(macro, parse_indicators(params.indicators))
     reqs = all_reqs(panes)
 
+    # The chart-wide `source` is now only a DEFAULT: each request may name its
+    # own (v12.3.0 studies), so the split is per request rather than one
+    # branch for the whole chart. Local runs first and the vendor joins onto
+    # its frame, so one frame carries both and nothing downstream has to know
+    # which engine produced which column.
+    def effective(req: Req) -> str:
+        return req.source or params.source
+
+    vendor = [r for r in reqs if effective(r) == "eodhd"]
+    local = [r for r in reqs if effective(r) != "eodhd"]
     annotations: list = []
-    if params.source == "eodhd" and eodhd_source is not None and reqs:
+    computed = frame
+    if local:
+        computed = LocalSource().series(
+            computed, local, params.interval, params.symbol).frame
+    if vendor and eodhd_source is not None:
         last_closed = str(frame["date"][-1]) if frame.height else ""
         result = await eodhd_source.series(
-            frame, reqs, params.symbol, params.interval, last_closed
+            computed, vendor, params.symbol, params.interval, last_closed
         )
         computed, annotations = result.frame, result.annotations
-    else:
-        computed = LocalSource().series(frame, reqs).frame
+    elif vendor:
+        # No vendor client configured: compute locally and say so, exactly as
+        # an intraday request is answered.
+        computed = LocalSource().series(
+            computed, vendor, params.interval, params.symbol).frame
+        annotations = [Annotation(col, "local", "no EODHD source configured")
+                       for r in vendor for col in columns_of(r)]
 
-    subtitle = f"{params.interval} · {params.source}"
-    figure = build_ta_figure(params.symbol, computed, panes, annotations, subtitle)
+    figure = build_ta_figure(
+        params.symbol, computed, panes, annotations, chart_subtitle(params)
+    )
     return figure, panes, computed, annotations
 
 
@@ -168,6 +261,13 @@ def any_repaints(panes: list[Pane]) -> bool:
     Tail deltas assume causality: a revision to bar t changes bar t alone. That
     is false for ZigZag, whose pivots move well back into history when a new
     extreme arrives, so such a chart resends in full (spec D10).
+
+    A `bd` (business-day) window breaks the same assumption -- a tick to the
+    running session's close moves every bar of that session -- but it is NOT
+    handled here, because the damage is bounded: those bars are the last
+    session's, not the chart's. `delta_start` widens the delta to exactly
+    them. Answering "repaints" instead resends the whole chart every push,
+    forever, for the feature the spec asks the user to type.
     """
     from app.ta.registry import get
 
@@ -185,3 +285,20 @@ def revised_from(previous_dates: list[str], current_dates: list[str]) -> int:
     if current_dates[:len(previous_dates)] != previous_dates:
         return 0
     return max(0, len(previous_dates) - 1)
+
+
+def delta_start(panes: list[Pane], previous_dates: list[str],
+                current_dates: list[str], frame: pl.DataFrame,
+                symbol: str = "") -> int:
+    """`revised_from`, widened to the running session when a `bd` window asks.
+
+    One function for both sockets rather than the same two lines in each: the
+    Plotly loop and the series loop have to agree about which rows a delta
+    covers, and the only way they cannot drift is to have no second copy.
+    """
+    start = revised_from(previous_dates, current_dates)
+    # Any unit-bearing request computes on session closes, so its whole
+    # running session moves with the close -- see running_session_start.
+    if any(req.units for pane in panes for req in pane.reqs):
+        start = min(start, running_session_start(frame, symbol))
+    return start

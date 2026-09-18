@@ -1,3 +1,6 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Tests for the Phase-2 company-core fetchers.
 
 Bundle samples are trimmed live /fundamentals sections recorded 2026-09-01.
@@ -174,8 +177,53 @@ class TestEquityQuote:
         r = EODHDEquityQuoteFetcher.transform_data(q, QUOTE_ROWS)[0]
         assert r.symbol == "AAPL.US"
         assert r.last_price == 323.515
-        assert r.change_percent == 2.1035
+        assert r.change_percent == pytest.approx(0.021035)
         assert r.last_timestamp.year == 2026
+
+    @pytest.mark.parametrize(
+        ("provider_percent", "fraction"),
+        [
+            (0.3229, 0.003229),
+            (-0.3229, -0.003229),
+            (0, 0),
+            (125, 1.25),
+            ("0.3229", 0.003229),
+            (None, None),
+            ("NA", None),
+        ],
+    )
+    def test_change_percent_is_normalized(self, provider_percent, fraction):
+        q = EODHDEquityQuoteQueryParams(symbol="TEST")
+        row = {"code": "TEST.US", "close": 100, "change_p": provider_percent}
+        result = EODHDEquityQuoteFetcher.transform_data(q, [row])[0]
+        value = result.model_dump(mode="json")["change_percent"]
+        if fraction is None:
+            assert value is None
+        else:
+            assert value == pytest.approx(fraction)
+
+    def test_missing_change_percent_stays_null(self):
+        q = EODHDEquityQuoteQueryParams(symbol="TEST")
+        result = EODHDEquityQuoteFetcher.transform_data(
+            q, [{"code": "TEST.US", "close": 100}]
+        )[0]
+        assert result.change_percent is None
+
+    def test_quote_percentage_matches_price_change_and_frontend_contract(self):
+        q = EODHDEquityQuoteQueryParams(symbol="TEST")
+        row = {
+            "code": "TEST.US", "close": 100.3229, "previousClose": 100,
+            "change": 0.3229, "change_p": 0.3229,
+        }
+        result = EODHDEquityQuoteFetcher.transform_data(q, [row])[0]
+        assert result.change_percent == pytest.approx(
+            (result.last_price - result.prev_close) / result.prev_close
+        )
+        field = type(result).model_fields["change_percent"]
+        multiplier = field.json_schema_extra["x-frontend_multiply"]
+        assert multiplier == 100
+        assert result.change_percent * multiplier == pytest.approx(0.3229)
+        assert f"{result.change_percent * multiplier:.2f} %" == "0.32 %"
 
     def test_multi_symbol_request(self):
         q = EODHDEquityQuoteQueryParams(symbol="AAPL,MSFT")

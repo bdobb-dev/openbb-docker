@@ -1,10 +1,15 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Two-pass evaluation: shared sub-series are materialised exactly once."""
+
+from datetime import datetime
 
 import polars as pl
 import pytest
 
-from app.ta.compute import collect_bases, compute, compute_with_bases
-from app.ta.registry import resolve
+from app.ta.compute import collect_bases, compute, compute_with_bases, session_columns
+from app.ta.registry import Indicator, Req, get, resolve
 from tests.ta_helpers import col, cols, fixture_frame
 
 
@@ -65,3 +70,93 @@ def test_two_periods_of_one_indicator_are_two_distinct_columns():
     assert len(made) == 2, made
     fifty, two_hundred = (out[c].to_list() for c in made)
     assert fifty != two_hundred
+
+
+def _fake_sessioned() -> Indicator:
+    """A sessioned indicator that is NOT registered.
+
+    REGISTRY is module-global, so registering a test-only indicator would
+    leak into every other test module's view of it -- including the
+    convention sweep. session_columns takes the Indicator directly, so it
+    needs no registration.
+    """
+    return Indicator(
+        name="_test_session", label="Test session",
+        params={"anchor": "1d", "session_shift": 1},
+        pane="price", price_basis="raw", convention="test only",
+        deps=lambda p: [],
+        build=lambda p, b: [((pl.col("H") + pl.col("L") + pl.col("C")) / 3).alias("mid")],
+        render={"mid": {"type": "line", "color": None}},
+        sessioned=True,
+        session_agg=lambda p: {
+            "H": pl.col("high").max(), "L": pl.col("low").min(),
+            "C": pl.col("close").last(),
+        },
+    )
+
+
+def _intraday(days: int = 3, per_day: int = 8) -> pl.DataFrame:
+    rows = []
+    for day in range(1, days + 1):
+        for step in range(per_day):
+            price = 100.0 + day * 10 + step
+            rows.append({
+                "date": datetime(2026, 1, day, 9 + step),
+                "open": price, "high": price + 1, "low": price - 1,
+                "close": price, "adj_close": price,
+                "volume": 100.0, "vwap": price,
+            })
+    return pl.DataFrame(rows)
+
+
+def test_session_columns_holds_the_prior_sessions_values_flat():
+    ind = _fake_sessioned()
+    out = session_columns(_intraday(), ind, Req("_test_session", dict(ind.params)))
+    mid = out["mid"]
+    # Day 1 has no prior session.
+    assert all(v is None for v in mid[:8])
+    # Day 2 holds one value across all eight of its bars.
+    assert len(set(mid[8:16])) == 1 and mid[8] is not None
+    # Day 3 holds a different one.
+    assert mid[16] != mid[8]
+
+
+def test_session_columns_returns_one_value_per_row_for_an_ascending_frame():
+    frame = _intraday()
+    ind = _fake_sessioned()
+    out = session_columns(frame, ind, Req("_test_session", dict(ind.params)))
+    assert len(out["mid"]) == frame.height
+
+
+def test_session_columns_raises_rather_than_silently_mis_assign_an_unsorted_frame():
+    """The returned lists are assigned straight onto the caller's frame by row
+    position, so they must align with ITS rows. session_columns does not sort
+    internally -- group_by_dynamic refuses unsorted input and raises here. If
+    an internal sort were ever added, this call would succeed instead, and the
+    now-reordered lists would be assigned onto the frame's original (unsorted)
+    row order, silently mis-assigning every value."""
+    frame = _intraday().reverse()
+    ind = _fake_sessioned()
+    with pytest.raises(pl.exceptions.InvalidOperationError, match="not sorted"):
+        session_columns(frame, ind, Req("_test_session", dict(ind.params)))
+
+
+def test_a_plain_indicator_declares_sessioned_false():
+    assert get("sma").sessioned is False
+    assert get("sma").session_agg is None
+
+
+def test_session_columns_raises_when_build_omits_a_promised_render_column():
+    """render promises 'mid' and 'phantom'; build only produces 'mid'. A
+    silently-dropped output means a chart series never appears with no signal
+    as to why -- this must fail loudly instead."""
+    ind = _fake_sessioned()
+    broken = Indicator(
+        name="_test_session_broken", label="Broken", params=ind.params,
+        pane=ind.pane, price_basis=ind.price_basis, convention=ind.convention,
+        deps=ind.deps, build=ind.build,
+        render={**ind.render, "phantom": {"type": "line", "color": None}},
+        sessioned=True, session_agg=ind.session_agg,
+    )
+    with pytest.raises(ValueError, match="phantom"):
+        session_columns(_intraday(), broken, Req("_test_session_broken", dict(broken.params)))

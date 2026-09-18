@@ -1,3 +1,6 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """HTTP Basic auth for every live-grid surface.
 
 Uses the SAME credentials as openbb-api, from the same `api-auth.env` that
@@ -8,6 +11,18 @@ thing to rotate.
 Read with os.environ rather than openbb_core.env.Env: api_app.py uses Env
 because it runs inside the Platform, but live-grid does not depend on
 openbb-core and should not gain that dependency to read three strings.
+
+The credential may arrive as an `Authorization` QUERY PARAMETER as well as a
+header. That exists for one reason: the subscriptions widget is an iframe, and
+a browser frame issues its own request with no way to attach a header, so the
+header the desktop client holds is unusable there. The query is the only
+channel a frame has. It carries the same `Basic <base64>` value under the same
+name, so there is one credential format, not two.
+
+The cost is stated rather than hidden: a credential in a URL can reach proxy
+and access logs. That is tolerable here only because this service is
+tailnet-published and never funneled -- the same reasoning the client applies
+to its websocket URL, which cannot carry a header either.
 
 A RAW ASGI middleware, not BaseHTTPMiddleware. Starlette's BaseHTTPMiddleware
 begins `if scope["type"] != "http": await self.app(...); return`, so it never
@@ -22,6 +37,24 @@ import os
 import secrets
 
 _TRUE = ("1", "true", "yes", "on")
+
+# The ONE path served without credentials: the subscriptions widget's static
+# HTML.
+#
+# The widget is an iframe, and a browser frame issues its own navigation with
+# no way to attach a header -- so under a blanket guard the frame 401s and
+# paints blank before a single line of its script runs. The page carries no
+# data and no state; everything it shows it fetches afterwards from
+# /api/subscriptions, which stays guarded (see
+# test_the_subscription_api_is_guarded_too -- it mutates durable state, so it
+# is the one that matters most). Once loaded, the page asks its host for
+# credentials over the `openbb-connect` / `openbb-auth` postMessage handshake
+# and sends them on every call.
+#
+# Reaching this at all already requires being on the tailnet, where
+# /live_grid_ws serves the same feed to anyone who asks. Exact match, so a
+# future /subscriptions-admin does not quietly inherit the exemption.
+_PUBLIC_PAGE = "/subscriptions"
 
 
 def auth_enabled() -> bool:
@@ -62,11 +95,27 @@ class BasicAuthMiddleware:
             await self.app(scope, receive, send)
             return
 
+        # HTTP only: a websocket to this path would not be the page load.
+        if scope["type"] == "http" and scope.get("path") == _PUBLIC_PAGE:
+            await self.app(scope, receive, send)
+            return
+
         header = None
         for key, value in scope.get("headers") or []:
             if key == b"authorization":
                 header = value.decode("latin-1")
                 break
+
+        # Fall back to the query only when no header was sent: a request that
+        # supplies a header is judged on it alone, so a bad header cannot be
+        # rescued by appending a good query string.
+        if header is None:
+            from urllib.parse import parse_qs
+
+            raw_qs = scope.get("query_string") or b""
+            supplied = parse_qs(raw_qs.decode("latin-1")).get("Authorization")
+            if supplied:
+                header = supplied[0]
 
         if credentials_ok(header):
             await self.app(scope, receive, send)

@@ -1,3 +1,6 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Server-layer tests: widgets.json contract, REST seeding, health, key gate.
 The SDK is never imported — the seed client is injected."""
 import threading
@@ -97,10 +100,21 @@ def test_live_grid_declares_its_visible_columns_and_hides_the_rest(monkeypatch):
     body = make_client().get("/widgets.json").json()
     cols = body["live_grid"]["data"]["table"]["columnsDefs"]
     visible = [c["field"] for c in cols if not c.get("hide")]
-    # Each range bar is flanked by its own low and high, so the numbers line
-    # up down the grid and sort -- the bar itself labels nothing.
+    # ORDER IS THE ASSERTION, not just membership: the desktop client renders
+    # every declared field the payload carries in columnsDefs order, so this
+    # list is the grid's left-to-right reading order.
+    #
+    # RSI and the VWAP trio sit immediately after the price columns and
+    # BEFORE the two ranges. They are single values, whereas each range is a
+    # three-column group flanked by its own low and high, so putting the
+    # singles first keeps the two groups intact at the right rather than
+    # splitting them around a lone column.
+    #
+    # Within the trio the order is the reading order: the anchored VWAP
+    # itself, then how far price sits from it, then where it was anchored.
     assert visible == [
         "logo_url", "symbol", "price", "change", "change_percent",
+        "rsi", "avwap", "avwap_dev", "vwap_start",
         "day_low", "day_range", "day_high",
         "week52_low", "week52_range", "week52_high",
         "volume",
@@ -144,11 +158,16 @@ def test_both_range_bars_use_one_render_fn_differing_only_in_params():
     defs = {c["field"]: c for c in body["live_grid"]["data"]["table"]["columnsDefs"]}
     day, week = defs["day_range"], defs["week52_range"]
     assert day["renderFn"] == week["renderFn"] == ["rangeBar"]
+    # valueKey is required: a rangeBar column is presentation-only, so without
+    # it the renderer has no value to mark and draws an empty cell between a
+    # correct low and high.
     assert day["renderFnParams"] == {
-        "lowKey": "day_low", "highKey": "day_high", "palette": "day",
+        "lowKey": "day_low", "highKey": "day_high",
+        "valueKey": "price", "palette": "day",
     }
     assert week["renderFnParams"] == {
-        "lowKey": "week52_low", "highKey": "week52_high", "palette": "week52",
+        "lowKey": "week52_low", "highKey": "week52_high",
+        "valueKey": "price", "palette": "week52",
     }
     # The palettes MUST differ: the two bars sit side by side in one row, and
     # identical colours read as one repeated column rather than two bands.
@@ -292,6 +311,78 @@ def test_websocket_registers_params_and_streams_dirty_rows(monkeypatch):
         assert row is not None and row["price"] == 151.0
 
 
+def test_arts_charts_is_declared_with_its_series_websocket():
+    spec = make_client().get("/widgets.json").json()
+    widget = spec["arts_charts"]
+    assert widget["type"] == "arts_charts"
+    assert widget["endpoint"] == "series"
+    assert widget["wsEndpoint"] == "ta_series_ws"
+
+
+def test_arts_charts_macro_options_are_filled_in_like_ta_chart():
+    spec = make_client().get("/widgets.json").json()
+    macro = next(p for p in spec["arts_charts"]["params"]
+                 if p["paramName"] == "macro")
+    values = [o["value"] for o in macro["options"]]
+    assert values[0] == "none"
+    assert "classic-momentum" in values
+
+
+def test_the_library_offers_two_arts_charts_widgets():
+    """One chart, one source (v12.3.1): the source is fixed per widget rather
+    than chosen on the card, so the library carries a Live grid entry with no
+    `source` parameter at all and an EODHD entry whose `source` has exactly
+    one option. Both are still the same renderer and the same endpoints."""
+    spec = make_client().get("/widgets.json").json()
+    local, eodhd = spec["arts_charts"], spec["arts_charts_eodhd"]
+    assert local["name"] == "Art's Charts — Live grid"
+    assert eodhd["name"] == "Art's Charts — EODHD"
+    for widget in (local, eodhd):
+        assert widget["type"] == "arts_charts"
+        assert widget["endpoint"] == "series"
+        assert widget["wsEndpoint"] == "ta_series_ws"
+
+    assert "source" not in [p["paramName"] for p in local["params"]]
+    source = next(p for p in eodhd["params"] if p["paramName"] == "source")
+    assert source["value"] == "eodhd"
+    assert source["options"] == [{"label": "EODHD", "value": "eodhd"}]
+
+    # Studies are now client-side series, not a manifest parameter; the
+    # client keeps sending `indicators` in the query, but the card no longer
+    # declares it. `panels` (the pane layout) replaces it in the params list.
+    for widget in (local, eodhd):
+        names = [p["paramName"] for p in widget["params"]]
+        assert "indicators" not in names
+        panels = next(p for p in widget["params"] if p["paramName"] == "panels")
+        assert panels["value"] == "0,0,100,70,24,56;70,0,100,30,24,56"
+
+    # Everything but the source is the same card.
+    def rest(widget):
+        return [p for p in widget["params"] if p["paramName"] != "source"]
+
+    assert rest(local) == rest(eodhd)
+    assert "basis" in [p["paramName"] for p in local["params"]]
+
+
+def test_arts_charts_offers_start_and_end_dates_for_the_custom_range():
+    # bdobb's Custom range button zooms to these; ta_series_ws already reads
+    # them as the study window. Blank by default: Custom then fits everything
+    # loaded, and the studies keep their one-year default.
+    spec = make_client().get("/widgets.json").json()
+    params = {p["paramName"]: p for p in spec["arts_charts"]["params"]}
+    assert params["start"]["type"] == "date" and params["start"]["value"] == ""
+    assert params["end"]["type"] == "date" and params["end"]["value"] == ""
+
+
+def test_arts_charts_offers_the_full_intraday_interval_range():
+    spec = make_client().get("/widgets.json").json()
+    interval = next(p for p in spec["arts_charts"]["params"]
+                    if p["paramName"] == "interval")
+    assert [o["value"] for o in interval["options"]] == [
+        "1s", "1m", "5m", "15m", "30m", "1h", "1d"
+    ]
+
+
 def test_change_and_percent_are_two_columns_not_one_parenthetical():
     """They sort independently and line up down the grid, which a percent
     riding inside the change cell as "(3.40%)" could not do."""
@@ -322,3 +413,51 @@ def test_the_range_bars_flanking_columns_hug_their_bar():
     assert defs["day_high"]["align"] == "left"
     assert defs["week52_low"]["align"] == "right"
     assert defs["week52_high"]["align"] == "left"
+
+
+def test_each_range_bar_reads_as_low_label_high():
+    """The three columns of a range read as one group -- `Low  Day  High` and
+    `Low  52 week  High` -- so the flanking numbers are named by the bar
+    between them rather than repeating its name twice on either side.
+
+    Duplicate header text across the two groups is deliberate and safe:
+    headerName is display only (the client builds its header string from it
+    and falls back to `field`), and columns are keyed by `field` throughout.
+    """
+    body = make_client().get("/widgets.json").json()
+    names = {c["field"]: c.get("headerName")
+             for c in body["live_grid"]["data"]["table"]["columnsDefs"]}
+    assert [names["day_low"], names["day_range"], names["day_high"]] == [
+        "Low", "Day", "High"
+    ]
+    assert [names["week52_low"], names["week52_range"], names["week52_high"]] == [
+        "Low", "52 week", "High"
+    ]
+
+
+def test_the_money_columns_opt_out_of_abbreviation():
+    """"80.7411K" is not a price -- it hides which dollar BTC is trading at.
+    Volume keeps the default: there the magnitude is the point."""
+    body = make_client().get("/widgets.json").json()
+    defs = {c["field"]: c for c in body["live_grid"]["data"]["table"]["columnsDefs"]}
+    for field in ("price", "change", "day_low", "day_high", "week52_low", "week52_high"):
+        assert defs[field]["abbreviate"] is False, field
+    assert "abbreviate" not in defs["volume"]
+
+
+def test_the_tick_time_column_is_declared_text():
+    """A tick's time is a timestamp, not a date. The client slices a
+    date-NAMED column to YYYY-MM-DD unless the manifest says otherwise, which
+    left every row of a tick history reading the same day."""
+    body = make_client().get("/widgets.json").json()
+    (t,) = [c for c in body["kdb_ticks"]["data"]["table"]["columnsDefs"] if c["field"] == "time"]
+    assert t["cellDataType"] == "text"
+
+
+def test_live_grid_rsi_bars_grow_outward_from_the_30_70_bands():
+    # bdobb's meter draws nothing between the bands and grows the bar from
+    # the band the RSI has crossed: 15 from 30 down, 85 from 70 up.
+    spec = make_client().get("/widgets.json").json()
+    cols = spec["live_grid"]["data"]["table"]["columnsDefs"]
+    rsi = next(c for c in cols if c["field"] == "rsi")
+    assert rsi["renderFnParams"]["bands"] == [30, 70]

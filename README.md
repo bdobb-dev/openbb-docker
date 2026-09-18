@@ -1,3 +1,6 @@
+<!-- Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # openbb-docker
 
 Self-hosted **OpenBB Platform** in Docker, behind a Tailscale sidecar — the
@@ -8,7 +11,7 @@ from later chapters is.
 
 | Release | Episode | What it adds |
 |---|---|---|
-| v1.0.0 | Ep. 1 — Your Own Bloomberg in a Closet | Tailscale sidecar + OpenBB Platform API, Serve-only ingress, provider keys |
+| v1.0.0 | Ep. 1 — Your Own Bloomberg in a Cabinet | Tailscale sidecar + OpenBB Platform API, Serve-only ingress, provider keys |
 | v2.0.0 | Ep. 2 — The Borrowed Terminal | HTTP Basic auth on the API, Tailscale Funnel (port 443 only) |
 | v3.0.0 | Ep. 3 — (with BDOBB v3.0.0) | key-maint: the transport-tiered key status widget backend |
 | v6.0.0 | Ep. 6 — The Analyst | OpenBB MCP server (tool-discovery mode), agent deploy configs |
@@ -18,13 +21,14 @@ from later chapters is.
 | v11.0.0 | Ep. 11 — The Shared Store | MinIO as its own tailnet node + Delta Lake (`provider="deltalake"`) + `tick-lab` + the `live_chart` widget |
 | v11.1.0 | Ep. 11 — The Shared Store | `tick-lab`'s EODHD-through-the-API reference adapter — the per-minute 2023 comparison yfinance cannot serve |
 | v11.1.1 | Ep. 11 — The Shared Store | `tick-lab`'s in-process OpenBB reference adapter (`--reference eodhd-local`) — the same call made locally, and what it costs versus `eodhd-api` |
+| v11.4.0 | Ep. 11 — The Shared Store | `sip-backfill`: the consolidated-tape tick history (EODHD Tick Data API, T+1) walked into the store one week at a time — one Delta table per symbol partitioned by day, a daily trailing-7-day refresh, Delta versions as the corrections audit |
 
 Ep. 11's three tags point at the same commit. The chapter was built and
 verified as one body of work — the rows above describe what each release
 *adds*, not three separate states of the code, and the two later reference
 adapters are `--reference` options you select at runtime.
 
-## What you get (this release: v11.1.1)
+## What you get (this release: v12.4.0)
 
 Eight services across two tailnet nodes, zero exposed ports. The backbone,
 unchanged since Ep. 1:
@@ -188,16 +192,40 @@ coalesced flushes/second. Serve publishes it on :6903, tailnet-only. See
 [openbb-eodhd/README.md](openbb-eodhd/README.md).
 
 **New in v8.0.0 (Ep. 8):** the wire. The
-**[rss-ticker](https://github.com/artcashin/rss-ticker)** news service joins
-the sidecar: it polls your RSS feeds (conditional GETs, jitter, backoff),
-dedupes into SQLite, streams new articles over a websocket, and serves a
-Bloomberg-style **news window / news rail** widget. Running behind this
-stack's Serve it uses **`tailscale_auth`** — the caller's verified Tailscale
-identity replaces every per-user token, so no credential appears in any URL.
-Serve publishes it on :8088, tailnet-only, never funneled. Compose builds it
-straight from its repo; configure `rss-ticker-config/config.yaml` (from the
-example) and `rss-ticker.env` (admin key), then add the backend in Workspace
-or BDOBB with a **blank API key** — your Serve identity is the credential.
+**[rss-ticker](https://github.com/artcashin/rss-feedhandler)** feed pool
+joins the stack: BDOBB's built-in **News** widget tells it which feeds to
+watch over a websocket, it polls the union (conditional GETs, jitter,
+backoff), dedupes into SQLite, and streams every new article tagged by feed.
+With the reworked rss-ticker 8.0.0 there are no users, keys or configured feeds: the
+pool has **no authentication**, and reachability is the whole access control
+— Serve publishes it on :8088, tailnet-only, never funneled. Compose builds
+it from the public repo at the `v8.0.0` tag; the only setup is
+`rss-ticker-config/config.yaml` (from the example, four operational
+settings). In BDOBB, add a News card and set its **RSS Aggregator Server**
+to the Serve address.
+
+**The service is opt-in.** `docker compose up -d` does not start it; use
+`docker compose --profile feeds up -d` (or set `COMPOSE_PROFILES=feeds`) when
+you want the stack to run the feed pool itself. The reference deployment runs
+the feed server as its own compose project instead, so the stack must not
+start a second one by default. Serve keeps its `:8088` route either way, so
+that port answers 502 while the service is down.
+
+*Upgrading from the token-era ticker* (a stack that ran rss-ticker with
+users and keys):
+
+- **Back up the `rss-ticker-data` volume first.** Nothing below can be
+  undone.
+- **The old `config.yaml` refuses to start.** The server will not boot on
+  it and names every stale key (`users`, `admin_key`, `public_base_url`,
+  `tailscale_auth`, ...). Replace the file with a fresh copy of the example.
+  `rss-ticker.env` is no longer read; delete it.
+- **The database migrates one way on first boot.** The users, subscriptions
+  and filter rules are dropped for good; the backup is the only way back.
+- **Feeds survive only if a News card asks for them.** Every feed is disabled
+  at boot. The hourly sweep deletes each feed that no News card has
+  re-subscribed, together with its articles. So open the News cards you want
+  kept within the first hour.
 
 **New in v6.0.0 (Ep. 6, pairs with BDOBB v6.0.0):** the **OpenBB MCP
 server** — the analyst's hands. Same image, wrapping the same Platform
@@ -238,7 +266,7 @@ cp ts.env.example ts.env            # paste a tagged, reusable auth key; chmod 6
 cp api-auth.env.example api-auth.env         # REQUIRED — set a strong password; chmod 600
 cp credentials.env.example credentials.env   # optional — keyless providers work with none
 cp minio.env.example minio.env     # REQUIRED for the store; chmod 600
-cp rss-ticker.env.example rss-ticker.env     # REQUIRED — admin key; chmod 600
+cp rss-ticker-config/config.yaml.example rss-ticker-config/config.yaml   # four settings, no secrets
 
 # 2. Build and start
 docker compose up -d --build
@@ -250,6 +278,7 @@ docker compose up -d --build
 curl https://openbb.<your-tailnet>.ts.net/api/v1/equity/price/quote                        # 401
 curl -u openbb:<password> https://openbb.<your-tailnet>.ts.net/api/v1/equity/price/quote   # 422 — auth accepted, symbol required
 curl https://openbb.<your-tailnet>.ts.net/widgets.json                                     # 200 — metadata, by design
+curl -u openbb:<password> https://openbb.<your-tailnet>.ts.net/apps.json                   # 200 — the example dashboards built on this API's widgets (workspace_apps.json, written by bdobb-v2's pnpm apps:sync; live-grid serves its own)
 
 # 4. Verify the walls (from a SECOND tailnet device)
 scripts/verify-isolation.sh openbb.<your-tailnet>.ts.net minio.<your-tailnet>.ts.net
@@ -298,7 +327,22 @@ OPENBB_URL=https://openbb.<your-tailnet>.ts.net scripts/smoke.sh
 # widgets.json from inside the container — see .github/workflows/ci.yml
 ```
 
+## Acknowledgements
+
+Every Python distribution in the images this stack builds is listed with its
+licence text in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md),
+generated by `python3 scripts/third-party-notices.py` from the built images
+(rerun it after rebuilding one; the header records which image tags and
+build dates it describes). The non-Python pieces are there too: OpenBB
+itself (AGPL-3.0), MinIO (AGPL-3.0) and the Tailscale binaries (BSD-3) in
+the MinIO image, and the q websocket pattern inlined from Jonathon
+McMurray's [ws.q](https://github.com/jonathonmcmurray/ws.q) (MIT). kdb+ and
+its licence are never redistributed — bring your own — and neither is the
+FirstRate Data sample `tick-lab` reads.
+
 ## License
 
-AGPL-3.0-only — this repo builds and serves OpenBB Platform itself, which is
-AGPL-3.0-only upstream.
+Apache-2.0 — see [`LICENSE`](LICENSE). That covers the files in this
+repository. The images it builds bundle OpenBB Platform and MinIO, which stay
+under their own AGPL-3.0 licences; see
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

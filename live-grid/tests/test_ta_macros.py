@@ -1,3 +1,6 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Macros are validated at load: a bad macro fails at startup, not at render."""
 
 import pytest
@@ -40,8 +43,9 @@ def test_the_macro_name_comes_from_the_filename(tmp_path):
 
 
 def test_an_unknown_indicator_is_rejected(tmp_path):
-    bad = GOOD.replace("name: rsi", "name: ichimoku")
-    with pytest.raises(MacroError, match="unknown indicator 'ichimoku'"):
+    # NOT "ichimoku": that has been a registered indicator since v12.0.0.
+    bad = GOOD.replace("name: rsi", "name: renko")
+    with pytest.raises(MacroError, match="unknown indicator 'renko'"):
         load_macro(write(tmp_path, bad))
 
 

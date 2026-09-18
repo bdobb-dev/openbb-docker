@@ -1,3 +1,6 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Which series go where, and how tall each pane is.
 
 Deliberately free of Plotly and of data: this is arithmetic and bookkeeping,
@@ -17,6 +20,11 @@ class Series:
     column: str
     label: str
     render: dict
+    # The request this series came from. Carried rather than re-derived: a
+    # client that owns its own renderer (bdobb-v2's studies strip) matches
+    # returned series back to the study instance that asked for them, and the
+    # column name alone cannot say which SOURCE was requested.
+    req: Req | None = None
 
 
 @dataclass
@@ -40,20 +48,29 @@ def _series_for(req: Req) -> list[Series]:
     return [
         Series(base + col_suffix(req),
                f"{ind.label}{suffix}" if i == 0 else base,
-               {**render, **style})
+               {**render, **style}, req)
         for i, (base, render) in enumerate(ind.render.items())
     ]
 
 
 def _suffix(req: Req) -> str:
-    numeric = [f"{v:g}" for k, v in req.params.items()
+    # The unit rides in the label too: without it the legend reads SMA(50)
+    # for both the bar window and the session one, and the two lines become
+    # indistinguishable to the eye that has to tell them apart.
+    numeric = [f"{v:g}{req.units.get(k, '')}" for k, v in req.params.items()
                if k != "style" and isinstance(v, (int, float))]
     return f"({','.join(numeric)})" if numeric else ""
 
 
 def _key(req: Req) -> tuple:
+    # `source` is part of the identity (v12.3.0): the same SMA asked of both
+    # sources must survive dedupe as two requests, or the second silently
+    # collapses onto the first and the card loses a line.
+    # `units` likewise: `period=50` and `period=50bd` are fifty bars and
+    # fifty sessions, two lines, and dedupe must not fuse them into one.
     return (req.name, tuple(sorted(
-        (k, v) for k, v in req.params.items() if k != "style")))
+        (k, v) for k, v in req.params.items() if k != "style")), req.source,
+        tuple(sorted(req.units.items())))
 
 
 def assign(macro: Macro | None, picks: list[Req]) -> list[Pane]:
@@ -104,6 +121,50 @@ def domains(panes: list[Pane], gap: float = 0.02) -> list[tuple[float, float]]:
         height = pane.height / total * available
         out.append((round(top - height, 6), round(top, 6)))
         top -= height + gap
+    return out
+
+
+def shift_times(times: list, offset: int) -> list:
+    """Where each value should be PLOTTED, given a displacement in bars.
+
+    Ichimoku's leading spans are drawn `displacement` bars into the future and
+    its lagging span the same distance back. Expressing that as a shift of the
+    VALUES inside the frame silently loses the leading ones -- the frame stops
+    at the last bar and has no rows to hold them. Displacing the timestamps
+    instead keeps the frame rectangular and lets the renderer draw past the
+    last candle, which is what both Plotly and lightweight-charts allow.
+
+    Timestamps beyond either end are synthesized from the smallest gap
+    observed between any two adjacent, non-null entries -- not just the
+    trailing pair, which an irregular series (e.g. an intraday frame
+    straddling a session break) could hand us many times the true bar
+    spacing. One bar, or an entirely-null series, carries no spacing to
+    infer, so it yields None.
+    """
+    if offset == 0 or not times:
+        return list(times)
+    count = len(times)
+    step = min(
+        (b - a for a, b in zip(times, times[1:])
+         if a is not None and b is not None and b > a),
+        default=None,
+    )
+    # The anchor is the last (or first) NON-null entry, not simply times[-1]
+    # / times[0] -- bars_to_frame parses dates with strict=False, so a
+    # malformed date becomes a null that can land at either end.
+    last_idx = next((i for i in range(count - 1, -1, -1) if times[i] is not None), None)
+    first_idx = next((i for i in range(count) if times[i] is not None), None)
+    out = []
+    for index in range(count):
+        target = index + offset
+        if 0 <= target < count:
+            out.append(times[target])
+        elif step is None or last_idx is None:
+            out.append(None)
+        elif target >= count:
+            out.append(times[last_idx] + step * (target - last_idx))
+        else:
+            out.append(times[first_idx] + step * (target - first_idx))
     return out
 
 

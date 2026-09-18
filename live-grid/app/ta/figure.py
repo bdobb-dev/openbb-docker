@@ -1,3 +1,6 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Plotly figure JSON. The client renders it -- this service has no chart
 backend, exactly like app/figure.py.
 
@@ -13,7 +16,7 @@ from collections.abc import Sequence
 
 import polars as pl
 
-from app.ta.panes import Pane, domains
+from app.ta.panes import Pane, domains, shift_times
 
 PRICE = "__price__"
 
@@ -55,10 +58,13 @@ def _column(frame: pl.DataFrame, name: str) -> list:
     ]
 
 
-def _dates(frame: pl.DataFrame) -> list[str]:
+def _dates(frame: pl.DataFrame, offset: int = 0) -> list[str]:
     if "date" not in frame.columns:
         return []
-    return [None if d is None else str(d) for d in frame["date"].to_list()]
+    stamps = frame["date"].to_list()
+    if offset:
+        stamps = shift_times(stamps, offset)
+    return [None if d is None else str(d) for d in stamps]
 
 
 def build_ta_figure(
@@ -100,8 +106,13 @@ def build_ta_figure(
             render = dict(series.render)
             kind = render.pop("type", "line")
             color = render.pop("color", None)
+            # A displaced series is plotted against shifted timestamps, not
+            # shifted values -- see panes.shift_times for why.
+            offset = int(render.pop("time_offset", 0) or 0)
             trace = {
-                "name": series.label, "x": x, "y": _column(frame, series.column),
+                "name": series.label,
+                "x": x if offset == 0 else _dates(frame, offset),
+                "y": _column(frame, series.column),
                 "yaxis": axis, "xaxis": xaxis,
             }
             if kind == "bar":
@@ -150,8 +161,20 @@ def delta(frame: pl.DataFrame, panes: Sequence[Pane], start_row: int) -> dict:
             "low": _column(tail, "low"), "close": _column(tail, "close"),
         }
     }
-    for position, column in enumerate(trace_index(panes)):
-        if position == 0:
-            continue
-        traces[str(position)] = {"y": _column(tail, column)}
+    dates = frame["date"].to_list() if "date" in frame.columns else []
+    position = 0
+    for pane in panes:
+        for series in pane.series:
+            position += 1
+            trace: dict = {"y": _column(tail, series.column)}
+            offset = int(series.render.get("time_offset", 0) or 0)
+            if offset:
+                # The shared "x" above is the tail's OWN dates -- wrong for a
+                # displaced series, which plots at a shift of the FULL
+                # frame's dates (see panes.shift_times). Compute that shift
+                # across the whole frame, same as the full push does, then
+                # slice to the tail so point i here still lines up with y[i].
+                shifted = shift_times(dates, offset)[start:]
+                trace["x"] = [None if d is None else str(d) for d in shifted]
+            traces[str(position)] = trace
     return {"from": start, "x": _dates(tail), "traces": traces}

@@ -1,5 +1,3 @@
-# Copyright 2026 Arthur D. Cashin III. Licensed under the Apache License, Version 2.0.
-# SPDX-License-Identifier: Apache-2.0
 import json
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
@@ -7,10 +5,9 @@ from pathlib import Path
 
 import pytest
 
-import security_master_api
 from security_master_api.temporal_fixture import load_temporal_fixture, state_at
 
-FIXTURES = Path(security_master_api.__file__).parent / "fixtures"
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def instant(value: str) -> datetime:

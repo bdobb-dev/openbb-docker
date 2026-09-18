@@ -1,3 +1,6 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 # OpenBB Platform API behind a Tailscale sidecar — Adventures in OpenBB, Ep. 1–2.
 #
 # The tailscale container owns the network namespace; the API joins it, so the
@@ -33,10 +36,10 @@ services:
       - TS_HOSTNAME=openbb
       # MANDATORY. The image defaults to userspace networking, where tailscaled
       # terminates inbound tailnet connections itself and forwards them to
-      # 127.0.0.1 — which would make the API reachable AROUND Serve at
-      # <node-ip>:6900. Kernel mode (this, plus the tun device and NET_ADMIN
-      # below) makes the tailnet IP a real interface, so the 127.0.0.1 socket
-      # below is genuinely unreachable from other peers.
+      # 127.0.0.1 — this container's OWN loopback, where nothing listens: the
+      # services are on the bridge, not in this namespace. Kernel mode (this,
+      # plus the tun device and NET_ADMIN below) gives the node a real interface
+      # and lets Serve proxy to each service by name over openbb-internal.
       - TS_USERSPACE=false
       - TS_STATE_DIR=/var/lib/tailscale
       - TS_SERVE_CONFIG=/config/serve.json
@@ -59,12 +62,14 @@ services:
     networks:
       - openbb-internal
 
-  # OpenBB Platform REST API. Binds 127.0.0.1 so only Serve can reach it.
+  # OpenBB Platform REST API. On the openbb-internal bridge with no host port
+  # published (see the Bridge migration note on its command below), so from
+  # the tailnet only Serve reaches it.
   openbb-api:
     build: .
     # 4.7.2 = the skill-built image (OpenBB 4.7.2, openbb-eodhd 9.5.0 with the
     # full FMP-parity fetcher set — 52 eodhd widgets).
-    image: openbb-local:4.7.2
+    image: openbb-local:12.4.0
     container_name: openbb-api
     restart: unless-stopped
     # Bridge migration (Layer 1): was `network_mode: service:tailscale`.
@@ -216,6 +221,30 @@ services:
       - ./scripts/eod_dump.py:/opt/eod_dump.py:ro
       - ./kdb-license:/opt/kx-license:ro
 
+  # sip-backfill: walks the S&P 500's consolidated tick history (EODHD
+  # Tick Data API, T+1) into the Delta store, one week at a time, newest
+  # complete week first and then backwards; picks up each new week as it
+  # completes. One Delta table per symbol under ticks_sip/, partitioned by
+  # day. Progress lives in the bucket (ticks_sip/_progress/), so a restart
+  # resumes mid-week. Local-only image (sip-backfill/Dockerfile), shipped to
+  # the NAS by docker save | ssh load, like eod-dump. Runs on the NAS in
+  # production; here as the on-host alternative. See scripts/sip_backfill.py.
+  sip-backfill:
+    image: openbb-sip-backfill:11.5.2
+    container_name: openbb-sip-backfill
+    restart: unless-stopped
+    networks:
+      - openbb-internal
+    command: ["--loop"]
+    environment:
+      - SIP_WORKERS=6
+    env_file:
+      # DELTA_S3_* for the store, EODHD_API_KEY for the Tick Data API.
+      - path: ./eod.env
+        required: true
+      - path: ./credentials.env
+        required: true
+
   # OpenBB MCP server (Ep. 6): wraps the same Platform app as openbb-api,
   # in-process, and serves MCP over streamable-http for the AI analyst.
   # Bound to 127.0.0.1; Serve publishes it on :8443 — tailnet-only, NEVER
@@ -226,7 +255,7 @@ services:
     build: .
     # 4.7.2 = the skill-built image (OpenBB 4.7.2, openbb-eodhd 9.5.0), same
     # as openbb-api — the MCP tool set tracks the same provider registry.
-    image: openbb-local:4.7.2
+    image: openbb-local:12.4.0
     container_name: openbb-mcp
     restart: unless-stopped
     # Bridge migration (Layer 1): was
@@ -287,7 +316,7 @@ services:
   # publish it tailnet-only, never funneled.
   stores-mcp:
     build: .
-    image: openbb-local:11.0.0
+    image: openbb-local:12.4.0
     container_name: openbb-stores-mcp
     restart: unless-stopped
     # Bridge migration (Layer 1): was
@@ -333,7 +362,7 @@ services:
     build:
       context: .
       dockerfile: stores-explorer/Dockerfile
-    image: openbb-stores-explorer:11.2.0
+    image: openbb-stores-explorer:12.4.0
     container_name: openbb-stores-explorer
     restart: unless-stopped
     # Bridge migration (Layer 1): was
@@ -423,7 +452,7 @@ services:
   # SSH — no port, no header).
   key-maint:
     build: ./key-maint
-    image: openbb-key-maint:latest
+    image: openbb-key-maint:12.4.0
     container_name: openbb-key-maint
     restart: unless-stopped
     # Bridge migration (Layer 1): was
@@ -473,7 +502,7 @@ services:
     build:
       context: .
       dockerfile: live-grid/Dockerfile
-    image: openbb-live-grid:latest
+    image: openbb-live-grid:12.4.0
     container_name: openbb-live-grid
     restart: unless-stopped
     # Bridge migration (Layer 1): was
@@ -554,35 +583,36 @@ services:
       # writable mount, so without this a restart would silently empty the list.
       - ./live-grid-data:/data
 
-  # rss-ticker (Ep. 8): the news wire — polls RSS feeds, streams new articles
-  # over a websocket, serves a Bloomberg-style news window widget. Source lives
-  # in its own repo; compose builds it from GitHub. Loopback :8088; Serve
-  # publishes it on :8088 — tailnet-only, NEVER funneled (under tailscale_auth
-  # it trusts the identity header Serve injects, and a funneled request
-  # carries none, so it would fail closed — but don't rely on that).
+  # rss-ticker (Ep. 8, reworked for BDOBB v8.0.0): a user-agnostic shared feed
+  # pool. Clients (BDOBB's News widget) subscribe feed URLs over the websocket;
+  # the pool polls the union, streams every new article tagged by feed_id,
+  # and pages history. It has NO authentication: reachability is the whole
+  # access control. It binds 0.0.0.0 on the openbb-internal bridge (nothing
+  # published to the host); Serve publishes it on :8088 — tailnet-only, NEVER
+  # funneled, because anyone who can reach the port can make it poll any URL
+  # and read every article.
+  #
+  # Compose builds it from the public rss-feedhandler repo, pinned to the
+  # v8.0.0 tag, so no registry login is needed. Upgrading a token-era volume
+  # deletes data: see the README before the first start.
   #
   # Before first start:
   #   cp rss-ticker-config/config.yaml.example rss-ticker-config/config.yaml
-  #   cp rss-ticker.env.example rss-ticker.env       # TICKER_ADMIN_KEY
   rss-ticker:
-    build: https://github.com/artcashin/rss-ticker.git
-    image: rss-ticker:8.0.0
+    build: https://github.com/artcashin/rss-feedhandler.git#v8.0.0
+    image: rss-feedhandler:8.0.0
     container_name: openbb-rss-ticker
+    # Opt-in: this service only starts with `--profile feeds` (or
+    # COMPOSE_PROFILES=feeds). The reference deployment runs the feed server
+    # as its own compose project on the NAS, so the stack must not start a
+    # second one by default. Serve keeps its :8088 route; with the service
+    # down that port answers 502 rather than silently pointing elsewhere.
+    profiles: ["feeds"]
     restart: unless-stopped
-    # Bridge migration (Layer 1): was
-    # `network_mode: service:tailscale`. Its tailscale_auth guard needed a
-    # source change first (rss-ticker's own repo, feat/ticker-server) --
-    # bind_host: 0.0.0.0 (rss-ticker-config/config.yaml.example) refused to
-    # start before that landed.
     networks:
       - openbb-internal
     depends_on:
       - tailscale
-    env_file:
-      # TICKER_ADMIN_KEY (writes on /api/feeds). Under tailscale_auth no
-      # manifest key or user tokens are needed — identity replaces them.
-      - path: ./rss-ticker.env
-        required: true
     volumes:
       - ./rss-ticker-config:/config:ro
       - rss-ticker-data:/data
@@ -599,7 +629,7 @@ services:
   #   cp minio.env.example minio.env && chmod 600 minio.env
   minio:
     build: ./minio
-    image: openbb-minio:11.0.0
+    image: openbb-minio:12.4.0
     container_name: openbb-minio
     hostname: minio
     restart: unless-stopped
@@ -701,13 +731,11 @@ volumes:
 # them even though they now bind 0.0.0.0 -- but D1's accepted cost applies:
 # any container LATER attached to openbb-internal gets unauthenticated access
 # to live-grid, stores-explorer, both MCP services, and kdb (none of which
-# authenticate); rss-ticker is the exception -- it still authenticates via
-# tailscale_auth, extended to trust 0.0.0.0 under this same isolation
-# guarantee (see rss-ticker's own feat/ticker-server, not this repo). Only
-# the seven services docs/superpowers/specs/2026-08-27-bridge-network-
-# design.md names were in the original design; rss-ticker's inclusion (and
-# its tailscale_auth fix) was a scope decision made while implementing it,
-# not in that doc.
+# authenticate), and the reworked rss-ticker 8.0.0 authenticates nothing either --
+# it relies on this same isolation. Only the seven services
+# docs/superpowers/specs/2026-08-27-bridge-network-design.md names were in
+# the original design; rss-ticker's inclusion was a scope decision made
+# while implementing it, not in that doc.
 networks:
   openbb-internal:
     driver: bridge

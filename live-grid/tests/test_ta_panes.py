@@ -1,9 +1,14 @@
+# Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
+# SPDX-License-Identifier: Apache-2.0
+
 """Pane assignment and domain arithmetic. Pure -- no Plotly, no data."""
+
+from datetime import date
 
 import pytest
 
 from app.ta.macros import Macro, PaneSpec
-from app.ta.panes import all_reqs, assign, domains
+from app.ta.panes import all_reqs, assign, domains, shift_times
 from app.ta.registry import resolve
 from tests.ta_helpers import col, cols
 
@@ -123,3 +128,65 @@ def test_domains_do_not_invert_when_there_are_many_panes():
     assert len(panes) == 61
     for y0, y1 in domains(panes):
         assert 0.0 <= y0 < y1 <= 1.0
+
+
+def test_shift_times_zero_offset_is_identity():
+    times = [date(2026, 1, d) for d in (1, 2, 3)]
+    assert shift_times(times, 0) == times
+
+
+def test_shift_times_forward_extends_past_the_last_bar():
+    times = [date(2026, 1, 1), date(2026, 1, 2), date(2026, 1, 3)]
+    out = shift_times(times, 2)
+    assert out[0] == date(2026, 1, 3)
+    assert out[1] == date(2026, 1, 4)   # synthesized from the last spacing
+    assert out[2] == date(2026, 1, 5)
+    assert len(out) == len(times)
+
+
+def test_shift_times_backward_extends_before_the_first_bar():
+    times = [date(2026, 1, 1), date(2026, 1, 2), date(2026, 1, 3)]
+    out = shift_times(times, -2)
+    assert out[0] == date(2025, 12, 30)
+    assert out[2] == date(2026, 1, 1)
+
+
+def test_shift_times_on_a_single_bar_cannot_infer_spacing():
+    assert shift_times([date(2026, 1, 1)], 2) == [None]
+
+
+def test_shift_times_infers_step_from_the_smallest_gap_not_the_tail():
+    """An irregular series -- e.g. an intraday frame straddling a session
+    break -- must not let one big trailing gap poison every synthesized
+    timestamp (Fix 8)."""
+    times = [date(2026, 1, 1), date(2026, 1, 2), date(2026, 1, 3), date(2026, 1, 10)]
+    out = shift_times(times, 1)
+    # The true bar spacing is 1 day; the old last-two-entries rule would have
+    # inferred a 7-day step from the tail gap and put this at 2026-01-17.
+    assert out[-1] == date(2026, 1, 11)
+
+
+def test_shift_times_tolerates_a_null_in_the_trailing_positions():
+    """bars_to_frame parses dates with strict=False, so a malformed trailing
+    date becomes a null. The old `times[-1] - times[-2]` step calculation
+    raised TypeError the moment either landed there; this must not."""
+    times = [date(2026, 1, 1), date(2026, 1, 2), date(2026, 1, 3), None]
+    out = shift_times(times, 1)
+    assert out == [date(2026, 1, 2), date(2026, 1, 3), None, date(2026, 1, 5)]
+
+
+def test_an_explicit_source_does_not_dedupe_against_the_macros_pick():
+    """An explicit source is an explicit request: `source=local` asks for the
+    local series by name and gets its own column, where a pick that names no
+    source still collapses onto the macro's."""
+    macro = macro_of(
+        PaneSpec("price", 3.0, [resolve("sma", period=50)]),
+    )
+    panes = assign(macro, [resolve("sma", "local", period=50)])
+    assert [s.column for s in panes[0].series] == [
+        col("sma", period=50), "sma|period=50,source=local",
+    ]
+    assert len(all_reqs(panes)) == 2
+
+    same = assign(macro, [resolve("sma", period=50)])
+    assert [s.column for s in same[0].series] == [col("sma", period=50)]

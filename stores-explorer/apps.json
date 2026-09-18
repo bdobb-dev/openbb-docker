@@ -1,0 +1,73 @@
+[
+ {
+  "name": "Example - Version 11.0.0",
+  "description": "",
+  "img": "",
+  "img_dark": "",
+  "img_light": "",
+  "allowCustomization": true,
+  "tabs": {
+   "9e4fdbfa-f20e-4ea4-be77-091da1906bf2": {
+    "id": "9e4fdbfa-f20e-4ea4-be77-091da1906bf2",
+    "name": "Store",
+    "layout": [
+     {
+      "i": "delta_explorer",
+      "x": 0,
+      "y": 0,
+      "w": 20,
+      "h": 14,
+      "state": {
+       "params": {
+        "library": "ticks_live",
+        "symbol": "",
+        "as_of": ""
+       },
+       "chartView": {
+        "enabled": false,
+        "chartType": "line"
+       }
+      }
+     },
+     {
+      "i": "delta_explorer",
+      "x": 20,
+      "y": 0,
+      "w": 20,
+      "h": 14,
+      "state": {
+       "params": {
+        "library": "ticks",
+        "symbol": "msft_trade_2023_05_12",
+        "as_of": ""
+       },
+       "chartView": {
+        "enabled": false,
+        "chartType": "line"
+       }
+      }
+     },
+     {
+      "i": "kdb_explorer",
+      "x": 0,
+      "y": 14,
+      "w": 40,
+      "h": 12,
+      "state": {
+       "params": {
+        "table": "trades",
+        "symbol": ""
+       },
+       "chartView": {
+        "enabled": false,
+        "chartType": "line"
+       }
+      }
+     }
+    ]
+   }
+  },
+  "groups": [],
+  "prompts": []
+ }
+]
