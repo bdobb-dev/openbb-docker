@@ -55,6 +55,8 @@ from concurrent.futures import TimeoutError as _FutureTimeoutError
 
 from fastmcp import FastMCP
 
+import daykeys
+
 MAX_ROWS = 10_000
 STORES_TIMEOUT_S = float(os.environ.get("STORES_TIMEOUT_S", "15"))
 _IDENT_RE = re.compile(r"\A[A-Za-z0-9._-]{1,64}\Z")
@@ -184,8 +186,8 @@ def delta_list_libraries() -> list[str]:
     return sorted(_bounded(D.list_libraries, store.base, store.storage_options))
 
 
-def delta_list_symbols(library: str) -> list[str]:
-    """List symbols (Delta tables) stored in a library."""
+def _raw_keys(library: str) -> list[str]:
+    """Every Delta table in `library`, by its raw key, sorted."""
     _check_ident("library", library)
     if library not in delta_list_libraries():
         raise ValueError(
@@ -194,36 +196,136 @@ def delta_list_symbols(library: str) -> list[str]:
     return sorted(_bounded(_delta(library).list_symbols))
 
 
+def delta_list_symbols(library: str) -> list[str]:
+    """List symbols stored in a library.
+
+    A symbol whose tables are keyed by day (`AAPL_2026_09_11`, the EOD dump's
+    layout) is listed ONCE, as `AAPL`; the read tools expand it to the days a
+    window needs. See daykeys.
+    """
+    return daykeys.bases(_raw_keys(library))
+
+
 def _require_symbol(library: str, symbol: str):
-    """The store for library, once symbol is known to be in it.
+    """(store, raw keys) for library, once symbol is known to be in it.
 
     Every tool validates through here so the "unknown X; call Y first" error
-    contract is one implementation, not one per entry point.
+    contract is one implementation, not one per entry point. `symbol` may be
+    a base (`AAPL`) or a raw day key (`AAPL_2026_09_11`): the second keeps an
+    older client, or an agent quoting a key it was shown, working.
     """
     _check_ident("symbol", symbol)
-    if symbol not in delta_list_symbols(library):
+    raw = _raw_keys(library)
+    if symbol not in raw and symbol not in daykeys.bases(raw):
         raise ValueError(
             f"unknown symbol {symbol!r} in {library!r}; call delta_list_symbols first"
         )
-    return _delta(library)
+    return _delta(library), raw
 
 
 def delta_describe(library: str, symbol: str) -> dict:
     """Row count, stored date range and column dtypes for a symbol.
 
     Answered from the transaction log: this reads no rows, however large the
-    symbol is.
+    symbol is. A day-keyed symbol is the sum of its day tables -- rows added,
+    the range's outer bounds taken, columns from the newest day -- plus
+    `days`, so a strip can say how many tables stand behind the number.
+    That is one log walk per day; a library of forty symbols over a few
+    weeks is a few dozen small reads, measured against MinIO before merge.
     """
     from openbb_deltalake import describe as D
 
-    return _bounded(D.describe, _require_symbol(library, symbol), symbol)
+    store, raw = _require_symbol(library, symbol)
+    keys = daykeys.day_keys(raw, symbol)
+    parts = [_bounded(D.describe, store, key) for key in keys]
+    ranges = [p["date_range"] for p in parts if p["date_range"]]
+    # ponytail: min/max over the log's own string form. Every table in a
+    # library is written by one process with one precision, so the strings
+    # sort as the instants do; parse them if a library ever mixes writers.
+    return {
+        "library": library,
+        "symbol": symbol,
+        "row_count": sum(p["row_count"] for p in parts),
+        "date_range": [min(r[0] for r in ranges), max(r[1] for r in ranges)] if ranges else None,
+        "columns": parts[-1]["columns"],
+        "days": len(keys),
+    }
+
+
+def _iso_ms(timestamp: str) -> str:
+    """Epoch-millisecond text (what delta-rs's history carries) as ISO UTC.
+
+    Millisecond precision on purpose: the string is what a client sends back
+    as `as_of`, and a commit's own instant must resolve to that commit. Text
+    that is not all digits is left alone -- a test fake, or a future delta-rs
+    that formats for us.
+    """
+    if not timestamp.isdigit():
+        return timestamp
+    from datetime import datetime, timezone
+
+    ms = int(timestamp)
+    dt = datetime.fromtimestamp(ms // 1000, tz=timezone.utc)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{ms % 1000:03d}Z"
 
 
 def delta_history(library: str, symbol: str) -> list[dict]:
-    """Delta versions for a symbol, newest first -- the time-travel choices."""
+    """Delta versions for a symbol, newest first -- the time-travel choices.
+
+    A day-keyed symbol answers the union of its day tables' commits. Version
+    numbers are per table and do not line up across days, so a client that
+    spans tables travels by timestamp; the number is kept for single tables.
+    """
     from openbb_deltalake import describe as D
 
-    return _bounded(D.history, _require_symbol(library, symbol), symbol)
+    store, raw = _require_symbol(library, symbol)
+    entries = []
+    for key in daykeys.day_keys(raw, symbol):
+        entries.extend(
+            {"version": e["version"], "timestamp": _iso_ms(e["timestamp"])}
+            for e in _bounded(D.history, store, key)
+        )
+    return sorted(entries, key=lambda e: (e["timestamp"], e["version"]), reverse=True)
+
+
+def _committed_by(store, key: str, as_of) -> bool:
+    """Whether `key` existed at a timestamp `as_of`.
+
+    delta-rs (1.6.3) answers an as_of earlier than a table's first commit by
+    loading version 0, not by raising -- so a day table written AFTER the
+    chosen instant would silently contribute rows that did not exist then.
+    One history walk per key is the price of a truthful time travel; an int
+    version or no as_of skips the walk.
+    """
+    if as_of is None or isinstance(as_of, int):
+        return True
+    from openbb_deltalake import describe as D
+    from pandas import Timestamp
+
+    first_ms = min(int(e["timestamp"]) for e in _bounded(D.history, store, key))
+    ts = Timestamp(as_of)
+    ts = ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
+    return Timestamp(first_ms, unit="ms", tz="UTC") <= ts
+
+
+def _read_one(store, key: str, start, end, tail_rows: int, as_of):
+    """(rows in range, frame) for one table -- the v11.0.0 read, per key.
+
+    The READ is bounded, not just the response: with no start/end this reads
+    only the trailing files the transaction log says hold those rows, so an
+    unfiltered call never materializes the whole table -- the guarantee
+    ArcticDB gave via Library.tail, which delta-rs has no equivalent for.
+    """
+    from openbb_deltalake import describe as D
+
+    if start or end:
+        df = _bounded(
+            store.read, key, start_date=start, end_date=end,
+            as_of=as_of, output="dataframe",
+        )
+        return len(df), df
+    total = _bounded(D.describe, store, key)["row_count"]
+    return total, _bounded(store.read_trailing, key, tail_rows, as_of)
 
 
 def delta_read(
@@ -239,30 +341,58 @@ def delta_read(
     start/end are ISO dates/timestamps filtering the stored index. as_of is an
     int Delta version or an ISO timestamp for time travel. Returns at most
     tail_rows rows (the most recent in range, hard cap MAX_ROWS) as JSON
-    records with ISO timestamps.
+    records with ISO timestamps. For a symbol read across several day tables,
+    `as_of` must be a timestamp; an int version is rejected, since versions
+    are per table.
 
-    The READ is bounded, not just the response: with no start/end this reads
-    only the trailing files the transaction log says hold those rows, so an
-    unfiltered call never materializes the whole symbol -- the guarantee
-    ArcticDB gave via Library.tail, which delta-rs has no equivalent for.
+    A symbol stored as one table per day (see daykeys) is read across the day
+    tables the window covers, oldest first, and tailed as one frame. With no
+    window it reads its newest day only, so it stays as bounded as a single
+    table. With no window and a timestamp `as_of`, the day read is the newest
+    one already committed at `as_of`. A window that covers no day table
+    answers zero rows, not an error: the symbol exists, that stretch of it
+    does not. `_bounded`'s deadline applies per table, so a symbol spanning N
+    days may take up to N times STORES_TIMEOUT_S -- bounded and linear, never
+    the whole symbol.
     """
+    import pandas as pd
+
+    for name, val in (("start", start), ("end", end)):
+        if val is not None and val != "" and not _TIME_RE.match(val):
+            raise ValueError(f"invalid {name} {val!r}: must be an ISO date or naive timestamp")
+
     tail_rows = max(1, min(int(tail_rows), MAX_ROWS))
-    store = _require_symbol(library, symbol)
+    store, raw = _require_symbol(library, symbol)
     if isinstance(as_of, str) and as_of.isdigit():
         as_of = int(as_of)
 
-    from openbb_deltalake import describe as D
-
-    if start or end:
-        df = _bounded(
-            store.read, symbol, start_date=start, end_date=end,
-            as_of=as_of, output="dataframe",
-        )
-        total = len(df)
-        df = df.tail(tail_rows).reset_index()
+    if not (start or end) and isinstance(as_of, str):
+        # No window plus a time travel: "the newest day" means the newest day
+        # that existed THEN, or an As-of older than the newest table would
+        # read as nothing. Newest-first, first hit, still one table (D4).
+        keys = [
+            k for k in reversed(daykeys.day_keys(raw, symbol)) if _committed_by(store, k, as_of)
+        ][:1]
     else:
-        total = _bounded(D.describe, store, symbol)["row_count"]
-        df = _bounded(store.read_trailing, symbol, tail_rows, as_of).reset_index()
+        keys = daykeys.in_window(raw, symbol, start, end)
+
+    if isinstance(as_of, int) and len(keys) > 1:
+        # Version numbers are per table and do not line up across days: v3 of
+        # Monday is not v3 of Tuesday, and a day lacking the number would be a
+        # raw delta-rs error. A timestamp applies uniformly; delta_history
+        # answers in that form.
+        raise ValueError(
+            "as_of must be a timestamp for a symbol that spans days; call delta_history first"
+        )
+
+    parts = [
+        _read_one(store, key, start, end, tail_rows, as_of)
+        for key in keys
+        if _committed_by(store, key, as_of)
+    ]
+    total = sum(n for n, _ in parts)
+    frames = [df for _, df in parts if len(df)]
+    df = pd.concat(frames).tail(tail_rows).reset_index() if frames else pd.DataFrame()
 
     return {
         "library": library,

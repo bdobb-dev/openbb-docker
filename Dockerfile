@@ -193,8 +193,9 @@ WORKDIR /workspace
 # Runs `python /opt/mcp_stores/server.py` (see docker-compose.yml's
 # stores-mcp service) directly against this image -- nothing extra to
 # install: fastmcp came in with openbb-mcp-server above, deltalake/pyarrow/
-# pandas with openbb-deltalake, pykx with openbb-kdb. Just the two files.
-COPY mcp_stores/server.py mcp_stores/test_server.py /opt/mcp_stores/
+# pandas with openbb-deltalake, pykx with openbb-kdb. Just the four files:
+# server.py imports daykeys.py beside it.
+COPY mcp_stores/server.py mcp_stores/daykeys.py mcp_stores/test_server.py mcp_stores/test_daykeys.py /opt/mcp_stores/
 
 # Self-provision persistent mount points so the image is drop-in on any host
 # (NAS container managers, plain Docker) with bind mounts to not-yet-created

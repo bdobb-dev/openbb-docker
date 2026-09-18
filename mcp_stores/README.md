@@ -44,3 +44,15 @@ explicit `library`/`table` argument (discovered via `arctic_list_libraries`
 `pykx` is injected as a fake via `sys.modules` before any tool
 touches them (see `test_server.py`), so the suite runs on a machine with
 neither installed.
+
+### Day-keyed symbols
+
+A library that stores one table per (symbol, day) — `ticks_live/AAPL_2026_09_11`,
+the EOD dump's layout — lists `AAPL` once. `delta_read` opens the day tables a
+`start`/`end` window covers and tails them as one frame; with no window it
+reads the newest day only. `delta_describe` sums the days and reports `days`;
+`delta_history` is the union of the days' commits, timestamps as ISO UTC with
+milliseconds, so a client that spans tables travels by timestamp. A raw day
+key still works as a symbol. A library that holds both `AAPL` and
+`AAPL_2026_09_01` lists `AAPL` as the plain table; the day tables stay
+reachable by their raw keys.

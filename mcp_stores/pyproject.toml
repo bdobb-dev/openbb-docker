@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcp-stores"
-version = "11.0.0"
+version = "11.6.0"
 description = "Read-only MCP server exposing Delta Lake and kdb+ discovery/query tools"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -25,7 +25,7 @@ dependencies = [
 dev = ["pytest", "ruff==0.15.22"]
 
 [tool.setuptools]
-py-modules = ["server"]
+py-modules = ["server", "daykeys"]
 
 [tool.pytest.ini_options]
 testpaths = ["."]
