@@ -9,7 +9,12 @@ description = "OpenBB Workspace live_grid backend streaming EODHD websocket pric
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.110",
-    "uvicorn>=0.29",
+    # [standard] on purpose: live-grid serves a WebSocket, and bare uvicorn
+    # does not depend on `websockets`. It has worked only because something
+    # else in the image happened to pull it in -- a transitive accident, and
+    # the kind that breaks on an unrelated dependency bump. The v9.6 and v10
+    # lines already declare it; v11 and main were missed (openbb-docker #22).
+    "uvicorn[standard]>=0.29",
     # Official EODHD SDK, pinned to a GitHub commit: the PyPI release (1.0.32)
     # can sys.exit() on API errors, has no request timeouts, and predates the
     # SDK's typed error handling.
