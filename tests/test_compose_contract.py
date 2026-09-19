@@ -1,18 +1,33 @@
 # Copyright 2026 SecretoftheUniverse.com LLC. Licensed under the Apache License, Version 2.0.
 # SPDX-License-Identifier: Apache-2.0
 import json
+import re
 from pathlib import Path
 
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 
+# The release this tree IS, read from the one place that states it. Spelling a
+# version literal in an assertion makes the test a landmine: it passes on the
+# day it is written and fails on every release bump thereafter, for a reason
+# that has nothing to do with what it is guarding. Worse here, it would
+# contradict scripts/check-image-tags.sh, which requires every locally-built
+# image to carry THIS release's version -- two gates asserting opposite things
+# about the same line. Deriving both from README.md makes them agree by
+# construction.
+RELEASE = re.search(
+    r"^## What you get \(this release: v([0-9][0-9.]*)\)", (ROOT / "README.md").read_text(), re.M
+).group(1)
+
 
 def test_security_master_services_are_declared():
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
     api = compose["services"]["security-master-api"]
     worker = compose["services"]["security-master-worker"]
-    assert api["image"] == worker["image"] == "openbb-security-master:11.4.0"
+    # The point is that the two services share ONE image -- the worker is the
+    # same build run with a different command -- and that it names this release.
+    assert api["image"] == worker["image"] == f"openbb-security-master:{RELEASE}"
     assert api["build"] == {"context": ".", "dockerfile": "security-master-api/Dockerfile"}
     assert api["networks"] == ["openbb-internal"] and worker["networks"] == ["openbb-internal"]
     assert api["command"][:4] == ["uvicorn", "security_master_api.app.main:app", "--host", "0.0.0.0"]
