@@ -3,6 +3,7 @@ credentials.env
 api-auth.env
 ts.env
 minio.env
+security-master.env
 rss-ticker.env
 deps.env
 .env

@@ -148,6 +148,16 @@ RUN pip install --no-cache-dir /tmp/openbb-kdb && rm -rf /tmp/openbb-kdb
 COPY openbb-deltalake /tmp/openbb-deltalake
 RUN pip install --no-cache-dir /tmp/openbb-deltalake && rm -rf /tmp/openbb-deltalake
 
+# Security-master reference router (Ep. 11 line): MarketCalendar, exchange
+# details and identity resolution, delegating to security-master-api. Its
+# entry point is named `reference`, which is what puts the three commands on
+# /api/v1/reference/... -- OpenBB mounts a core extension under its entry-point
+# name. It must land AFTER openbb-eodhd above: one command borrows that
+# extension's SDK client (lazily, so pip needs no ordering, but the image
+# does).
+COPY openbb-security-master /tmp/openbb-security-master
+RUN pip install --no-cache-dir /tmp/openbb-security-master && rm -rf /tmp/openbb-security-master
+
 # Official OpenBB MCP server (Ep. 6): wraps the Platform FastAPI app
 # in-process and serves MCP over streamable-http. PIP_CONSTRAINT still
 # applies, so it cannot drag shared libs anywhere the stack doesn't tolerate.

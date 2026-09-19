@@ -55,6 +55,17 @@ jobs:
         run: bash scripts/scrub-check.sh
       - name: Serve configs parse and declare the Tailscale Services
         run: bash scripts/check-serve-config.sh
+      # Ported here with the security master. This line had neither guard, and
+      # it showed the same way main did: openbb-local pinned 4.7.2 (an OpenBB
+      # PLATFORM version, not an episode) beside 11.0.0 for the same build,
+      # key-maint and live-grid at :latest, and a README still announcing
+      # v11.1.1 three tags after v11.3.0 -- all with CI green. Compose only
+      # runs its `build:` when the `image:` tag is absent locally, so a pin
+      # that does not move lets a reader keep an earlier episode's image.
+      - name: Image tags match this release
+        run: bash scripts/check-image-tags.sh
+      - name: No service shares the sidecar's network namespace
+        run: bash scripts/check-no-netns.sh
   # The blanket Basic auth guard on api_app.py's factory. Its own job on
   # purpose: this rode inside key-maint's job when it was first added, where it
   # ran and passed but was invisible in the checks list -- and would have
@@ -172,6 +183,37 @@ jobs:
         run: |
           pip install -e .[dev]
           PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest -q --capture=sys
+
+  security-master-api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.12" }
+      - name: Install openbb-deltalake (sibling dependency, not on PyPI)
+        run: pip install -e ./openbb-deltalake
+      - name: Test security-master-api (tmp-path Delta, stub openbb-api, no network)
+        working-directory: security-master-api
+        run: |
+          pip install -e .[dev]
+          PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest -q --capture=sys
+
+  openbb-security-master:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.12" }
+      - name: Install openbb-deltalake (sibling dependency, not on PyPI)
+        run: pip install -e ./openbb-deltalake
+      - name: Test openbb-security-master (stubbed service, no network)
+        working-directory: openbb-security-master
+        run: |
+          pip install -e .[dev]
+          PYTHONFAULTHANDLER=1 timeout -s ABRT 600 pytest -q --capture=sys
+
 
   openbb-deltalake:
     runs-on: ubuntu-latest

@@ -1,0 +1,113 @@
+{
+  "count": {
+    "quality": "exact",
+    "value": 4
+  },
+  "latest_version": 3,
+  "relation": {
+    "depends_on": [],
+    "description": "silver relation listings",
+    "keys": [
+      "listing_id"
+    ],
+    "kind": "delta_table",
+    "layer": "silver",
+    "modes": [
+      "current_corrected",
+      "known_at",
+      "effective_on",
+      "delta_snapshot"
+    ],
+    "name": "listings"
+  },
+  "schema": [
+    {
+      "dtype": "string",
+      "name": "listing_id"
+    },
+    {
+      "dtype": "string",
+      "name": "instrument_id"
+    },
+    {
+      "dtype": "string",
+      "name": "issuer_id"
+    },
+    {
+      "dtype": "string",
+      "name": "security_id"
+    },
+    {
+      "dtype": "string",
+      "name": "exchange_id"
+    },
+    {
+      "dtype": "string",
+      "name": "mic"
+    },
+    {
+      "dtype": "string",
+      "name": "symbol"
+    },
+    {
+      "dtype": "string",
+      "name": "provider_symbol"
+    },
+    {
+      "dtype": "string",
+      "name": "currency"
+    },
+    {
+      "dtype": "string",
+      "name": "status"
+    },
+    {
+      "dtype": "string",
+      "name": "name"
+    },
+    {
+      "dtype": "string",
+      "name": "instrument_type"
+    },
+    {
+      "dtype": "timestamp[us, tz=UTC]",
+      "name": "effective_from"
+    },
+    {
+      "dtype": "timestamp[us, tz=UTC]",
+      "name": "effective_to"
+    },
+    {
+      "dtype": "timestamp[us, tz=UTC]",
+      "name": "observed_at"
+    },
+    {
+      "dtype": "timestamp[us, tz=UTC]",
+      "name": "available_at"
+    },
+    {
+      "dtype": "timestamp[us, tz=UTC]",
+      "name": "system_from"
+    },
+    {
+      "dtype": "timestamp[us, tz=UTC]",
+      "name": "system_to"
+    },
+    {
+      "dtype": "string",
+      "name": "capture_id"
+    },
+    {
+      "dtype": "string",
+      "name": "assertion_id"
+    },
+    {
+      "dtype": "string",
+      "name": "assertion_status"
+    },
+    {
+      "dtype": "string",
+      "name": "supersedes_assertion_id"
+    }
+  ]
+}

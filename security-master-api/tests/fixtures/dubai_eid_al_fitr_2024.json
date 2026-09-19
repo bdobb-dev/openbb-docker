@@ -1,0 +1,88 @@
+{
+  "schema": "security-master.temporal-fixture.v1",
+  "fixture_id": "dubai-eid-al-fitr-2024",
+  "capture_time_semantics": "synthetic_test_capture",
+  "exchange_mic": "XDFM",
+  "exchange_name": "Dubai Financial Market",
+  "holiday_family": "Eid Al Fitr",
+  "events": [
+    {
+      "event_id": "dubai-t0-conditional-exchange-circular",
+      "published_on": "2024-04-04",
+      "known_from": "2024-04-04T12:00:00Z",
+      "source_kind": "conditional_exchange_notice",
+      "authority": "Dubai Financial Market",
+      "source_url": "https://assets.dfm.ae/docs/default-source/circulars/dfm/circular-01-2024-eid-al-fitr-holiday---english.pdf?sfvrsn=5c6dd681_0",
+      "assertion": "The reopening date depends on the first day of Eid."
+    },
+    {
+      "event_id": "dubai-t1-moon-sighting-confirmation",
+      "published_on": "2024-04-08",
+      "known_from": "2024-04-08T20:00:00Z",
+      "source_kind": "religious_authority_notice",
+      "authority": "UAE Moon-sighting Committee",
+      "source_url": "https://www.wam.ae/en/article/b2jxoem-update-uae-announces-wednesday-first-day-eid-fitr",
+      "assertion": "April 10, 2024 is the first day of Eid Al Fitr."
+    },
+    {
+      "event_id": "dubai-t2-derived-branch-selection",
+      "published_on": "2024-04-08",
+      "known_from": "2024-04-08T20:00:05Z",
+      "source_kind": "derived_calendar_resolution",
+      "authority": "Security master resolver",
+      "source_url": "https://www.wam.ae/en/article/b2jxoem-update-uae-announces-wednesday-first-day-eid-fitr",
+      "assertion": "The April 10 branch selects April 15 as the reopening date."
+    }
+  ],
+  "expected_states": [
+    {
+      "stage": "T0",
+      "known_from": "2024-04-04T12:00:00Z",
+      "evidence_event_ids": ["dubai-t0-conditional-exchange-circular"],
+      "authority_status": "awaiting_moon_sighting",
+      "market_status": "conditional",
+      "candidate_branches": [
+        {"condition": "eid_first_day=2024-04-09", "reopen_date": "2024-04-12"},
+        {"condition": "eid_first_day=2024-04-10", "reopen_date": "2024-04-15"}
+      ],
+      "selected_branch": null,
+      "market_dates": []
+    },
+    {
+      "stage": "T1",
+      "known_from": "2024-04-08T20:00:00Z",
+      "evidence_event_ids": [
+        "dubai-t0-conditional-exchange-circular",
+        "dubai-t1-moon-sighting-confirmation"
+      ],
+      "authority_status": "confirmed_by_religious_authority",
+      "market_status": "pending_resolution",
+      "candidate_branches": [
+        {"condition": "eid_first_day=2024-04-09", "reopen_date": "2024-04-12"},
+        {"condition": "eid_first_day=2024-04-10", "reopen_date": "2024-04-15"}
+      ],
+      "selected_branch": null,
+      "market_dates": []
+    },
+    {
+      "stage": "T2",
+      "known_from": "2024-04-08T20:00:05Z",
+      "evidence_event_ids": [
+        "dubai-t0-conditional-exchange-circular",
+        "dubai-t1-moon-sighting-confirmation",
+        "dubai-t2-derived-branch-selection"
+      ],
+      "authority_status": "confirmed_by_religious_authority",
+      "market_status": "final",
+      "candidate_branches": [
+        {"condition": "eid_first_day=2024-04-09", "reopen_date": "2024-04-12"},
+        {"condition": "eid_first_day=2024-04-10", "reopen_date": "2024-04-15"}
+      ],
+      "selected_branch": {"condition": "eid_first_day=2024-04-10", "reopen_date": "2024-04-15"},
+      "market_dates": [
+        {"date": "2024-04-12", "session": "closed"},
+        {"date": "2024-04-15", "session": "open"}
+      ]
+    }
+  ]
+}
