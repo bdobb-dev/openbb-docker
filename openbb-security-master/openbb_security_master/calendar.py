@@ -34,8 +34,6 @@ from typing import TYPE_CHECKING
 
 from fastapi.responses import JSONResponse
 
-from openbb_security_master.client import SecurityMasterClient
-
 if TYPE_CHECKING:
     pass
 
@@ -188,6 +186,11 @@ def trading_calendar(exchange: str, year: int) -> JSONResponse:
     if not (YEAR_MIN <= year <= YEAR_MAX):
         return JSONResponse({"detail": f"year must be {YEAR_MIN}–{YEAR_MAX}"}, status_code=400)
     try:
+        # Lazy import: an image without the security-master package at all
+        # (the v5 line has no Delta Lake tier) still gets the pandas fallback
+        # instead of failing at router-import time.
+        from openbb_security_master.client import SecurityMasterClient
+
         client = SecurityMasterClient.from_env()
         out = client.odp_query(
             "MarketCalendar",

@@ -130,6 +130,25 @@ def test_route_falls_back_when_master_is_unreachable(monkeypatch):
     assert json.loads(bytes(resp.body))["data"]["Timezone"] == "America/New_York"
 
 
+def test_route_falls_back_when_the_client_module_is_absent(monkeypatch):
+    """The v5 image ships no security-master client at all: simulate its
+    ImportError and confirm the pandas calendar still answers, rather than
+    the router failing at import time."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "openbb_security_master.client":
+            raise ImportError("absent in the v5 image")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    resp = trading_calendar("XNYS", 2026)
+    assert resp.status_code == 200
+    assert json.loads(bytes(resp.body))["data"]["Timezone"] == "America/New_York"
+
+
 def test_unknown_exchange_is_the_designed_404(monkeypatch):
     stub = _Stub(200, {"results": [], "columns": [], "extra": {}})
     _env_for(stub, monkeypatch)
