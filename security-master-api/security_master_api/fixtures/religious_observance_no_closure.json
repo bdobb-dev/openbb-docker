@@ -1,0 +1,159 @@
+{
+  "schema": "security-master.golden-fixture.v1",
+  "fixture_id": "religious-observance-no-closure",
+  "scenario": "religious_observance_no_closure",
+  "captures": [
+    {
+      "capture_id": "cap_rel_t0",
+      "provider": "fixture",
+      "endpoint": "seed",
+      "request_fingerprint": "fx-rel-0",
+      "captured_at": "2027-05-01T00:00:00Z",
+      "content_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "status": 200,
+      "payload": "{}",
+      "job_id": null
+    },
+    {
+      "capture_id": "cap_rel_t1",
+      "provider": "fixture",
+      "endpoint": "seed",
+      "request_fingerprint": "fx-rel-1",
+      "captured_at": "2027-05-02T00:00:00Z",
+      "content_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "status": 200,
+      "payload": "{}",
+      "job_id": null
+    }
+  ],
+  "assertions": {
+    "silver.exchanges": [
+      {
+        "exchange_id": "exch_xtae",
+        "calendar_id": "cal_xtae",
+        "mic": "XTAE",
+        "name": "Tel Aviv Stock Exchange",
+        "timezone": "Asia/Jerusalem",
+        "calendar_alias": null,
+        "eodhd_code": null,
+        "effective_from": "2000-01-01T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2027-05-01T00:00:00Z",
+        "available_at": "2027-05-01T00:00:00Z",
+        "system_from": "2027-05-01T00:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_rel_t0",
+        "assertion_id": "as_exch_xtae_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
+    ],
+    "silver.calendar_exceptions": [
+      {
+        "calendar_id": "cal_xtae",
+        "session_date": "2027-05-27",
+        "assertion_domain": "holiday_date",
+        "holiday_family": "religious_observance",
+        "calendar_system": "hebrew",
+        "evidence_status": "authority_confirmed",
+        "authority_type": "government",
+        "authority_name": "State of Israel",
+        "authority_verified_at": null,
+        "source_kind": "government_notice",
+        "source_version": null,
+        "rule_id": null,
+        "market_effect": null,
+        "holiday_name": "Religious observance",
+        "special_open": null,
+        "special_close": null,
+        "market_open": null,
+        "market_close": null,
+        "candidate_branches": null,
+        "selected_branch": null,
+        "expiry_date": null,
+        "settlement_status": null,
+        "effective_from": "2027-05-27T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2027-05-01T00:00:00Z",
+        "available_at": "2027-05-01T00:00:00Z",
+        "system_from": "2027-05-01T00:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_rel_t0",
+        "assertion_id": "as_rel_t0",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      },
+      {
+        "calendar_id": "cal_xtae",
+        "session_date": "2027-05-27",
+        "assertion_domain": "market_session",
+        "holiday_family": "religious_observance",
+        "calendar_system": "hebrew",
+        "evidence_status": "market_final",
+        "authority_type": "exchange",
+        "authority_name": "Tel Aviv Stock Exchange",
+        "authority_verified_at": null,
+        "source_kind": "exchange_notice",
+        "source_version": null,
+        "rule_id": null,
+        "market_effect": "none",
+        "holiday_name": "Religious observance",
+        "special_open": null,
+        "special_close": null,
+        "market_open": null,
+        "market_close": null,
+        "candidate_branches": null,
+        "selected_branch": null,
+        "expiry_date": null,
+        "settlement_status": null,
+        "effective_from": "2027-05-27T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2027-05-02T00:00:00Z",
+        "available_at": "2027-05-02T00:00:00Z",
+        "system_from": "2027-05-02T00:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_rel_t1",
+        "assertion_id": "as_rel_t1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
+    ]
+  },
+  "expectations": [
+    {
+      "model": "MarketCalendar",
+      "params": {
+        "calendar_id": "cal_xtae",
+        "start_date": "2027-05-01",
+        "end_date": "2027-05-31",
+        "include_closed": true
+      },
+      "context": {
+        "mode": "known_at",
+        "known_at": "2027-05-01T12:00:00Z"
+      },
+      "row_date": "2027-05-27",
+      "expect": {
+        "evidence_status": "authority_confirmed",
+        "market_effect": "pending"
+      }
+    },
+    {
+      "model": "MarketCalendar",
+      "params": {
+        "calendar_id": "cal_xtae",
+        "start_date": "2027-05-01",
+        "end_date": "2027-05-31",
+        "include_closed": true
+      },
+      "context": {
+        "mode": "known_at",
+        "known_at": "2027-05-02T00:00:00Z"
+      },
+      "row_date": "2027-05-27",
+      "expect": {
+        "market_effect": "none"
+      }
+    }
+  ]
+}

@@ -3,10 +3,7 @@
     "443": {
       "HTTPS": true
     },
-    "10000": {
-      "HTTPS": true
-    },
-    "8443": {
+    "5999": {
       "HTTPS": true
     },
     "6903": {
@@ -15,10 +12,16 @@
     "6904": {
       "HTTPS": true
     },
+    "6905": {
+      "HTTPS": true
+    },
     "8088": {
       "HTTPS": true
     },
-    "5999": {
+    "8443": {
+      "HTTPS": true
+    },
+    "10000": {
       "HTTPS": true
     }
   },
@@ -69,6 +72,13 @@
       "Handlers": {
         "/": {
           "Proxy": "http://kdb:5000"
+        }
+      }
+    },
+    "${TS_CERT_DOMAIN}:6905": {
+      "Handlers": {
+        "/": {
+          "Proxy": "http://security-master-api:6905"
         }
       }
     }

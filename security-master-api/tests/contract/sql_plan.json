@@ -1,0 +1,29 @@
+{
+  "columns": [
+    {
+      "dtype": "VARCHAR",
+      "name": "symbol"
+    }
+  ],
+  "functions": [],
+  "manifest": {
+    "silver.calendar_authorities": 1,
+    "silver.calendar_exceptions": 5,
+    "silver.calendar_rules": 0,
+    "silver.corporate_actions": 0,
+    "silver.exchanges": 5,
+    "silver.fundamental_facts": 1,
+    "silver.identifiers": 4,
+    "silver.instruments": 4,
+    "silver.issuers": 4,
+    "silver.listings": 3,
+    "silver.market_sessions": 0,
+    "silver.prices_normalized": 2,
+    "silver.securities": 1,
+    "silver.session_interruptions": 1,
+    "silver.universe_membership": 0
+  },
+  "relations": [
+    "gold.security_master"
+  ]
+}

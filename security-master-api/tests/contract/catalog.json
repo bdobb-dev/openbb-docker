@@ -1,0 +1,491 @@
+{
+  "layers": [
+    "gold",
+    "silver",
+    "bronze",
+    "ops"
+  ],
+  "newer_data_available": false,
+  "odp_version": "openbb==4.7.2",
+  "policies": {
+    "acquisition": "review",
+    "sql": "enabled"
+  },
+  "projection_version": "security-master-projection/1",
+  "relations": [
+    {
+      "depends_on": [],
+      "description": "bronze relation source_captures",
+      "keys": [
+        "capture_id"
+      ],
+      "kind": "delta_table",
+      "layer": "bronze",
+      "modes": [
+        "captured_by",
+        "delta_snapshot"
+      ],
+      "name": "source_captures"
+    },
+    {
+      "depends_on": [],
+      "description": "bronze relation request_log",
+      "keys": [
+        "request_id"
+      ],
+      "kind": "delta_table",
+      "layer": "bronze",
+      "modes": [
+        "captured_by",
+        "delta_snapshot"
+      ],
+      "name": "request_log"
+    },
+    {
+      "depends_on": [],
+      "description": "bronze relation payload_rows",
+      "keys": [
+        "capture_id",
+        "ordinal"
+      ],
+      "kind": "delta_table",
+      "layer": "bronze",
+      "modes": [
+        "captured_by",
+        "delta_snapshot"
+      ],
+      "name": "payload_rows"
+    },
+    {
+      "depends_on": [],
+      "description": "bronze relation ingestion_runs",
+      "keys": [
+        "run_id"
+      ],
+      "kind": "delta_table",
+      "layer": "bronze",
+      "modes": [
+        "captured_by",
+        "delta_snapshot"
+      ],
+      "name": "ingestion_runs"
+    },
+    {
+      "depends_on": [],
+      "description": "silver relation issuers",
+      "keys": [
+        "issuer_id"
+      ],
+      "kind": "delta_table",
+      "layer": "silver",
+      "modes": [
+        "current_corrected",
+        "known_at",
+        "effective_on",
+        "delta_snapshot"
+      ],
+      "name": "issuers"
+    },
+    {
+      "depends_on": [],
+      "description": "silver relation instruments",
+      "keys": [
+        "instrument_id"
+      ],
+      "kind": "delta_table",
+      "layer": "silver",
+      "modes": [
+        "current_corrected",
+        "known_at",
+        "effective_on",
+        "delta_snapshot"
+      ],
+      "name": "instruments"
+    },
+    {
+      "depends_on": [],
+      "description": "silver relation securities",
+      "keys": [
+        "security_id"
+      ],
+      "kind": "delta_table",
+      "layer": "silver",
+      "modes": [
+        "current_corrected",
+        "known_at",
+        "effective_on",
+        "delta_snapshot"
+      ],
+      "name": "securities"
+    },
+    {
+      "depends_on": [],
+      "description": "silver relation listings",
+      "keys": [
+        "listing_id"
+      ],
+      "kind": "delta_table",
+      "layer": "silver",
+      "modes": [
+        "current_corrected",
+        "known_at",
+        "effective_on",
+        "delta_snapshot"
+      ],
+      "name": "listings"
+    },
+    {
+      "depends_on": [],
+      "description": "silver relation identifiers",
+      "keys": [
+        "identifier_type",
+        "identifier"
+      ],
+      "kind": "delta_table",
+      "layer": "silver",
+      "modes": [
+        "current_corrected",
+        "known_at",
+        "effective_on",
+        "delta_snapshot"
+      ],
+      "name": "identifiers"
+    },
+    {
+      "depends_on": [],
+      "description": "silver relation fundamental_facts",
+      "keys": [
+        "issuer_id",
+        "fact",
+        "period_end"
+      ],
+      "kind": "delta_table",
+      "layer": "silver",
+      "modes": [
+        "current_corrected",
+        "known_at",
+        "effective_on",
+        "delta_snapshot"
+      ],
+      "name": "fundamental_facts"
+    },
+    {
+      "depends_on": [],
+      "description": "silver relation prices_normalized",
+      "keys": [
+        "listing_id",
+        "market_date"
+      ],
+      "kind": "delta_table",
+      "layer": "silver",
+      "modes": [
+        "current_corrected",
+        "known_at",
+        "effective_on",
+        "delta_snapshot"
+      ],
+      "name": "prices_normalized"
+    },
+    {
+      "depends_on": [],
+      "description": "silver relation corporate_actions",
+      "keys": [
+        "listing_id",
+        "action_type",
+        "ex_date"
+      ],
+      "kind": "delta_table",
+      "layer": "silver",
+      "modes": [
+        "current_corrected",
+        "known_at",
+        "effective_on",
+        "delta_snapshot"
+      ],
+      "name": "corporate_actions"
+    },
+    {
+      "depends_on": [],
+      "description": "silver relation universe_membership",
+      "keys": [
+        "universe_id",
+        "listing_id"
+      ],
+      "kind": "delta_table",
+      "layer": "silver",
+      "modes": [
+        "current_corrected",
+        "known_at",
+        "effective_on",
+        "delta_snapshot"
+      ],
+      "name": "universe_membership"
+    },
+    {
+      "depends_on": [],
+      "description": "silver relation exchanges",
+      "keys": [
+        "exchange_id"
+      ],
+      "kind": "delta_table",
+      "layer": "silver",
+      "modes": [
+        "current_corrected",
+        "known_at",
+        "effective_on",
+        "delta_snapshot"
+      ],
+      "name": "exchanges"
+    },
+    {
+      "depends_on": [],
+      "description": "silver relation calendar_authorities",
+      "keys": [
+        "authority_id"
+      ],
+      "kind": "delta_table",
+      "layer": "silver",
+      "modes": [
+        "current_corrected",
+        "known_at",
+        "effective_on",
+        "delta_snapshot"
+      ],
+      "name": "calendar_authorities"
+    },
+    {
+      "depends_on": [],
+      "description": "silver relation calendar_rules",
+      "keys": [
+        "rule_id"
+      ],
+      "kind": "delta_table",
+      "layer": "silver",
+      "modes": [
+        "current_corrected",
+        "known_at",
+        "effective_on",
+        "delta_snapshot"
+      ],
+      "name": "calendar_rules"
+    },
+    {
+      "depends_on": [],
+      "description": "silver relation calendar_exceptions",
+      "keys": [
+        "calendar_id",
+        "session_date",
+        "assertion_domain"
+      ],
+      "kind": "delta_table",
+      "layer": "silver",
+      "modes": [
+        "current_corrected",
+        "known_at",
+        "effective_on",
+        "delta_snapshot"
+      ],
+      "name": "calendar_exceptions"
+    },
+    {
+      "depends_on": [],
+      "description": "silver relation market_sessions",
+      "keys": [
+        "calendar_id",
+        "session_date"
+      ],
+      "kind": "delta_table",
+      "layer": "silver",
+      "modes": [
+        "current_corrected",
+        "known_at",
+        "effective_on",
+        "delta_snapshot"
+      ],
+      "name": "market_sessions"
+    },
+    {
+      "depends_on": [],
+      "description": "silver relation session_interruptions",
+      "keys": [
+        "calendar_id",
+        "session_date",
+        "interruption_start"
+      ],
+      "kind": "delta_table",
+      "layer": "silver",
+      "modes": [
+        "current_corrected",
+        "known_at",
+        "effective_on",
+        "delta_snapshot"
+      ],
+      "name": "session_interruptions"
+    },
+    {
+      "depends_on": [],
+      "description": "ops relation jobs",
+      "keys": [
+        "job_id",
+        "seq"
+      ],
+      "kind": "delta_table",
+      "layer": "ops",
+      "modes": [
+        "delta_snapshot"
+      ],
+      "name": "jobs"
+    },
+    {
+      "depends_on": [],
+      "description": "ops relation job_events",
+      "keys": [
+        "event_id"
+      ],
+      "kind": "delta_table",
+      "layer": "ops",
+      "modes": [
+        "delta_snapshot"
+      ],
+      "name": "job_events"
+    },
+    {
+      "depends_on": [],
+      "description": "ops relation receipts",
+      "keys": [
+        "execution_id"
+      ],
+      "kind": "delta_table",
+      "layer": "ops",
+      "modes": [
+        "delta_snapshot"
+      ],
+      "name": "receipts"
+    },
+    {
+      "depends_on": [
+        "silver.listings",
+        "silver.identifiers",
+        "silver.instruments",
+        "silver.issuers",
+        "silver.securities"
+      ],
+      "description": "Resolved securities, listings and local coverage.",
+      "keys": [
+        "listing_id"
+      ],
+      "kind": "view",
+      "layer": "gold",
+      "modes": [
+        "current_corrected",
+        "known_at",
+        "effective_on",
+        "delta_snapshot"
+      ],
+      "name": "security_master"
+    },
+    {
+      "depends_on": [
+        "silver.prices_normalized",
+        "silver.listings"
+      ],
+      "description": "Correctable daily prices by stable listing.",
+      "keys": [
+        "listing_id",
+        "market_date"
+      ],
+      "kind": "view",
+      "layer": "gold",
+      "modes": [
+        "current_corrected",
+        "known_at",
+        "effective_on",
+        "delta_snapshot"
+      ],
+      "name": "price_daily"
+    },
+    {
+      "depends_on": [
+        "silver.corporate_actions",
+        "silver.listings"
+      ],
+      "description": "Splits, dividends and reorganizations.",
+      "keys": [
+        "listing_id",
+        "action_type",
+        "ex_date"
+      ],
+      "kind": "view",
+      "layer": "gold",
+      "modes": [
+        "current_corrected",
+        "known_at",
+        "effective_on",
+        "delta_snapshot"
+      ],
+      "name": "corporate_actions"
+    },
+    {
+      "depends_on": [
+        "silver.universe_membership",
+        "silver.listings"
+      ],
+      "description": "Point-in-time index and universe tenures.",
+      "keys": [
+        "universe_id",
+        "listing_id"
+      ],
+      "kind": "view",
+      "layer": "gold",
+      "modes": [
+        "current_corrected",
+        "known_at",
+        "effective_on",
+        "delta_snapshot"
+      ],
+      "name": "universe_membership"
+    },
+    {
+      "depends_on": [
+        "silver.market_sessions",
+        "silver.calendar_exceptions",
+        "silver.exchanges",
+        "silver.session_interruptions"
+      ],
+      "description": "Exchange sessions joined to holiday and market-session evidence.",
+      "keys": [
+        "calendar_id",
+        "session_date"
+      ],
+      "kind": "view",
+      "layer": "gold",
+      "modes": [
+        "current_corrected",
+        "known_at",
+        "effective_on",
+        "delta_snapshot"
+      ],
+      "name": "market_calendar"
+    },
+    {
+      "depends_on": [
+        "silver.listings",
+        "silver.issuers",
+        "silver.fundamental_facts"
+      ],
+      "description": "The EquityInfo projection.",
+      "keys": [
+        "listing_id"
+      ],
+      "kind": "view",
+      "layer": "gold",
+      "modes": [
+        "current_corrected",
+        "known_at",
+        "effective_on",
+        "delta_snapshot"
+      ],
+      "name": "odp_equity_info"
+    }
+  ]
+}

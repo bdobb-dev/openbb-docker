@@ -1,0 +1,20 @@
+{
+  "security_master_browser": {
+    "name": "Security Master Browser",
+    "description": "Explore what you have. Understand what you knew: ODP models, layered Delta relations, guarded SQL and temporal receipts.",
+    "category": "Data",
+    "type": "security_master_browser",
+    "endpoint": "security-master/v1/catalog",
+    "gridData": { "w": 40, "h": 24 },
+    "params": [
+      { "paramName": "listing_id", "type": "text", "label": "Listing", "value": "", "show": false },
+      { "paramName": "effective_date", "type": "date", "label": "Effective date", "value": "", "show": false },
+      { "paramName": "known_at", "type": "text", "label": "Known at", "value": "", "show": false },
+      { "paramName": "layer", "type": "text", "label": "Layer", "value": "gold", "show": false,
+        "options": [{ "label": "Gold", "value": "gold" }, { "label": "Silver", "value": "silver" }, { "label": "Bronze", "value": "bronze" }] },
+      { "paramName": "temporal_mode", "type": "text", "label": "Temporal mode", "value": "current_corrected", "show": false,
+        "options": [{ "label": "Current corrected", "value": "current_corrected" }, { "label": "Known at", "value": "known_at" }, { "label": "Effective on", "value": "effective_on" }, { "label": "Delta snapshot", "value": "delta_snapshot" }] }
+    ],
+    "source": ["Delta Lake", "EODHD"]
+  }
+}

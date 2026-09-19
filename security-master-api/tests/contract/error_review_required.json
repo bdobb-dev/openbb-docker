@@ -1,0 +1,35 @@
+{
+  "error": {
+    "code": "ACQUISITION_REVIEW_REQUIRED",
+    "details": {
+      "preflight": {
+        "calendar": null,
+        "code_version": "security-master-api/0.2.0",
+        "context": {
+          "availability_policy": "local_as_ingested",
+          "effective_at": null,
+          "known_at": null,
+          "mode": "current_corrected",
+          "timezone": "UTC",
+          "versions": null
+        },
+        "dataset": "security_lookup",
+        "expected_requests": 1,
+        "expires_at": 0,
+        "fingerprint": "fp_contract",
+        "identities": [],
+        "missing_ranges": [],
+        "policy": "review",
+        "request": {
+          "dataset": "security_lookup",
+          "identifiers": [],
+          "query": "ZZZZ"
+        },
+        "token": "token_contract",
+        "warnings": []
+      }
+    },
+    "message": "no local match; a bounded lookup is available for review",
+    "request_id": "req_contract"
+  }
+}

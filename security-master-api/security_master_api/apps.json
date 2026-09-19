@@ -1,0 +1,27 @@
+[
+  {
+    "name": "Security master",
+    "description": "Explore what you have and understand what you knew: the layered store, its ODP models, and the receipt behind every answer.",
+    "img": "",
+    "img_dark": "",
+    "img_light": "",
+    "allowCustomization": true,
+    "tabs": {
+      "9f1c6a52-0f4a-4c9a-9a0b-6f1d2c3b4a55": {
+        "id": "9f1c6a52-0f4a-4c9a-9a0b-6f1d2c3b4a55",
+        "name": "Security master",
+        "layout": [
+          {
+            "i": "security_master_browser",
+            "x": 0, "y": 0, "w": 40, "h": 24,
+            "state": {
+              "params": { "layer": "gold", "temporal_mode": "current_corrected" }
+            }
+          }
+        ]
+      }
+    },
+    "groups": [],
+    "prompts": []
+  }
+]

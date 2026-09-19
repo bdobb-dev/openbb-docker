@@ -1,0 +1,313 @@
+{
+  "schema": "security-master.temporal-fixture.v1",
+  "fixture_id": "dubai-eid-al-fitr-2024",
+  "capture_time_semantics": "synthetic_test_capture",
+  "exchange_mic": "XDFM",
+  "exchange_name": "Dubai Financial Market",
+  "holiday_family": "Eid Al Fitr",
+  "events": [
+    {
+      "event_id": "dubai-t0-conditional-exchange-circular",
+      "published_on": "2024-04-04",
+      "known_from": "2024-04-04T12:00:00Z",
+      "source_kind": "conditional_exchange_notice",
+      "authority": "Dubai Financial Market",
+      "source_url": "https://assets.dfm.ae/docs/default-source/circulars/dfm/circular-01-2024-eid-al-fitr-holiday---english.pdf?sfvrsn=5c6dd681_0",
+      "assertion": "The reopening date depends on the first day of Eid."
+    },
+    {
+      "event_id": "dubai-t1-moon-sighting-confirmation",
+      "published_on": "2024-04-08",
+      "known_from": "2024-04-08T20:00:00Z",
+      "source_kind": "religious_authority_notice",
+      "authority": "UAE Moon-sighting Committee",
+      "source_url": "https://www.wam.ae/en/article/b2jxoem-update-uae-announces-wednesday-first-day-eid-fitr",
+      "assertion": "April 10, 2024 is the first day of Eid Al Fitr."
+    },
+    {
+      "event_id": "dubai-t2-derived-branch-selection",
+      "published_on": "2024-04-08",
+      "known_from": "2024-04-08T20:00:05Z",
+      "source_kind": "derived_calendar_resolution",
+      "authority": "Security master resolver",
+      "source_url": "https://www.wam.ae/en/article/b2jxoem-update-uae-announces-wednesday-first-day-eid-fitr",
+      "assertion": "The April 10 branch selects April 15 as the reopening date."
+    }
+  ],
+  "expected_states": [
+    {
+      "stage": "T0",
+      "known_from": "2024-04-04T12:00:00Z",
+      "evidence_event_ids": [
+        "dubai-t0-conditional-exchange-circular"
+      ],
+      "authority_status": "awaiting_moon_sighting",
+      "market_status": "conditional",
+      "candidate_branches": [
+        {
+          "condition": "eid_first_day=2024-04-09",
+          "reopen_date": "2024-04-12"
+        },
+        {
+          "condition": "eid_first_day=2024-04-10",
+          "reopen_date": "2024-04-15"
+        }
+      ],
+      "selected_branch": null,
+      "market_dates": []
+    },
+    {
+      "stage": "T1",
+      "known_from": "2024-04-08T20:00:00Z",
+      "evidence_event_ids": [
+        "dubai-t0-conditional-exchange-circular",
+        "dubai-t1-moon-sighting-confirmation"
+      ],
+      "authority_status": "confirmed_by_religious_authority",
+      "market_status": "pending_resolution",
+      "candidate_branches": [
+        {
+          "condition": "eid_first_day=2024-04-09",
+          "reopen_date": "2024-04-12"
+        },
+        {
+          "condition": "eid_first_day=2024-04-10",
+          "reopen_date": "2024-04-15"
+        }
+      ],
+      "selected_branch": null,
+      "market_dates": []
+    },
+    {
+      "stage": "T2",
+      "known_from": "2024-04-08T20:00:05Z",
+      "evidence_event_ids": [
+        "dubai-t0-conditional-exchange-circular",
+        "dubai-t1-moon-sighting-confirmation",
+        "dubai-t2-derived-branch-selection"
+      ],
+      "authority_status": "confirmed_by_religious_authority",
+      "market_status": "final",
+      "candidate_branches": [
+        {
+          "condition": "eid_first_day=2024-04-09",
+          "reopen_date": "2024-04-12"
+        },
+        {
+          "condition": "eid_first_day=2024-04-10",
+          "reopen_date": "2024-04-15"
+        }
+      ],
+      "selected_branch": {
+        "condition": "eid_first_day=2024-04-10",
+        "reopen_date": "2024-04-15"
+      },
+      "market_dates": [
+        {
+          "date": "2024-04-12",
+          "session": "closed"
+        },
+        {
+          "date": "2024-04-15",
+          "session": "open"
+        }
+      ]
+    }
+  ],
+  "captures": [
+    {
+      "capture_id": "cap_dubai_t0",
+      "provider": "fixture",
+      "endpoint": "seed",
+      "request_fingerprint": "fx-dubai-0",
+      "captured_at": "2024-04-04T12:00:00Z",
+      "content_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "status": 200,
+      "payload": "{}",
+      "job_id": null
+    },
+    {
+      "capture_id": "cap_dubai_t1",
+      "provider": "fixture",
+      "endpoint": "seed",
+      "request_fingerprint": "fx-dubai-1",
+      "captured_at": "2024-04-08T20:00:00Z",
+      "content_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "status": 200,
+      "payload": "{}",
+      "job_id": null
+    },
+    {
+      "capture_id": "cap_dubai_t2",
+      "provider": "fixture",
+      "endpoint": "seed",
+      "request_fingerprint": "fx-dubai-2",
+      "captured_at": "2024-04-08T20:00:05Z",
+      "content_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "status": 200,
+      "payload": "{}",
+      "job_id": null
+    }
+  ],
+  "assertions": {
+    "silver.exchanges": [
+      {
+        "exchange_id": "exch_xdfm",
+        "calendar_id": "cal_xdfm",
+        "mic": "XDFM",
+        "name": "Dubai Financial Market",
+        "timezone": "Asia/Dubai",
+        "calendar_alias": null,
+        "eodhd_code": null,
+        "effective_from": "2000-01-01T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2024-04-04T12:00:00Z",
+        "available_at": "2024-04-04T12:00:00Z",
+        "system_from": "2024-04-04T12:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_dubai_t0",
+        "assertion_id": "as_exch_xdfm_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
+    ],
+    "silver.calendar_exceptions": [
+      {
+        "calendar_id": "cal_xdfm",
+        "session_date": "2024-04-08",
+        "assertion_domain": "market_session",
+        "holiday_family": "eid_al_fitr",
+        "calendar_system": "islamic",
+        "evidence_status": "provisional",
+        "authority_type": "exchange",
+        "authority_name": "Dubai Financial Market",
+        "authority_verified_at": null,
+        "source_kind": "conditional_exchange_notice",
+        "source_version": null,
+        "rule_id": null,
+        "market_effect": "closed",
+        "holiday_name": "Eid Al Fitr",
+        "special_open": null,
+        "special_close": null,
+        "market_open": null,
+        "market_close": null,
+        "candidate_branches": "[{\"condition\": \"eid_first_day=2024-04-09\", \"reopen_date\": \"2024-04-12\"}, {\"condition\": \"eid_first_day=2024-04-10\", \"reopen_date\": \"2024-04-15\"}]",
+        "selected_branch": null,
+        "expiry_date": null,
+        "settlement_status": null,
+        "effective_from": "2024-04-08T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2024-04-04T12:00:00Z",
+        "available_at": "2024-04-04T12:00:00Z",
+        "system_from": "2024-04-04T12:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_dubai_t0",
+        "assertion_id": "as_dubai_t0",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      },
+      {
+        "calendar_id": "cal_xdfm",
+        "session_date": "2024-04-10",
+        "assertion_domain": "holiday_date",
+        "holiday_family": "eid_al_fitr",
+        "calendar_system": "islamic",
+        "evidence_status": "authority_confirmed",
+        "authority_type": "religious_authority",
+        "authority_name": "UAE Moon-sighting Committee",
+        "authority_verified_at": null,
+        "source_kind": "authority_notice",
+        "source_version": null,
+        "rule_id": null,
+        "market_effect": null,
+        "holiday_name": "Eid Al Fitr",
+        "special_open": null,
+        "special_close": null,
+        "market_open": null,
+        "market_close": null,
+        "candidate_branches": null,
+        "selected_branch": null,
+        "expiry_date": null,
+        "settlement_status": null,
+        "effective_from": "2024-04-10T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2024-04-08T20:00:00Z",
+        "available_at": "2024-04-08T20:00:00Z",
+        "system_from": "2024-04-08T20:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_dubai_t1",
+        "assertion_id": "as_dubai_t1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      },
+      {
+        "calendar_id": "cal_xdfm",
+        "session_date": "2024-04-12",
+        "assertion_domain": "market_session",
+        "holiday_family": "eid_al_fitr",
+        "calendar_system": "islamic",
+        "evidence_status": "market_final",
+        "authority_type": "exchange",
+        "authority_name": "Dubai Financial Market",
+        "authority_verified_at": null,
+        "source_kind": "derived_calendar_resolution",
+        "source_version": null,
+        "rule_id": null,
+        "market_effect": "closed",
+        "holiday_name": "Eid Al Fitr",
+        "special_open": null,
+        "special_close": null,
+        "market_open": null,
+        "market_close": null,
+        "candidate_branches": "[{\"condition\": \"eid_first_day=2024-04-09\", \"reopen_date\": \"2024-04-12\"}, {\"condition\": \"eid_first_day=2024-04-10\", \"reopen_date\": \"2024-04-15\"}]",
+        "selected_branch": "{\"condition\": \"eid_first_day=2024-04-10\", \"reopen_date\": \"2024-04-15\"}",
+        "expiry_date": null,
+        "settlement_status": null,
+        "effective_from": "2024-04-12T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2024-04-08T20:00:05Z",
+        "available_at": "2024-04-08T20:00:05Z",
+        "system_from": "2024-04-08T20:00:05Z",
+        "system_to": null,
+        "capture_id": "cap_dubai_t2",
+        "assertion_id": "as_dubai_t2_closed",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      },
+      {
+        "calendar_id": "cal_xdfm",
+        "session_date": "2024-04-15",
+        "assertion_domain": "market_session",
+        "holiday_family": "eid_al_fitr",
+        "calendar_system": "islamic",
+        "evidence_status": "market_final",
+        "authority_type": "exchange",
+        "authority_name": "Dubai Financial Market",
+        "authority_verified_at": null,
+        "source_kind": "derived_calendar_resolution",
+        "source_version": null,
+        "rule_id": null,
+        "market_effect": "open",
+        "holiday_name": "Eid Al Fitr",
+        "special_open": null,
+        "special_close": null,
+        "market_open": null,
+        "market_close": null,
+        "candidate_branches": "[{\"condition\": \"eid_first_day=2024-04-09\", \"reopen_date\": \"2024-04-12\"}, {\"condition\": \"eid_first_day=2024-04-10\", \"reopen_date\": \"2024-04-15\"}]",
+        "selected_branch": "{\"condition\": \"eid_first_day=2024-04-10\", \"reopen_date\": \"2024-04-15\"}",
+        "expiry_date": null,
+        "settlement_status": null,
+        "effective_from": "2024-04-15T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2024-04-08T20:00:05Z",
+        "available_at": "2024-04-08T20:00:05Z",
+        "system_from": "2024-04-08T20:00:05Z",
+        "system_to": null,
+        "capture_id": "cap_dubai_t2",
+        "assertion_id": "as_dubai_t2_open",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
+    ]
+  }
+}

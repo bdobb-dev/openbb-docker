@@ -1,0 +1,52 @@
+{
+  "calendar": null,
+  "code_version": "security-master-api/0.2.0",
+  "context": {
+    "availability_policy": "local_as_ingested",
+    "effective_at": null,
+    "known_at": null,
+    "mode": "current_corrected",
+    "timezone": "UTC",
+    "versions": null
+  },
+  "dataset": "price_daily",
+  "expected_requests": 1,
+  "expires_at": 0,
+  "fingerprint": "fp_contract",
+  "identities": [
+    {
+      "identifier": "AAPL",
+      "instrument_id": "ins_apple",
+      "issuer_id": "iss_apple",
+      "listing_id": "lst_apple",
+      "provider_symbol": "AAPL.US",
+      "reason": "active",
+      "security_id": "sec_apple"
+    }
+  ],
+  "missing_ranges": [
+    {
+      "end": "2026-09-13",
+      "listing_id": "lst_apple",
+      "start": "2026-09-01"
+    },
+    {
+      "end": "2026-09-16",
+      "listing_id": "lst_apple",
+      "start": "2026-09-15"
+    }
+  ],
+  "policy": "review",
+  "request": {
+    "dataset": "price_daily",
+    "end_date": "2026-09-16",
+    "identifiers": [
+      "AAPL"
+    ],
+    "policy": "missing_only",
+    "price_basis": "raw",
+    "start_date": "2026-09-01"
+  },
+  "token": "token_contract",
+  "warnings": []
+}

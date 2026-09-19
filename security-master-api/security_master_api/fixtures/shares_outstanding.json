@@ -1,0 +1,240 @@
+{
+  "schema": "security-master.golden-fixture.v1",
+  "fixture_id": "shares-outstanding",
+  "scenario": "shares_outstanding_restatement",
+  "captures": [
+    {
+      "capture_id": "cap_so_1",
+      "provider": "fixture",
+      "endpoint": "seed",
+      "request_fingerprint": "fx-so-1",
+      "captured_at": "2026-08-05T12:00:00Z",
+      "content_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "status": 200,
+      "payload": "{}",
+      "job_id": null
+    },
+    {
+      "capture_id": "cap_so_2",
+      "provider": "fixture",
+      "endpoint": "seed",
+      "request_fingerprint": "fx-so-2",
+      "captured_at": "2026-08-20T12:00:00Z",
+      "content_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "status": 200,
+      "payload": "{}",
+      "job_id": null
+    }
+  ],
+  "assertions": {
+    "silver.issuers": [
+      {
+        "issuer_id": "iss_example",
+        "name": "Example Corp.",
+        "effective_from": "2005-01-03T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2026-08-05T12:00:00Z",
+        "available_at": "2026-08-05T12:00:00Z",
+        "system_from": "2026-08-05T12:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_so_1",
+        "assertion_id": "as_iss_example_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
+    ],
+    "silver.instruments": [
+      {
+        "instrument_id": "ins_example",
+        "issuer_id": "iss_example",
+        "name": "Example Corp. Common Stock",
+        "instrument_type": "Common Stock",
+        "effective_from": "2005-01-03T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2026-08-05T12:00:00Z",
+        "available_at": "2026-08-05T12:00:00Z",
+        "system_from": "2026-08-05T12:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_so_1",
+        "assertion_id": "as_ins_example_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
+    ],
+    "silver.listings": [
+      {
+        "listing_id": "lst_example",
+        "instrument_id": "ins_example",
+        "issuer_id": "iss_example",
+        "security_id": "sec_example",
+        "exchange_id": "exch_xnas",
+        "mic": "XNAS",
+        "symbol": "EXMP",
+        "provider_symbol": "EXMP.US",
+        "currency": "USD",
+        "status": "active",
+        "name": "Example Corp.",
+        "instrument_type": "Common Stock",
+        "effective_from": "2005-01-03T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2026-08-05T12:00:00Z",
+        "available_at": "2026-08-05T12:00:00Z",
+        "system_from": "2026-08-05T12:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_so_1",
+        "assertion_id": "as_lst_example_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
+    ],
+    "silver.identifiers": [
+      {
+        "identifier_type": "ticker",
+        "identifier": "EXMP",
+        "listing_id": "lst_example",
+        "instrument_id": "ins_example",
+        "security_id": "sec_example",
+        "issuer_id": "iss_example",
+        "effective_from": "2005-01-03T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2026-08-05T12:00:00Z",
+        "available_at": "2026-08-05T12:00:00Z",
+        "system_from": "2026-08-05T12:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_so_1",
+        "assertion_id": "as_id_exmp_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      }
+    ],
+    "silver.fundamental_facts": [
+      {
+        "issuer_id": "iss_example",
+        "fact": "shares_outstanding",
+        "period_end": "2026-06-30",
+        "value": 1500000000.0,
+        "unit": "shares",
+        "filing_kind": "10-Q",
+        "effective_from": "2026-06-30T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2026-08-05T12:00:00Z",
+        "available_at": "2026-08-05T12:00:00Z",
+        "system_from": "2026-08-05T12:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_so_1",
+        "assertion_id": "as_so_1",
+        "assertion_status": "current",
+        "supersedes_assertion_id": null
+      },
+      {
+        "issuer_id": "iss_example",
+        "fact": "shares_outstanding",
+        "period_end": "2026-06-30",
+        "value": 1500000000.0,
+        "unit": "shares",
+        "filing_kind": "10-Q",
+        "effective_from": "2026-06-30T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2026-08-05T12:00:00Z",
+        "available_at": "2026-08-05T12:00:00Z",
+        "system_from": "2026-08-20T12:00:00Z",
+        "system_to": "2026-08-20T12:00:00Z",
+        "capture_id": "cap_so_1",
+        "assertion_id": "as_so_1",
+        "assertion_status": "superseded",
+        "supersedes_assertion_id": null
+      },
+      {
+        "issuer_id": "iss_example",
+        "fact": "shares_outstanding",
+        "period_end": "2026-06-30",
+        "value": 1480000000.0,
+        "unit": "shares",
+        "filing_kind": "10-Q/A",
+        "effective_from": "2026-06-30T00:00:00Z",
+        "effective_to": null,
+        "observed_at": "2026-08-20T12:00:00Z",
+        "available_at": "2026-08-20T12:00:00Z",
+        "system_from": "2026-08-20T12:00:00Z",
+        "system_to": null,
+        "capture_id": "cap_so_2",
+        "assertion_id": "as_so_2",
+        "assertion_status": "current",
+        "supersedes_assertion_id": "as_so_1"
+      }
+    ]
+  },
+  "expectations": [
+    {
+      "model": "EquityInfo",
+      "params": {
+        "symbol": "EXMP"
+      },
+      "context": {
+        "mode": "known_at",
+        "effective_at": "2026-07-15T00:00:00Z",
+        "known_at": "2026-07-15T00:00:00Z"
+      },
+      "error": "NO_LOCAL_EVIDENCE"
+    },
+    {
+      "model": "EquityInfo",
+      "params": {
+        "symbol": "EXMP"
+      },
+      "context": {
+        "mode": "known_at",
+        "effective_at": "2026-08-05T12:00:00Z",
+        "known_at": "2026-08-05T12:00:00Z"
+      },
+      "expect": {
+        "shares_outstanding": 1500000000,
+        "period_end": "2026-06-30"
+      }
+    },
+    {
+      "model": "EquityInfo",
+      "params": {
+        "symbol": "EXMP"
+      },
+      "context": {
+        "mode": "known_at",
+        "effective_at": "2026-08-19T23:59:59Z",
+        "known_at": "2026-08-19T23:59:59Z"
+      },
+      "expect": {
+        "shares_outstanding": 1500000000,
+        "period_end": "2026-06-30"
+      }
+    },
+    {
+      "model": "EquityInfo",
+      "params": {
+        "symbol": "EXMP"
+      },
+      "context": {
+        "mode": "known_at",
+        "effective_at": "2026-08-20T12:00:00Z",
+        "known_at": "2026-08-20T12:00:00Z"
+      },
+      "expect": {
+        "shares_outstanding": 1480000000,
+        "filing_kind": "10-Q/A",
+        "period_end": "2026-06-30"
+      }
+    },
+    {
+      "model": "EquityInfo",
+      "params": {
+        "symbol": "EXMP"
+      },
+      "context": {
+        "mode": "current_corrected"
+      },
+      "expect": {
+        "shares_outstanding": 1480000000,
+        "period_end": "2026-06-30"
+      }
+    }
+  ]
+}
