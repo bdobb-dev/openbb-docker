@@ -12,7 +12,7 @@ license = { text = "Apache-2.0" }
 # openbb-eodhd is NOT listed: it is a sibling in this repo, not on PyPI, and
 # the two helpers that use it import it lazily. The image installs it before
 # this package (see the root Dockerfile); CI runs these tests without it.
-dependencies = ["openbb-core>=1.5.8,<2", "requests>=2.32"]
+dependencies = ["openbb-core>=1.5.8,<2", "requests>=2.32", "exchange_calendars>=4.6,<5"]
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff==0.15.22"]
@@ -22,6 +22,7 @@ dev = ["pytest", "ruff==0.15.22"]
 # `/api/v1/reference/...` and `obb.reference.*`.
 [project.entry-points."openbb_core_extension"]
 reference = "openbb_security_master.router:router"
+calendar = "openbb_security_master.calendar:router"
 
 [tool.setuptools.packages.find]
 include = ["openbb_security_master*"]

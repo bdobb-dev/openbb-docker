@@ -396,7 +396,7 @@ services:
     build:
       context: .
       dockerfile: security-master-api/Dockerfile
-    image: openbb-security-master:11.4.0
+    image: openbb-security-master:12.4.0
     container_name: openbb-security-master-api
     restart: unless-stopped
     networks:
@@ -422,7 +422,7 @@ services:
   # holds no EODHD key: every acquisition goes through openbb-api with the
   # stack's Basic credential, so entitlement and rate limits stay in one place.
   security-master-worker:
-    image: openbb-security-master:11.4.0
+    image: openbb-security-master:12.4.0
     container_name: openbb-security-master-worker
     restart: unless-stopped
     networks:
