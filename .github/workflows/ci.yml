@@ -73,6 +73,12 @@ jobs:
         run: bash scripts/check-image-tags.sh
       - name: No service shares the sidecar's network namespace
         run: bash scripts/check-no-netns.sh
+      # Same reasoning as the image-pin guard above: this repo served
+      # Lightweight Charts™ with no NOTICE and no credit anywhere, and nothing
+      # caught it, because the obligation lives in a third party's README
+      # rather than in any file a tool reads.
+      - name: Third-party attribution is present and not disabled
+        run: bash scripts/check-attribution.sh
   # The blanket Basic auth guard on api_app.py's factory. Its own job on
   # purpose: this rode inside key-maint's job when it was first added, where it
   # ran and passed but was invisible in the checks list -- and would have
